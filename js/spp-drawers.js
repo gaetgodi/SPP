@@ -64,10 +64,3 @@ document.addEventListener("DOMContentLoaded", function () {
         if (e.key === "Escape") closeAll();
     });
 });
-@media (max-width: 980px) {
-    #et_mobile_nav_menu,
-    .mobile_menu_bar,
-    #et-top-navigation .et_mobile_menu {
-        display: none !important;
-    }
-}
