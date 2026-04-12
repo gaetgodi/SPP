@@ -7,18 +7,72 @@ Site: pickleballstouffville.ca (staging)
 */
 
 /* =====================================================
-   CSS VARIABLES
+   SPP DESIGN TOKENS
+   Global CSS variables for the entire theme.
+   All components reference these tokens.
    ===================================================== */
 :root {
-    --spp-primary:       #00897B;
-    --spp-secondary:     #26A69A;
-    --spp-dark:          #1a1a1a;
-    --spp-text:          #333333;
-    --spp-border-color:  #e0e0e0;
-    --spp-border-light:  #f0f0f0;
-    --spp-drawer-bg:     #f5f5f5;
-    --spp-item-bg:       #eef7f6;
-    --spp-item-bg-sub:   #e4f2f1;
+    /* --- Brand Colors --- */
+    --spp-primary:          #00897B;   /* Teal */
+    --spp-secondary:        #26A69A;   /* Light teal */
+    --spp-accent:           #004D40;   /* Dark teal */
+
+    /* --- Text Colors --- */
+    --spp-dark:             #1a1a1a;
+    --spp-text:             #333333;
+    --spp-text-subtle:      #555555;
+    --spp-text-light:       #ffffff;
+
+    /* --- Background Colors --- */
+    --spp-bg-page:          #f5f0e8;   /* Warm cream - matches home page */
+    --spp-bg-white:         #ffffff;
+    --spp-bg-light:         #f5f5f5;
+    --spp-drawer-bg:        #f5f5f5;
+    --spp-item-bg:          #eef7f6;   /* Pale teal */
+    --spp-item-bg-sub:      #e4f2f1;   /* Slightly darker pale teal */
+
+    /* --- Border Colors --- */
+    --spp-border-color:     #e0e0e0;
+    --spp-border-light:     #f0f0f0;
+
+    /* --- Typography --- */
+    --spp-font-heading:     'Georgia', serif;
+    --spp-font-body:        'Open Sans', Arial, sans-serif;
+    --spp-font-xs:          0.75rem;
+    --spp-font-sm:          0.875rem;
+    --spp-font-md:          1rem;
+    --spp-font-lg:          1.125rem;
+    --spp-font-xl:          1.25rem;
+    --spp-body-size:        1rem;
+    --spp-line-height:      1.6;
+
+    /* --- Spacing --- */
+    --spp-space-xs:         0.25rem;
+    --spp-space-sm:         0.5rem;
+    --spp-space-md:         1rem;
+    --spp-space-lg:         1.5rem;
+    --spp-space-xl:         2rem;
+
+    /* --- Border Radius --- */
+    --spp-radius:           6px;
+    --spp-radius-lg:        10px;
+    --spp-radius-pill:      999px;
+
+    /* --- FAQ Specific Tokens --- */
+    --spp-faq-gradient-start:       #eef7f6;
+    --spp-faq-gradient-end:         #00897B;
+    --spp-faq-gradient-hover-start: #e4f2f1;
+    --spp-faq-gradient-hover-end:   #00796B;
+    --spp-faq-answer-bg:            #f9f9f9;
+    --spp-faq-answer-text:          #333333;
+    --spp-faq-answer-text-subtle:   #555555;
+    --spp-faq-border-active:        #00897B;
+    --spp-faq-icon-bg:              #004D40;
+    --spp-faq-link:                 #00897B;
+    --spp-faq-link-hover:           #004D40;
+    --spp-faq-no-results:           #666666;
+    --spp-faq-label-color:          #00897B;
+    --spp-faq-dropdown-border:      #00897B;
 }
 
 /* =====================================================
@@ -148,11 +202,11 @@ body.spp-footer-mm-open #page-container {
         min-width: 200px !important;
         padding: 0.55rem 1.1rem !important;
         background: rgba(0, 137, 123, 0.92) !important;
-        border-radius: 999px !important;
+        border-radius: var(--spp-radius-pill) !important;
         border: 1px solid var(--spp-secondary) !important;
-        color: #ffffff !important;
+        color: var(--spp-text-light) !important;
         font-weight: 600 !important;
-        font-size: 1rem !important;
+        font-size: var(--spp-font-md) !important;
         cursor: pointer;
     }
 
@@ -160,7 +214,7 @@ body.spp-footer-mm-open #page-container {
         content: "\61";
         font-family: "ETmodules";
         font-size: 22px;
-        color: #ffffff;
+        color: var(--spp-text-light);
     }
 
     body.spp-mm-open #spp-mm-open .spp-mm-open-icon::before,
@@ -243,7 +297,7 @@ body.spp-footer-mm-open #page-container {
 
     .spp-mm-sheet-title {
         font-weight: 600;
-        color: #ffffff !important;
+        color: var(--spp-text-light) !important;
     }
 
     #spp-mm-close,
@@ -259,14 +313,14 @@ body.spp-footer-mm-open #page-container {
         content: "\4d";
         font-family: "ETmodules";
         font-size: 22px;
-        color: #ffffff !important;
+        color: var(--spp-text-light) !important;
     }
 
     /* ---------------------------------------------------
        DRAWER BODY
        --------------------------------------------------- */
     .spp-mm-sheet-body {
-        padding: 0.5rem;
+        padding: var(--spp-space-sm);
         padding-bottom: 100px;
         overflow-y: auto;
         flex: 1;
@@ -276,17 +330,17 @@ body.spp-footer-mm-open #page-container {
        SECTION HEADINGS
        --------------------------------------------------- */
     .spp-mm-section {
-        margin-bottom: 0.8rem;
+        margin-bottom: var(--spp-space-sm);
     }
 
     .spp-mm-heading {
-        color: #ffffff !important;
+        color: var(--spp-text-light) !important;
         background: var(--spp-primary);
-        font-size: 1rem;
+        font-size: var(--spp-font-md);
         font-weight: 700;
         margin-bottom: 0.3rem;
         padding: 6px 10px;
-        border-radius: 6px;
+        border-radius: var(--spp-radius);
         letter-spacing: 0.03em;
         text-transform: uppercase;
     }
@@ -307,12 +361,12 @@ body.spp-footer-mm-open #page-container {
     .spp-mm-item a {
         display: block;
         padding: 8px 10px;
-        color: #2c2c2c !important;
+        color: var(--spp-dark) !important;
         background: var(--spp-item-bg) !important;
         text-decoration: none;
-        font-size: 1rem;
-        line-height: 1.5;
-        border-radius: 6px;
+        font-size: var(--spp-font-md);
+        line-height: var(--spp-line-height);
+        border-radius: var(--spp-radius);
         border-left: 3px solid transparent;
         transition: background 0.15s ease, color 0.15s ease, border-left-color 0.15s ease;
     }
@@ -335,9 +389,13 @@ body.spp-footer-mm-open #page-container {
     }
 
     .spp-mm-list ul.sub-menu .spp-mm-item a {
-        font-size: 0.9rem;
+        font-size: var(--spp-font-sm);
         padding-left: 12px;
         background: var(--spp-item-bg-sub) !important;
+    }
+
+    .spp-mm-section .spp-mm-list .spp-mm-item a {
+        background: var(--spp-item-bg) !important;
     }
 
     /* ---------------------------------------------------
@@ -346,7 +404,4 @@ body.spp-footer-mm-open #page-container {
     .et_pb_section_0_tb_footer {
         margin-top: -320px !important;
     }
-}
-.spp-mm-section .spp-mm-list .spp-mm-item a {
-    background: var(--spp-item-bg) !important;
 }
