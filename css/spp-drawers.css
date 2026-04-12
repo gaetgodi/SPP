@@ -10,14 +10,15 @@ Site: pickleballstouffville.ca (staging)
    CSS VARIABLES
    ===================================================== */
 :root {
-    --spp-primary:       #00897B;   /* Teal */
-    --spp-secondary:     #26A69A;   /* Light teal */
+    --spp-primary:       #00897B;
+    --spp-secondary:     #26A69A;
     --spp-dark:          #1a1a1a;
     --spp-text:          #333333;
     --spp-border-color:  #e0e0e0;
     --spp-border-light:  #f0f0f0;
     --spp-drawer-bg:     #f5f5f5;
-    --spp-heading-color: #00897B;
+    --spp-item-bg:       #eef7f6;
+    --spp-item-bg-sub:   #e4f2f1;
 }
 
 /* =====================================================
@@ -27,10 +28,7 @@ Site: pickleballstouffville.ca (staging)
     #spp-mm-drawer,
     #spp-mm-bottom-sheet,
     #spp-footer-mm-bottom-sheet,
-    #spp-mm-overlay {
-        display: none !important;
-    }
-
+    #spp-mm-overlay,
     .spp-mobile-menu-wrapper {
         display: none !important;
     }
@@ -43,12 +41,7 @@ Site: pickleballstouffville.ca (staging)
     display: none !important;
 }
 
-#spp-mm-bottom-sheet .spp-mm-sheet-body .spp-mobile-menu-wrapper {
-    display: flex !important;
-    flex-direction: column !important;
-    gap: 0.6rem;
-}
-
+#spp-mm-bottom-sheet .spp-mm-sheet-body .spp-mobile-menu-wrapper,
 #spp-footer-mm-bottom-sheet .spp-mm-sheet-body .spp-mobile-menu-wrapper {
     display: flex !important;
     flex-direction: column !important;
@@ -56,7 +49,7 @@ Site: pickleballstouffville.ca (staging)
 }
 
 /* =====================================================
-   MOBILE — UNIFIED DRAWER SYSTEM
+   PREVENT BODY SCROLL WHEN DRAWER OPEN
    ===================================================== */
 html.spp-mm-open,
 body.spp-mm-open,
@@ -70,6 +63,9 @@ body.spp-footer-mm-open {
 body.spp-mm-open,
 body.spp-footer-mm-open {
     padding-bottom: 100px !important;
+    overflow-y: scroll !important;
+    position: static !important;
+    height: auto !important;
 }
 
 body {
@@ -85,36 +81,61 @@ body {
     transform: none !important;
 }
 
+body.spp-mm-open #page-container,
+body.spp-footer-mm-open #page-container {
+    position: relative !important;
+    z-index: 1 !important;
+    overflow: visible !important;
+    height: auto !important;
+    min-height: 150vh !important;
+}
+
+/* =====================================================
+   MOBILE ONLY
+   ===================================================== */
 @media (max-width: 980px) {
 
-    /* ===================================================
+    /* Hide Divi top navigation */
+    #et_mobile_nav_menu,
+    .mobile_menu_bar,
+    #et-top-navigation .et_mobile_menu,
+    #et-top-navigation {
+        display: none !important;
+    }
+
+    /* ---------------------------------------------------
        DRAWER BUTTON CONTAINER
-       =================================================== */
+       --------------------------------------------------- */
     #spp-mm-drawer {
         position: fixed !important;
         bottom: env(safe-area-inset-bottom, 12px);
         left: 0 !important;
         right: 0 !important;
         width: 100% !important;
-
         display: flex !important;
         flex-direction: column;
         align-items: center !important;
         justify-content: center !important;
         gap: 10px;
-
         padding: 0 20px;
         box-sizing: border-box;
-
         z-index: 9999999 !important;
         pointer-events: none;
         overflow: visible !important;
         transform: none !important;
     }
 
-    /* ===================================================
+    body.spp-mm-open #spp-mm-drawer,
+    body.spp-footer-mm-open #spp-mm-drawer {
+        display: flex !important;
+        z-index: 99999999 !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+    }
+
+    /* ---------------------------------------------------
        DRAWER BUTTONS
-       =================================================== */
+       --------------------------------------------------- */
     #spp-mm-open,
     #spp-footer-mm-open {
         pointer-events: auto !important;
@@ -122,23 +143,17 @@ body {
         align-items: center;
         justify-content: center;
         gap: 0.5rem;
-
         width: auto !important;
         max-width: 90% !important;
         min-width: 200px !important;
         padding: 0.55rem 1.1rem !important;
-
         background: rgba(0, 137, 123, 0.92) !important;
         border-radius: 999px !important;
         border: 1px solid var(--spp-secondary) !important;
-
         color: #ffffff !important;
         font-weight: 600 !important;
         font-size: 1rem !important;
-
         cursor: pointer;
-        overflow: visible !important;
-        text-overflow: clip !important;
     }
 
     .spp-mm-open-icon::before {
@@ -165,9 +180,9 @@ body {
         font-weight: inherit;
     }
 
-    /* ===================================================
+    /* ---------------------------------------------------
        OVERLAY
-       =================================================== */
+       --------------------------------------------------- */
     #spp-mm-overlay {
         position: fixed;
         top: 0;
@@ -187,68 +202,36 @@ body {
         visibility: visible !important;
     }
 
-    body.spp-mm-open,
-    body.spp-footer-mm-open {
-        overflow-y: scroll !important;
-        position: static !important;
-        height: auto !important;
-    }
-
-    body.spp-mm-open #page-container,
-    body.spp-footer-mm-open #page-container {
-        position: relative !important;
-        z-index: 1 !important;
-        overflow: visible !important;
-        height: auto !important;
-        min-height: 150vh !important;
-    }
-
-    /* ===================================================
+    /* ---------------------------------------------------
        DRAWER SHEETS
-       =================================================== */
+       --------------------------------------------------- */
     #spp-mm-bottom-sheet,
     #spp-footer-mm-bottom-sheet {
         position: fixed !important;
         left: 0 !important;
         right: 0 !important;
         bottom: 0 !important;
-
         height: 65vh !important;
         max-height: 65vh !important;
         overflow-y: auto !important;
-
         background: var(--spp-drawer-bg) !important;
         border-top: 2px solid var(--spp-primary) !important;
-
         transform: translateY(100%);
         transition: transform .25s ease-out;
-
         display: none;
         flex-direction: column;
         z-index: 99998 !important;
     }
 
-    body.spp-mm-open #spp-mm-bottom-sheet {
-        display: flex !important;
-        transform: translateY(0) !important;
-    }
-
+    body.spp-mm-open #spp-mm-bottom-sheet,
     body.spp-footer-mm-open #spp-footer-mm-bottom-sheet {
         display: flex !important;
         transform: translateY(0) !important;
     }
 
-    body.spp-mm-open #spp-mm-drawer,
-    body.spp-footer-mm-open #spp-mm-drawer {
-        display: flex !important;
-        z-index: 99999999 !important;
-        visibility: visible !important;
-        opacity: 1 !important;
-    }
-
-    /* ===================================================
+    /* ---------------------------------------------------
        DRAWER HEADER
-       =================================================== */
+       --------------------------------------------------- */
     .spp-mm-sheet-header {
         padding: .7rem 1rem;
         border-bottom: 1px solid var(--spp-border-light);
@@ -279,9 +262,9 @@ body {
         color: #ffffff !important;
     }
 
-    /* ===================================================
+    /* ---------------------------------------------------
        DRAWER BODY
-       =================================================== */
+       --------------------------------------------------- */
     .spp-mm-sheet-body {
         padding: 0.5rem;
         padding-bottom: 100px;
@@ -289,22 +272,28 @@ body {
         flex: 1;
     }
 
-    /* ===================================================
-       DRAWER MENU CONTENT
-       =================================================== */
+    /* ---------------------------------------------------
+       SECTION HEADINGS
+       --------------------------------------------------- */
     .spp-mm-section {
-        margin-bottom: 0.5rem;
+        margin-bottom: 0.8rem;
     }
 
     .spp-mm-heading {
-        color: var(--spp-heading-color) !important;
-        font-size: 1.05rem;
-        font-weight: 600;
-        margin-bottom: 0.25rem;
-        padding-bottom: 0.2rem;
-        border-bottom: 1px solid var(--spp-border-color);
+        color: #ffffff !important;
+        background: var(--spp-primary);
+        font-size: 1rem;
+        font-weight: 700;
+        margin-bottom: 0.3rem;
+        padding: 6px 10px;
+        border-radius: 6px;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
     }
 
+    /* ---------------------------------------------------
+       MENU ITEMS
+       --------------------------------------------------- */
     .spp-mm-list {
         list-style: none;
         padding: 0;
@@ -312,143 +301,49 @@ body {
     }
 
     .spp-mm-item {
-        margin-bottom: 0.1rem;
+        margin-bottom: 3px;
     }
 
     .spp-mm-item a {
         display: block;
-        padding: 1px 0;
-        color: var(--spp-dark) !important;
+        padding: 8px 10px;
+        color: #2c2c2c !important;
+        background: var(--spp-item-bg) !important;
         text-decoration: none;
-        line-height: 1.3;
+        font-size: 1rem;
+        line-height: 1.5;
+        border-radius: 6px;
+        border-left: 3px solid transparent;
+        transition: background 0.15s ease, color 0.15s ease, border-left-color 0.15s ease;
     }
 
-    .spp-mm-item a:hover {
+    .spp-mm-item a:hover,
+    .spp-mm-item a:active {
+        background: rgba(0, 137, 123, 0.15) !important;
         color: var(--spp-primary) !important;
-        opacity: 0.85;
+        border-left-color: var(--spp-primary) !important;
     }
 
-    /* ===================================================
+    /* ---------------------------------------------------
        SUB-MENU INDENTATION
-       =================================================== */
+       --------------------------------------------------- */
     .spp-mm-list ul.sub-menu {
-        margin-left: 1rem;
-        padding-left: 0.75rem;
+        margin-left: 0.5rem;
+        padding-left: 0.5rem;
         border-left: 2px solid var(--spp-secondary);
-        margin-top: 0.25rem;
+        margin-top: 3px;
     }
 
     .spp-mm-list ul.sub-menu .spp-mm-item a {
-        font-size: 0.95em;
-        opacity: 0.85;
+        font-size: 0.9rem;
+        padding-left: 12px;
+        background: var(--spp-item-bg-sub) !important;
     }
 
-    /* ===================================================
+    /* ---------------------------------------------------
        FOOTER PULL UP
-       =================================================== */
+       --------------------------------------------------- */
     .et_pb_section_0_tb_footer {
         margin-top: -320px !important;
     }
-}
-@media (max-width: 980px) {
-    #et_mobile_nav_menu,
-    .mobile_menu_bar,
-    #et-top-navigation .et_mobile_menu {
-        display: none !important;
-    }
-}
-@media (max-width: 980px) {
-    #et_mobile_nav_menu,
-    .mobile_menu_bar,
-    #et-top-navigation .et_mobile_menu,
-    #et-top-navigation {
-        display: none !important;
-    }
-}
-.spp-mm-item a {
-    display: block;
-    padding: 5px 0;
-    color: var(--spp-dark) !important;
-    text-decoration: none;
-    font-size: 1rem;
-    line-height: 1.5;
-}
-
-.spp-mm-list ul.sub-menu .spp-mm-item a {
-    font-size: 0.95rem;
-}
-
-.spp-mm-heading {
-    color: var(--spp-heading-color) !important;
-    font-size: 1.1rem;
-    font-weight: 600;
-    margin-bottom: 0.3rem;
-    padding-bottom: 0.2rem;
-    border-bottom: 1px solid var(--spp-border-color);
-}
-
-.spp-mm-section {
-    margin-bottom: 1rem;
-}
-.spp-mm-item a {
-    display: block;
-    padding: 8px 10px;
-    color: var(--spp-dark) !important;
-    text-decoration: none;
-    font-size: 1rem;
-    line-height: 1.5;
-    border-radius: 6px;
-    transition: background 0.15s ease, color 0.15s ease;
-}
-
-.spp-mm-item a:hover,
-.spp-mm-item a:active {
-    background: rgba(0, 137, 123, 0.12) !important;
-    color: var(--spp-primary) !important;
-}
-
-.spp-mm-list ul.sub-menu .spp-mm-item a {
-    font-size: 0.9rem;
-    padding-left: 14px;
-}
-
-.spp-mm-heading {
-    color: #ffffff !important;
-    background: var(--spp-primary);
-    font-size: 1rem;
-    font-weight: 700;
-    margin-bottom: 0.3rem;
-    padding: 6px 10px;
-    border-radius: 6px;
-    letter-spacing: 0.03em;
-    text-transform: uppercase;
-}
-
-.spp-mm-section {
-    margin-bottom: 0.8rem;
-}
-.spp-mm-item a {
-    display: block;
-    padding: 8px 10px;
-    color: #2c2c2c !important;
-    background: rgba(0, 0, 0, 0.04) !important;
-    text-decoration: none;
-    font-size: 1rem;
-    line-height: 1.5;
-    border-radius: 6px;
-    border-left: 3px solid transparent;
-    transition: background 0.15s ease, color 0.15s ease, border-left-color 0.15s ease;
-}
-
-.spp-mm-item a:hover,
-.spp-mm-item a:active {
-    background: rgba(0, 137, 123, 0.12) !important;
-    color: var(--spp-primary) !important;
-    border-left-color: var(--spp-primary) !important;
-}
-
-.spp-mm-list ul.sub-menu .spp-mm-item a {
-    font-size: 0.9rem;
-    padding-left: 14px;
-    background: rgba(0, 0, 0, 0.02) !important;
 }
