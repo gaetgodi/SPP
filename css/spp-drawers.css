@@ -347,3 +347,6 @@ body.spp-footer-mm-open #page-container {
         margin-top: -320px !important;
     }
 }
+.spp-mm-section .spp-mm-list .spp-mm-item a {
+    background: var(--spp-item-bg) !important;
+}
