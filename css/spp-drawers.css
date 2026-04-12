@@ -365,3 +365,28 @@ body {
         display: none !important;
     }
 }
+.spp-mm-item a {
+    display: block;
+    padding: 5px 0;
+    color: var(--spp-dark) !important;
+    text-decoration: none;
+    font-size: 1rem;
+    line-height: 1.5;
+}
+
+.spp-mm-list ul.sub-menu .spp-mm-item a {
+    font-size: 0.95rem;
+}
+
+.spp-mm-heading {
+    color: var(--spp-heading-color) !important;
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin-bottom: 0.3rem;
+    padding-bottom: 0.2rem;
+    border-bottom: 1px solid var(--spp-border-color);
+}
+
+.spp-mm-section {
+    margin-bottom: 1rem;
+}
