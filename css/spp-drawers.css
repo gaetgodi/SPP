@@ -390,3 +390,40 @@ body {
 .spp-mm-section {
     margin-bottom: 1rem;
 }
+.spp-mm-item a {
+    display: block;
+    padding: 8px 10px;
+    color: var(--spp-dark) !important;
+    text-decoration: none;
+    font-size: 1rem;
+    line-height: 1.5;
+    border-radius: 6px;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.spp-mm-item a:hover,
+.spp-mm-item a:active {
+    background: rgba(0, 137, 123, 0.12) !important;
+    color: var(--spp-primary) !important;
+}
+
+.spp-mm-list ul.sub-menu .spp-mm-item a {
+    font-size: 0.9rem;
+    padding-left: 14px;
+}
+
+.spp-mm-heading {
+    color: #ffffff !important;
+    background: var(--spp-primary);
+    font-size: 1rem;
+    font-weight: 700;
+    margin-bottom: 0.3rem;
+    padding: 6px 10px;
+    border-radius: 6px;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+}
+
+.spp-mm-section {
+    margin-bottom: 0.8rem;
+}
