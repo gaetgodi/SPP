@@ -357,3 +357,11 @@ body {
         display: none !important;
     }
 }
+@media (max-width: 980px) {
+    #et_mobile_nav_menu,
+    .mobile_menu_bar,
+    #et-top-navigation .et_mobile_menu,
+    #et-top-navigation {
+        display: none !important;
+    }
+}
