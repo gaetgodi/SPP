@@ -71,7 +71,7 @@ document.addEventListener("DOMContentLoaded", function () {
     // Triggered by .spp-side-nav--collapsible class
     // Works on both desktop side nav and mobile drawers
     // =====================================================
-    document.querySelectorAll('.spp-side-nav--collapsible').forEach(function(nav) {
+    document.querySelectorAll('nav.spp-side-nav--collapsible').forEach(function(nav) {
 
         nav.querySelectorAll('.spp-mm-section').forEach(function(section) {
             const heading  = section.querySelector('.spp-mm-heading');

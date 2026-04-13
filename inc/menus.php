@@ -103,27 +103,36 @@ function spp_render_section($items, $section_title) {
 /* =========================================================
    LEFT DRAWER — CLUB NAVIGATION (ALL USERS)
    ========================================================= */
-function spp_mobile_menu_shortcode() {
+   function spp_mobile_menu_shortcode() {
     $items = spp_get_main_menu_items();
     if (!$items) return '<p>Menu not found.</p>';
 
     $output = '<nav class="spp-mobile-menu-wrapper spp-side-nav--collapsible">';
 
-    // Home — direct link, always visible
-    $output .= '<div class="spp-mm-section spp-mm-section--direct">';
-    $output .= '<ul class="spp-mm-list">';
-    $output .= '<li class="spp-mm-item"><a href="/">Home</a></li>';
-    $output .= '</ul>';
-    $output .= '</div>';
+    foreach ($items as $item) {
+        if ((int) $item->menu_item_parent !== 0) continue;
 
-    $left_sections = ['Ladder', 'FAQ', 'Other Events', 'Club info & Skills', 'Photos'];
+        $children = spp_render_menu_tree($items, $item->ID);
+        $output .= '<div class="spp-mm-section">';
 
-    foreach ($left_sections as $section) {
-        $output .= spp_render_section($items, $section);
+        if ($children) {
+            $output .= '<h3 class="spp-mm-heading">' . esc_html($item->title) . '</h3>';
+            $output .= '<ul class="spp-mm-list">' . $children . '</ul>';
+        } else {
+            // Direct link — always visible
+            $output .= '<div class="spp-mm-section--direct">';
+            $output .= '<ul class="spp-mm-list">';
+            $output .= '<li class="spp-mm-item"><a href="' . esc_url($item->url) . '">' . esc_html($item->title) . '</a></li>';
+            $output .= '</ul>';
+            $output .= '</div>';
+        }
+
+        $output .= '</div>';
     }
 
     $output .= '</nav>';
     return $output;
+}
 }
 add_shortcode('spp_mobile_menu', 'spp_mobile_menu_shortcode');
 
