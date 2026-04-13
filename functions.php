@@ -27,3 +27,4 @@ add_action( 'wp_enqueue_scripts', 'divi_spp_child_enqueue_styles' );
 // Core includes
 require_once get_stylesheet_directory() . '/inc/menus.php';
 require_once get_stylesheet_directory() . '/inc/shortcodes.php';
+wp_enqueue_style('spp-dashboard', get_stylesheet_directory_uri() . '/css/spp-dashboard.css', [], '1.0.0');

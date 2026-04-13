@@ -1,0 +1,158 @@
+/*
+=================================================
+spp-dashboard.css
+Dashboard widget and page-specific styles
+Site: pickleballstouffville.ca (staging)
+=================================================
+All tokens defined in spp-drawers.css :root
+=================================================
+*/
+
+/* =====================================================
+   DASHBOARD WIDGET
+   ===================================================== */
+.spp-dashboard {
+    padding: var(--spp-space-md);
+    margin-bottom: var(--spp-space-lg);
+}
+
+/* Welcome header */
+.spp-dashboard-header h2 {
+    color: var(--spp-primary) !important;
+    font-family: var(--spp-font-heading);
+    font-size: var(--spp-font-xl);
+    margin-bottom: var(--spp-space-sm);
+}
+
+/* Rank display */
+.spp-dashboard-rank {
+    display: inline-block;
+    background: var(--spp-primary);
+    color: var(--spp-text-light) !important;
+    padding: var(--spp-space-sm) var(--spp-space-md);
+    border-radius: var(--spp-radius-lg);
+    margin-bottom: var(--spp-space-md);
+    font-size: var(--spp-font-md);
+}
+
+.spp-dashboard-rank p {
+    margin: 0;
+    color: var(--spp-text-light) !important;
+}
+
+.spp-dashboard-rank strong {
+    font-size: var(--spp-font-xl);
+    margin-left: var(--spp-space-xs);
+}
+
+/* Schedule section */
+.spp-dashboard-schedule {
+    margin-top: var(--spp-space-md);
+}
+
+.spp-dashboard-schedule h3 {
+    color: var(--spp-primary) !important;
+    font-size: var(--spp-font-lg);
+    margin-bottom: var(--spp-space-sm);
+    padding-bottom: var(--spp-space-xs);
+    border-bottom: 2px solid var(--spp-primary);
+}
+
+/* Schedule table */
+.spp-dashboard-table {
+    width: 100%;
+    max-width: 400px;
+    border-collapse: collapse;
+    margin-top: var(--spp-space-sm);
+}
+
+.spp-dashboard-table tr {
+    border-bottom: 1px solid var(--spp-border-color);
+}
+
+.spp-dashboard-table th {
+    text-align: left;
+    padding: 8px 12px;
+    color: var(--spp-primary) !important;
+    font-weight: 600;
+    width: 40%;
+    background: var(--spp-item-bg);
+}
+
+.spp-dashboard-table td {
+    padding: 8px 12px;
+    color: var(--spp-dark);
+    background: var(--spp-bg-white);
+}
+
+/* Notice messages */
+.spp-dashboard-notice {
+    color: var(--spp-text-subtle);
+    font-style: italic;
+    padding: var(--spp-space-sm) 0;
+}
+
+/* Welcome (logged out) */
+.spp-dashboard-welcome h2 {
+    color: var(--spp-primary) !important;
+    font-family: var(--spp-font-heading);
+    margin-bottom: var(--spp-space-sm);
+}
+
+.spp-dashboard-welcome a {
+    color: var(--spp-primary);
+    font-weight: 600;
+}
+
+/* =====================================================
+   COLLAPSIBLE SIDE NAV ACCORDION
+   ===================================================== */
+
+/* Hide sub-items by default when collapsible class is present */
+.spp-side-nav--collapsible .spp-mm-section .spp-mm-list,
+.spp-side-nav--collapsible .spp-mm-list ul.sub-menu {
+    display: none;
+}
+
+/* Show when open */
+.spp-side-nav--collapsible .spp-mm-section.spp-open .spp-mm-list {
+    display: block;
+}
+
+/* Heading becomes a button */
+.spp-side-nav--collapsible .spp-mm-heading {
+    cursor: pointer;
+    display: flex !important;
+    justify-content: space-between;
+    align-items: center;
+    user-select: none;
+}
+
+/* Arrow indicator */
+.spp-side-nav--collapsible .spp-mm-heading::after {
+    content: '▸';
+    font-size: 0.85rem;
+    transition: transform 0.2s ease;
+    flex-shrink: 0;
+}
+
+/* Rotate arrow when open */
+.spp-side-nav--collapsible .spp-mm-section.spp-open .spp-mm-heading::after {
+    transform: rotate(90deg);
+}
+
+/* Direct link items (no children) always visible */
+.spp-side-nav--collapsible .spp-mm-section--direct .spp-mm-list {
+    display: block !important;
+}
+
+/* Mobile drawer also gets collapsible when class present */
+#spp-mm-bottom-sheet .spp-side-nav--collapsible .spp-mm-section .spp-mm-list,
+#spp-footer-mm-bottom-sheet .spp-side-nav--collapsible .spp-mm-section .spp-mm-list {
+    display: none;
+}
+
+#spp-mm-bottom-sheet .spp-side-nav--collapsible .spp-mm-section.spp-open .spp-mm-list,
+#spp-footer-mm-bottom-sheet .spp-side-nav--collapsible .spp-mm-section.spp-open .spp-mm-list {
+    display: block;
+}
