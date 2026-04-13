@@ -43,8 +43,8 @@ Site: pickleballstouffville.ca (staging)
     --spp-font-md:          1rem;
     --spp-font-lg:          1.125rem;
     --spp-font-xl:          1.25rem;
-    --spp-body-size:        1rem;
-    --spp-line-height:      1.6;
+    --spp-body-size:        1.1rem;
+    --spp-line-height:      1.2;
 
     /* --- Spacing --- */
     --spp-space-xs:         0.25rem;
