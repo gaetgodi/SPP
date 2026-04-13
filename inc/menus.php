@@ -219,7 +219,7 @@ add_action('wp_footer', function() {
 /* =========================================================
    DESKTOP SIDE NAV — LEFT COLUMN SHORTCODE
    ========================================================= */
-ffunction spp_side_nav_shortcode() {
+function spp_side_nav_shortcode() {
     $items = spp_get_main_menu_items();
     if (!$items) return '';
 
