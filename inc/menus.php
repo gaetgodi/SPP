@@ -133,7 +133,7 @@ function spp_render_section($items, $section_title) {
     $output .= '</nav>';
     return $output;
 }
-}
+
 add_shortcode('spp_mobile_menu', 'spp_mobile_menu_shortcode');
 
 /* =========================================================
