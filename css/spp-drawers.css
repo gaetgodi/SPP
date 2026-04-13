@@ -405,3 +405,68 @@ body.spp-footer-mm-open #page-container {
         margin-top: -320px !important;
     }
 }
+/* =====================================================
+   DESKTOP SIDE NAV
+   ===================================================== */
+@media (min-width: 981px) {
+    .spp-side-nav {
+        padding: 0;
+    }
+
+    .spp-side-nav .spp-mm-section {
+        margin-bottom: 0.8rem;
+    }
+
+    .spp-side-nav .spp-mm-heading {
+        color: var(--spp-text-light) !important;
+        background: var(--spp-primary);
+        font-size: var(--spp-font-md);
+        font-weight: 700;
+        padding: 6px 10px;
+        border-radius: var(--spp-radius);
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        margin-bottom: 0.3rem;
+    }
+
+    .spp-side-nav .spp-mm-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+    }
+
+    .spp-side-nav .spp-mm-item {
+        margin-bottom: 3px;
+    }
+
+    .spp-side-nav .spp-mm-item a {
+        display: block;
+        padding: 6px 10px;
+        color: var(--spp-dark) !important;
+        background: var(--spp-item-bg) !important;
+        text-decoration: none;
+        font-size: var(--spp-font-sm);
+        border-radius: var(--spp-radius);
+        border-left: 3px solid transparent;
+        transition: background 0.15s ease, color 0.15s ease, border-left-color 0.15s ease;
+    }
+
+    .spp-side-nav .spp-mm-item a:hover {
+        background: rgba(0, 137, 123, 0.15) !important;
+        color: var(--spp-primary) !important;
+        border-left-color: var(--spp-primary) !important;
+    }
+
+    .spp-side-nav .spp-mm-list ul.sub-menu {
+        list-style: none;
+        margin-left: 0.5rem;
+        padding-left: 0.5rem;
+        border-left: 2px solid var(--spp-secondary);
+        margin-top: 3px;
+    }
+
+    .spp-side-nav .spp-mm-list ul.sub-menu .spp-mm-item a {
+        font-size: var(--spp-font-xs);
+        background: var(--spp-item-bg-sub) !important;
+    }
+}
