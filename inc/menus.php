@@ -219,18 +219,31 @@ add_action('wp_footer', function() {
 /* =========================================================
    DESKTOP SIDE NAV — LEFT COLUMN SHORTCODE
    ========================================================= */
-function spp_side_nav_shortcode() {
+   function spp_side_nav_shortcode() {
     $items = spp_get_main_menu_items();
     if (!$items) return '';
 
-    $left_sections = ['Home', 'Ladder', 'FAQ', 'Other Events', 'Club info & Skills', 'Photos'];
-
     $output = '<nav class="spp-side-nav">';
-    foreach ($left_sections as $section) {
-        $output .= spp_render_section($items, $section);
-    }
-    $output .= '</nav>';
 
+    // Get all top-level items and render each with its children
+    foreach ($items as $item) {
+        if ((int) $item->menu_item_parent !== 0) continue;
+        
+        $children = spp_render_menu_tree($items, $item->ID);
+        $output .= '<div class="spp-mm-section">';
+        
+        if ($children) {
+            $output .= '<h3 class="spp-mm-heading">' . esc_html($item->title) . '</h3>';
+            $output .= '<ul class="spp-mm-list">' . $children . '</ul>';
+        } else {
+            $output .= '<ul class="spp-mm-list">';
+            $output .= '<li class="spp-mm-item"><a href="' . esc_url($item->url) . '">' . esc_html($item->title) . '</a></li>';
+            $output .= '</ul>';
+        }
+        
+        $output .= '</div>';
+    }
+
+    $output .= '</nav>';
     return $output;
 }
-add_shortcode('spp_side_nav', 'spp_side_nav_shortcode');
