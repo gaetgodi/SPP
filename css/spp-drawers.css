@@ -470,3 +470,8 @@ body.spp-footer-mm-open #page-container {
         background: var(--spp-item-bg-sub) !important;
     }
 }
+@media (max-width: 980px) {
+    .spp-side-nav {
+        display: none !important;
+    }
+}
