@@ -216,3 +216,21 @@ add_action('wp_footer', function() {
         </div>
     </div>';
 });
+/* =========================================================
+   DESKTOP SIDE NAV — LEFT COLUMN SHORTCODE
+   ========================================================= */
+function spp_side_nav_shortcode() {
+    $items = spp_get_main_menu_items();
+    if (!$items) return '';
+
+    $left_sections = ['Home', 'Ladder', 'FAQ', 'Other Events', 'Club info & Skills', 'Photos'];
+
+    $output = '<nav class="spp-side-nav">';
+    foreach ($left_sections as $section) {
+        $output .= spp_render_section($items, $section);
+    }
+    $output .= '</nav>';
+
+    return $output;
+}
+add_shortcode('spp_side_nav', 'spp_side_nav_shortcode');
