@@ -88,10 +88,12 @@ function spp_render_section($items, $section_title) {
         $output .= '<h3 class="spp-mm-heading">' . esc_html($section_title) . '</h3>';
         $output .= '<ul class="spp-mm-list">' . $children . '</ul>';
     } else if ($parent_item) {
-        // Direct link with no children
+        // Direct link with no children — always visible
+        $output .= '<div class="spp-mm-section--direct">';
         $output .= '<ul class="spp-mm-list">';
         $output .= '<li class="spp-mm-item"><a href="' . esc_url($parent_item->url) . '">' . esc_html($parent_item->title) . '</a></li>';
         $output .= '</ul>';
+        $output .= '</div>';
     }
 
     $output .= '</div>';
@@ -105,10 +107,10 @@ function spp_mobile_menu_shortcode() {
     $items = spp_get_main_menu_items();
     if (!$items) return '<p>Menu not found.</p>';
 
-    $output = '<div class="spp-mobile-menu-wrapper">';
+    $output = '<nav class="spp-mobile-menu-wrapper spp-side-nav--collapsible">';
 
-    // Home
-    $output .= '<div class="spp-mm-section">';
+    // Home — direct link, always visible
+    $output .= '<div class="spp-mm-section spp-mm-section--direct">';
     $output .= '<ul class="spp-mm-list">';
     $output .= '<li class="spp-mm-item"><a href="/">Home</a></li>';
     $output .= '</ul>';
@@ -120,7 +122,7 @@ function spp_mobile_menu_shortcode() {
         $output .= spp_render_section($items, $section);
     }
 
-    $output .= '</div>';
+    $output .= '</nav>';
     return $output;
 }
 add_shortcode('spp_mobile_menu', 'spp_mobile_menu_shortcode');
@@ -131,10 +133,10 @@ add_shortcode('spp_mobile_menu', 'spp_mobile_menu_shortcode');
 function spp_tools_menu_shortcode() {
     $items = spp_get_main_menu_items();
 
-    $output = '<div class="spp-mobile-menu-wrapper spp-tools-mm">';
+    $output = '<nav class="spp-mobile-menu-wrapper spp-tools-mm spp-side-nav--collapsible">';
 
-    // Account — all users
-    $output .= '<div class="spp-mm-section">';
+    // Account — all users, always visible
+    $output .= '<div class="spp-mm-section spp-mm-section--direct">';
     $output .= '<ul class="spp-mm-list">';
 
     if (is_user_logged_in()) {
@@ -161,7 +163,7 @@ function spp_tools_menu_shortcode() {
         if ($mgmt) $output .= $mgmt;
     }
 
-    $output .= '</div>';
+    $output .= '</nav>';
     return $output;
 }
 add_shortcode('spp_tools_menu', 'spp_tools_menu_shortcode');
@@ -216,31 +218,34 @@ add_action('wp_footer', function() {
         </div>
     </div>';
 });
+
 /* =========================================================
-   DESKTOP SIDE NAV — LEFT COLUMN SHORTCODE
+   DESKTOP SIDE NAV — SHORTCODE
    ========================================================= */
 function spp_side_nav_shortcode() {
     $items = spp_get_main_menu_items();
     if (!$items) return '';
 
-    $output = '<nav class="spp-side-nav">';
+    $output = '<nav class="spp-side-nav spp-side-nav--collapsible">';
 
-    // Get all top-level items and render each with its children
     foreach ($items as $item) {
         if ((int) $item->menu_item_parent !== 0) continue;
-        
+
         $children = spp_render_menu_tree($items, $item->ID);
         $output .= '<div class="spp-mm-section">';
-        
+
         if ($children) {
             $output .= '<h3 class="spp-mm-heading">' . esc_html($item->title) . '</h3>';
             $output .= '<ul class="spp-mm-list">' . $children . '</ul>';
         } else {
+            // Direct link — always visible
+            $output .= '<div class="spp-mm-section--direct">';
             $output .= '<ul class="spp-mm-list">';
             $output .= '<li class="spp-mm-item"><a href="' . esc_url($item->url) . '">' . esc_html($item->title) . '</a></li>';
             $output .= '</ul>';
+            $output .= '</div>';
         }
-        
+
         $output .= '</div>';
     }
 
