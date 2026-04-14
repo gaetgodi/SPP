@@ -11,69 +11,6 @@ Site: pickleballstouffville.ca (staging)
    Global CSS variables for the entire theme.
    All components reference these tokens.
    ===================================================== */
-:root {
-    /* --- Brand Colors --- */
-    --spp-primary:          #00897B;   /* Teal */
-    --spp-secondary:        #26A69A;   /* Light teal */
-    --spp-accent:           #004D40;   /* Dark teal */
-
-    /* --- Text Colors --- */
-    --spp-dark:             #1a1a1a;
-    --spp-text:             #333333;
-    --spp-text-subtle:      #555555;
-    --spp-text-light:       #ffffff;
-
-    /* --- Background Colors --- */
-    --spp-bg-page:          #f5f0e8;   /* Warm cream - matches home page */
-    --spp-bg-white:         #ffffff;
-    --spp-bg-light:         #f5f5f5;
-    --spp-drawer-bg:        #f5f5f5;
-    --spp-item-bg:          #eef7f6;   /* Pale teal */
-    --spp-item-bg-sub:      #e4f2f1;   /* Slightly darker pale teal */
-
-    /* --- Border Colors --- */
-    --spp-border-color:     #e0e0e0;
-    --spp-border-light:     #f0f0f0;
-
-    /* --- Typography --- */
-    --spp-font-heading:     'Georgia', serif;
-    --spp-font-body:        'Open Sans', Arial, sans-serif;
-    --spp-font-xs:          0.75rem;
-    --spp-font-sm:          0.875rem;
-    --spp-font-md:          1rem;
-    --spp-font-lg:          1.125rem;
-    --spp-font-xl:          1.25rem;
-    --spp-body-size:        1.1rem;
-    --spp-line-height:      1.2;
-
-    /* --- Spacing --- */
-    --spp-space-xs:         0.25rem;
-    --spp-space-sm:         0.5rem;
-    --spp-space-md:         1rem;
-    --spp-space-lg:         1.5rem;
-    --spp-space-xl:         2rem;
-
-    /* --- Border Radius --- */
-    --spp-radius:           6px;
-    --spp-radius-lg:        10px;
-    --spp-radius-pill:      999px;
-
-    /* --- FAQ Specific Tokens --- */
-    --spp-faq-gradient-start:       #eef7f6;
-    --spp-faq-gradient-end:         #00897B;
-    --spp-faq-gradient-hover-start: #e4f2f1;
-    --spp-faq-gradient-hover-end:   #00796B;
-    --spp-faq-answer-bg:            #f9f9f9;
-    --spp-faq-answer-text:          #333333;
-    --spp-faq-answer-text-subtle:   #555555;
-    --spp-faq-border-active:        #00897B;
-    --spp-faq-icon-bg:              #004D40;
-    --spp-faq-link:                 #00897B;
-    --spp-faq-link-hover:           #004D40;
-    --spp-faq-no-results:           #666666;
-    --spp-faq-label-color:          #00897B;
-    --spp-faq-dropdown-border:      #00897B;
-}
 
 /* =====================================================
    DESKTOP — DISABLE ALL MOBILE DRAWERS

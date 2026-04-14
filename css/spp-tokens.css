@@ -1,0 +1,238 @@
+/*
+=================================================
+spp-tokens.css
+Design Token System — Single Source of Truth
+Site: pickleballstouffville.ca (staging)
+=================================================
+All CSS custom properties for the SPP theme.
+Load this FIRST before all other CSS files.
+
+Token categories:
+  - Brand Colors
+  - Text Colors
+  - Background Colors
+  - Border Colors
+  - Typography — Fonts
+  - Typography — Sizes (desktop)
+  - Typography — Headings (desktop)
+  - Typography — Line Height & Spacing
+  - Spacing
+  - Border Radius
+  - Navigation (drawer + side nav)
+  - Dashboard
+  - FAQ
+=================================================
+*/
+
+:root {
+
+    /* =====================================================
+       BRAND COLORS
+       ===================================================== */
+    --spp-primary:          #00897B;   /* Teal */
+    --spp-secondary:        #26A69A;   /* Light teal */
+    --spp-accent:           #004D40;   /* Dark teal */
+
+    /* =====================================================
+       TEXT COLORS
+       ===================================================== */
+    --spp-text:             #2c2c2c;   /* Default body text */
+    --spp-text-subtle:      #555555;   /* Secondary text */
+    --spp-text-light:       #ffffff;   /* Text on dark backgrounds */
+    --spp-dark:             #1a1a1a;   /* Near black */
+    --spp-link:             #00897B;   /* Link color */
+    --spp-link-hover:       #004D40;   /* Link hover */
+
+    /* =====================================================
+       BACKGROUND COLORS
+       ===================================================== */
+    --spp-bg-page:          #f5f0e8;   /* Warm cream — page background */
+    --spp-bg-white:         #ffffff;
+    --spp-bg-light:         #f5f5f5;
+    --spp-drawer-bg:        #f5f5f5;
+    --spp-item-bg:          #eef7f6;   /* Pale teal — nav items */
+    --spp-item-bg-sub:      #e4f2f1;   /* Slightly darker pale teal */
+
+    /* =====================================================
+       BORDER COLORS
+       ===================================================== */
+    --spp-border-color:     #e0e0e0;
+    --spp-border-light:     #f0f0f0;
+
+    /* =====================================================
+       TYPOGRAPHY — FONTS
+       ===================================================== */
+    --spp-font-heading:     'Georgia', serif;
+    --spp-font-body:        'Open Sans', Arial, sans-serif;
+
+    /* =====================================================
+       TYPOGRAPHY — BODY SIZES (DESKTOP)
+       ===================================================== */
+    --spp-font-xs:          0.75rem;   /* 12px */
+    --spp-font-sm:          0.875rem;  /* 14px */
+    --spp-font-md:          1rem;      /* 16px */
+    --spp-font-lg:          1.125rem;  /* 18px */
+    --spp-font-xl:          1.25rem;   /* 20px */
+    --spp-font-2xl:         1.5rem;    /* 24px */
+
+    --spp-body-size:        1.05rem;   /* Default body text */
+    --spp-body-color:       var(--spp-text);
+    --spp-line-height:      1.6;       /* Default line height */
+    --spp-line-height-tight:1.3;       /* Tight line height for headings */
+
+    /* =====================================================
+       TYPOGRAPHY — HEADINGS (DESKTOP)
+       ===================================================== */
+    --spp-h1-size:          2rem;      /* 32px */
+    --spp-h1-color:         var(--spp-primary);
+    --spp-h1-weight:        700;
+    --spp-h1-line-height:   var(--spp-line-height-tight);
+    --spp-h1-margin-bottom: 1rem;
+
+    --spp-h2-size:          1.6rem;    /* ~26px */
+    --spp-h2-color:         var(--spp-primary);
+    --spp-h2-weight:        700;
+    --spp-h2-line-height:   var(--spp-line-height-tight);
+    --spp-h2-margin-bottom: 0.75rem;
+
+    --spp-h3-size:          1.3rem;    /* ~21px */
+    --spp-h3-color:         var(--spp-accent);
+    --spp-h3-weight:        600;
+    --spp-h3-line-height:   var(--spp-line-height-tight);
+    --spp-h3-margin-bottom: 0.5rem;
+
+    --spp-h4-size:          1.1rem;    /* ~18px */
+    --spp-h4-color:         var(--spp-dark);
+    --spp-h4-weight:        600;
+    --spp-h4-line-height:   var(--spp-line-height-tight);
+    --spp-h4-margin-bottom: 0.4rem;
+
+    /* =====================================================
+       SPACING
+       ===================================================== */
+    --spp-space-xs:         0.25rem;   /* 4px */
+    --spp-space-sm:         0.5rem;    /* 8px */
+    --spp-space-md:         1rem;      /* 16px */
+    --spp-space-lg:         1.5rem;    /* 24px */
+    --spp-space-xl:         2rem;      /* 32px */
+    --spp-space-2xl:        3rem;      /* 48px */
+
+    /* Content padding */
+    --spp-content-padding:  1.5rem;    /* Left/right padding on content column */
+
+    /* =====================================================
+       BORDER RADIUS
+       ===================================================== */
+    --spp-radius:           6px;
+    --spp-radius-lg:        10px;
+    --spp-radius-pill:      999px;
+
+    /* =====================================================
+       NAVIGATION TOKENS (drawer + side nav)
+       ===================================================== */
+    --spp-nav-item-bg:      var(--spp-item-bg);
+    --spp-nav-item-bg-sub:  var(--spp-item-bg-sub);
+    --spp-nav-item-color:   var(--spp-dark);
+    --spp-nav-heading-bg:   var(--spp-primary);
+    --spp-nav-heading-color:var(--spp-text-light);
+
+    /* =====================================================
+       FAQ TOKENS
+       ===================================================== */
+    --spp-faq-gradient-start:       #eef7f6;
+    --spp-faq-gradient-end:         #00897B;
+    --spp-faq-gradient-hover-start: #e4f2f1;
+    --spp-faq-gradient-hover-end:   #00796B;
+    --spp-faq-answer-bg:            #f9f9f9;
+    --spp-faq-answer-text:          var(--spp-text);
+    --spp-faq-answer-text-subtle:   var(--spp-text-subtle);
+    --spp-faq-border-active:        var(--spp-primary);
+    --spp-faq-icon-bg:              var(--spp-accent);
+    --spp-faq-link:                 var(--spp-primary);
+    --spp-faq-link-hover:           var(--spp-accent);
+    --spp-faq-no-results:           #666666;
+    --spp-faq-label-color:          var(--spp-primary);
+    --spp-faq-dropdown-border:      var(--spp-primary);
+}
+
+/* =====================================================
+   GLOBAL DEFAULTS — BODY TEXT
+   ===================================================== */
+body,
+.et_pb_text,
+.et_pb_module {
+    font-family: var(--spp-font-body);
+    font-size: var(--spp-body-size);
+    color: var(--spp-body-color);
+    line-height: var(--spp-line-height);
+}
+
+/* =====================================================
+   GLOBAL DEFAULTS — HEADINGS
+   ===================================================== */
+h1, .et_pb_heading h1 {
+    font-family: var(--spp-font-heading);
+    font-size: var(--spp-h1-size) !important;
+    color: var(--spp-h1-color) !important;
+    font-weight: var(--spp-h1-weight);
+    line-height: var(--spp-h1-line-height);
+    margin-bottom: var(--spp-h1-margin-bottom);
+}
+
+h2, .et_pb_heading h2 {
+    font-family: var(--spp-font-heading);
+    font-size: var(--spp-h2-size) !important;
+    color: var(--spp-h2-color) !important;
+    font-weight: var(--spp-h2-weight);
+    line-height: var(--spp-h2-line-height);
+    margin-bottom: var(--spp-h2-margin-bottom);
+}
+
+h3, .et_pb_heading h3 {
+    font-family: var(--spp-font-heading);
+    font-size: var(--spp-h3-size) !important;
+    color: var(--spp-h3-color) !important;
+    font-weight: var(--spp-h3-weight);
+    line-height: var(--spp-h3-line-height);
+    margin-bottom: var(--spp-h3-margin-bottom);
+}
+
+h4, .et_pb_heading h4 {
+    font-family: var(--spp-font-heading);
+    font-size: var(--spp-h4-size) !important;
+    color: var(--spp-h4-color) !important;
+    font-weight: var(--spp-h4-weight);
+    line-height: var(--spp-h4-line-height);
+    margin-bottom: var(--spp-h4-margin-bottom);
+}
+
+/* =====================================================
+   GLOBAL DEFAULTS — LINKS
+   ===================================================== */
+a {
+    color: var(--spp-link);
+    text-decoration: none;
+}
+
+a:hover {
+    color: var(--spp-link-hover);
+    text-decoration: underline;
+}
+
+/* =====================================================
+   MOBILE OVERRIDES
+   ===================================================== */
+@media (max-width: 980px) {
+
+    :root {
+        --spp-body-size:        1rem;      /* Slightly smaller on mobile */
+        --spp-line-height:      1.5;
+
+        --spp-h1-size:          1.6rem;
+        --spp-h2-size:          1.35rem;
+        --spp-h3-size:          1.15rem;
+        --spp-h4-size:          1rem;
+
+        --spp-content-padding:  1rem;
+    }
+}
