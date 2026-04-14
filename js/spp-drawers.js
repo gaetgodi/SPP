@@ -68,20 +68,30 @@ document.addEventListener("DOMContentLoaded", function () {
 
     // =====================================================
     // COLLAPSIBLE ACCORDION SIDE NAV
-    // Triggered by .spp-side-nav--collapsible class
-    // Works on both desktop side nav and mobile drawers
+    // - Heading text (if a link) navigates on click
+    // - Arrow toggle button expands/collapses section
     // =====================================================
     document.querySelectorAll('nav.spp-side-nav--collapsible').forEach(function(nav) {
 
         nav.querySelectorAll('.spp-mm-section').forEach(function(section) {
-            const heading  = section.querySelector('.spp-mm-heading');
-            const list     = section.querySelector('.spp-mm-list');
+            const heading = section.querySelector('.spp-mm-heading');
+            const list    = section.querySelector('.spp-mm-list');
 
             // Sections without a heading (direct links) stay visible
             if (!heading || !list) return;
 
-            // Make heading clickable
-            heading.addEventListener('click', function() {
+            // Create a separate toggle button (arrow)
+            const toggleBtn = document.createElement('button');
+            toggleBtn.className = 'spp-accordion-toggle';
+            toggleBtn.setAttribute('aria-label', 'Toggle section');
+            toggleBtn.innerHTML = '&#9658;'; // ▶
+            heading.appendChild(toggleBtn);
+
+            // Toggle button click — expand/collapse only
+            toggleBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+
                 const isOpen = section.classList.contains('spp-open');
 
                 // Close all sections in this nav (single open)
@@ -94,6 +104,22 @@ document.addEventListener("DOMContentLoaded", function () {
                     section.classList.add('spp-open');
                 }
             });
+
+            // If heading has no link, clicking the heading text also toggles
+            const headingLink = heading.querySelector('a');
+            if (!headingLink) {
+                heading.style.cursor = 'pointer';
+                heading.addEventListener('click', function(e) {
+                    if (e.target === toggleBtn) return; // already handled
+                    const isOpen = section.classList.contains('spp-open');
+                    nav.querySelectorAll('.spp-mm-section.spp-open').forEach(function(openSection) {
+                        openSection.classList.remove('spp-open');
+                    });
+                    if (!isOpen) {
+                        section.classList.add('spp-open');
+                    }
+                });
+            }
         });
     });
 

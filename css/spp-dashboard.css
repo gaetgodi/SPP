@@ -128,17 +128,9 @@ All tokens defined in spp-drawers.css :root
     user-select: none;
 }
 
-/* Arrow indicator */
+/* Arrow handled by JS toggle button */
 .spp-side-nav--collapsible .spp-mm-heading::after {
-    content: '▸';
-    font-size: 0.85rem;
-    transition: transform 0.2s ease;
-    flex-shrink: 0;
-}
-
-/* Rotate arrow when open */
-.spp-side-nav--collapsible .spp-mm-section.spp-open .spp-mm-heading::after {
-    transform: rotate(90deg);
+    content: none;
 }
 
 /* Direct link items (no children) always visible */
@@ -155,4 +147,21 @@ All tokens defined in spp-drawers.css :root
 #spp-mm-bottom-sheet .spp-side-nav--collapsible .spp-mm-section.spp-open .spp-mm-list,
 #spp-footer-mm-bottom-sheet .spp-side-nav--collapsible .spp-mm-section.spp-open .spp-mm-list {
     display: block;
+}
+
+/* Accordion toggle button */
+.spp-accordion-toggle {
+    background: transparent;
+    border: none;
+    color: var(--spp-text-light);
+    cursor: pointer;
+    padding: 0 0 0 8px;
+    font-size: 0.85rem;
+    line-height: 1;
+    transition: transform 0.2s ease;
+    flex-shrink: 0;
+}
+
+.spp-mm-section.spp-open .spp-accordion-toggle {
+    transform: rotate(90deg);
 }
