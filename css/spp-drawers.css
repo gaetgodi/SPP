@@ -403,3 +403,8 @@ body.spp-footer-mm-open #page-container {
         display: none !important;
     }
 }
+@media (max-width: 980px) {
+    .et_pb_section_0_tb_footer {
+        padding-bottom: 120px !important;
+    }
+}
