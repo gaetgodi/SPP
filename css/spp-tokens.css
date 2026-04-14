@@ -243,10 +243,10 @@ a:hover {
 /* Desktop side nav — smaller font size */
 @media (min-width: 981px) {
     .spp-side-nav .spp-mm-heading {
-        font-size: 0.85rem;
+        font-size: 0.75rem;
     }
     
     .spp-side-nav .spp-mm-item a {
-        font-size: 0.85rem;
+        font-size: 0.75rem;
     }
 }
