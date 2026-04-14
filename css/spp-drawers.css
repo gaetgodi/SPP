@@ -1,130 +1,399 @@
-document.addEventListener("DOMContentLoaded", function () {
+/*
+=================================================
+SPP Drawer Navigation System
+Mobile bottom drawer navigation
+Site: pickleballstouffville.ca (staging)
+=================================================
+All tokens defined in spp-tokens.css
+=================================================
+*/
 
-    // =====================================================
-    // DRAWER SYSTEM
-    // =====================================================
-    const body    = document.body;
-    const html    = document.documentElement;
-    const overlay = document.getElementById("spp-mm-overlay");
+/* =====================================================
+   DESKTOP — DISABLE ALL MOBILE DRAWERS
+   ===================================================== */
+@media (min-width: 981px) {
+    #spp-mm-drawer,
+    #spp-mm-bottom-sheet,
+    #spp-footer-mm-bottom-sheet,
+    #spp-mm-overlay,
+    .spp-mobile-menu-wrapper {
+        display: none !important;
+    }
+}
 
-    const openMain   = document.getElementById("spp-mm-open");
-    const closeMain  = document.getElementById("spp-mm-close");
+/* =====================================================
+   GLOBAL — HIDE MOBILE MENUS WHEN NOT IN DRAWERS
+   ===================================================== */
+.spp-mobile-menu-wrapper {
+    display: none !important;
+}
 
-    const openFooter  = document.getElementById("spp-footer-mm-open");
-    const closeFooter = document.getElementById("spp-footer-mm-close");
+#spp-mm-bottom-sheet .spp-mm-sheet-body .spp-mobile-menu-wrapper,
+#spp-footer-mm-bottom-sheet .spp-mm-sheet-body .spp-mobile-menu-wrapper {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 0.6rem;
+}
 
-    if (overlay) {
-        function closeAll() {
-            body.classList.remove("spp-mm-open", "spp-footer-mm-open");
-            html.classList.remove("spp-mm-open", "spp-footer-mm-open");
-        }
+/* =====================================================
+   PREVENT BODY SCROLL WHEN DRAWER OPEN
+   ===================================================== */
+html.spp-mm-open,
+body.spp-mm-open,
+html.spp-footer-mm-open,
+body.spp-footer-mm-open {
+    overflow: hidden;
+    touch-action: none;
+    height: 100%;
+}
 
-        function toggleMainDrawer() {
-            if (body.classList.contains("spp-mm-open")) {
-                closeAll();
-            } else {
-                closeAll();
-                body.classList.add("spp-mm-open");
-                html.classList.add("spp-mm-open");
-            }
-        }
+body.spp-mm-open,
+body.spp-footer-mm-open {
+    padding-bottom: 100px !important;
+    overflow-y: scroll !important;
+    position: static !important;
+    height: auto !important;
+}
 
-        function toggleFooterDrawer() {
-            if (body.classList.contains("spp-footer-mm-open")) {
-                closeAll();
-            } else {
-                closeAll();
-                body.classList.add("spp-footer-mm-open");
-                html.classList.add("spp-footer-mm-open");
-            }
-        }
+body {
+    overflow-x: visible !important;
+}
 
-        openMain?.addEventListener("click", toggleMainDrawer);
-        closeMain?.addEventListener("click", closeAll);
+#page-container,
+#main-content,
+.et_pb_section,
+.et_builder_inner_content,
+#et-main-area {
+    overflow: visible !important;
+    transform: none !important;
+}
 
-        openFooter?.addEventListener("click", toggleFooterDrawer);
-        closeFooter?.addEventListener("click", closeAll);
+body.spp-mm-open #page-container,
+body.spp-footer-mm-open #page-container {
+    position: relative !important;
+    z-index: 1 !important;
+    overflow: visible !important;
+    height: auto !important;
+    min-height: 150vh !important;
+}
 
-        overlay.addEventListener("click", closeAll);
+/* =====================================================
+   MOBILE ONLY
+   ===================================================== */
+@media (max-width: 980px) {
 
-        document.addEventListener("click", function(e) {
-            if (!body.classList.contains("spp-mm-open") && !body.classList.contains("spp-footer-mm-open")) {
-                return;
-            }
-            const clickedElement = e.target;
-            const isDrawer  = clickedElement.closest('#spp-mm-bottom-sheet, #spp-footer-mm-bottom-sheet');
-            const isButton  = clickedElement.closest('#spp-mm-drawer');
-            const isOverlay = clickedElement.id === 'spp-mm-overlay';
-
-            if (!isDrawer && !isButton && !isOverlay) {
-                closeAll();
-            }
-        });
-
-        document.addEventListener("keydown", function (e) {
-            if (e.key === "Escape") closeAll();
-        });
+    /* Hide Divi top navigation */
+    #et_mobile_nav_menu,
+    .mobile_menu_bar,
+    #et-top-navigation .et_mobile_menu,
+    #et-top-navigation {
+        display: none !important;
     }
 
-    // =====================================================
-    // COLLAPSIBLE ACCORDION SIDE NAV
-    // - Sections with spp-always-open stay open always
-    // - Other sections: single open (closing others on open)
-    // - Heading link navigates, arrow button toggles
-    // =====================================================
-    document.querySelectorAll('nav.spp-side-nav--collapsible').forEach(function(nav) {
+    /* ---------------------------------------------------
+       DRAWER BUTTON CONTAINER
+       --------------------------------------------------- */
+    #spp-mm-drawer {
+        position: fixed !important;
+        bottom: env(safe-area-inset-bottom, 12px);
+        left: 0 !important;
+        right: 0 !important;
+        width: 100% !important;
+        display: flex !important;
+        flex-direction: column;
+        align-items: center !important;
+        justify-content: center !important;
+        gap: 10px;
+        padding: 0 20px;
+        box-sizing: border-box;
+        z-index: 9999999 !important;
+        pointer-events: none;
+        overflow: visible !important;
+        transform: none !important;
+    }
 
-        nav.querySelectorAll('.spp-mm-section').forEach(function(section) {
-            const heading = section.querySelector('.spp-mm-heading');
-            const list    = section.querySelector('.spp-mm-list');
+    body.spp-mm-open #spp-mm-drawer,
+    body.spp-footer-mm-open #spp-mm-drawer {
+        display: flex !important;
+        z-index: 99999999 !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+    }
 
-            // Sections without a heading (direct links) stay visible
-            if (!heading || !list) return;
+    /* ---------------------------------------------------
+       DRAWER BUTTONS
+       --------------------------------------------------- */
+    #spp-mm-open,
+    #spp-footer-mm-open {
+        pointer-events: auto !important;
+        display: flex !important;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+        width: auto !important;
+        max-width: 90% !important;
+        min-width: 200px !important;
+        padding: 0.55rem 1.1rem !important;
+        background: rgba(0, 137, 123, 0.92) !important;
+        border-radius: var(--spp-radius-pill) !important;
+        border: 1px solid var(--spp-secondary) !important;
+        color: var(--spp-text-light) !important;
+        font-weight: 600 !important;
+        font-size: var(--spp-font-md) !important;
+        cursor: pointer;
+    }
 
-            // Create a separate toggle button (arrow)
-            const toggleBtn = document.createElement('button');
-            toggleBtn.className = 'spp-accordion-toggle';
-            toggleBtn.setAttribute('aria-label', 'Toggle section');
-            toggleBtn.innerHTML = '&#9658;'; // ▶
-            heading.appendChild(toggleBtn);
+    .spp-mm-open-icon::before {
+        content: "\61";
+        font-family: "ETmodules";
+        font-size: 22px;
+        color: var(--spp-text-light);
+    }
 
-            // Toggle button click — expand/collapse only
-            toggleBtn.addEventListener('click', function(e) {
-                e.preventDefault();
-                e.stopPropagation();
+    body.spp-mm-open #spp-mm-open .spp-mm-open-icon::before,
+    body.spp-footer-mm-open #spp-footer-mm-open .spp-mm-open-icon::before {
+        content: "\4d";
+    }
 
-                const isOpen = section.classList.contains('spp-open');
+    body.spp-mm-open #spp-footer-mm-open .spp-mm-open-icon::before,
+    body.spp-footer-mm-open #spp-mm-open .spp-mm-open-icon::before {
+        content: "\61" !important;
+    }
 
-                // Close all non-always-open sections in this nav
-                nav.querySelectorAll('.spp-mm-section.spp-open:not(.spp-always-open)').forEach(function(openSection) {
-                    openSection.classList.remove('spp-open');
-                });
+    .spp-mm-open-label {
+        display: inline-block;
+        color: inherit;
+        white-space: nowrap;
+        font-weight: inherit;
+    }
 
-                // Open clicked section if it was closed
-                // (never close an always-open section)
-                if (!isOpen && !section.classList.contains('spp-always-open')) {
-                    section.classList.add('spp-open');
-                } else if (section.classList.contains('spp-always-open')) {
-                    section.classList.add('spp-open'); // ensure always open stays open
-                }
-            });
+    /* ---------------------------------------------------
+       OVERLAY
+       --------------------------------------------------- */
+    #spp-mm-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 35vh;
+        background: rgba(0, 0, 0, 0.55);
+        z-index: 99999999 !important;
+        display: none;
+        pointer-events: none;
+    }
 
-            // If heading has no link, clicking heading text also toggles
-            const headingLink = heading.querySelector('a');
-            if (!headingLink) {
-                heading.style.cursor = 'pointer';
-                heading.addEventListener('click', function(e) {
-                    if (e.target === toggleBtn) return;
-                    const isOpen = section.classList.contains('spp-open');
-                    nav.querySelectorAll('.spp-mm-section.spp-open:not(.spp-always-open)').forEach(function(openSection) {
-                        openSection.classList.remove('spp-open');
-                    });
-                    if (!isOpen && !section.classList.contains('spp-always-open')) {
-                        section.classList.add('spp-open');
-                    }
-                });
-            }
-        });
-    });
+    body.spp-mm-open #spp-mm-overlay,
+    body.spp-footer-mm-open #spp-mm-overlay {
+        display: block;
+        opacity: 1 !important;
+        visibility: visible !important;
+    }
 
-});
+    /* ---------------------------------------------------
+       DRAWER SHEETS
+       --------------------------------------------------- */
+    #spp-mm-bottom-sheet,
+    #spp-footer-mm-bottom-sheet {
+        position: fixed !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
+        height: 65vh !important;
+        max-height: 65vh !important;
+        overflow-y: auto !important;
+        background: var(--spp-drawer-bg) !important;
+        border-top: 2px solid var(--spp-primary) !important;
+        transform: translateY(100%);
+        transition: transform .25s ease-out;
+        display: none;
+        flex-direction: column;
+        z-index: 99998 !important;
+    }
+
+    body.spp-mm-open #spp-mm-bottom-sheet,
+    body.spp-footer-mm-open #spp-footer-mm-bottom-sheet {
+        display: flex !important;
+        transform: translateY(0) !important;
+    }
+
+    /* ---------------------------------------------------
+       DRAWER HEADER
+       --------------------------------------------------- */
+    .spp-mm-sheet-header {
+        padding: .7rem 1rem;
+        border-bottom: 1px solid var(--spp-border-light);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        background: var(--spp-primary);
+    }
+
+    .spp-mm-sheet-title {
+        font-weight: 600;
+        color: var(--spp-text-light) !important;
+    }
+
+    #spp-mm-close,
+    #spp-footer-mm-close {
+        background: transparent;
+        border: none;
+        cursor: pointer;
+        padding: 4px;
+    }
+
+    #spp-mm-close-icon::before,
+    .spp-mm-close-icon::before {
+        content: "\4d";
+        font-family: "ETmodules";
+        font-size: 22px;
+        color: var(--spp-text-light) !important;
+    }
+
+    /* ---------------------------------------------------
+       DRAWER BODY
+       --------------------------------------------------- */
+    .spp-mm-sheet-body {
+        padding: var(--spp-space-sm);
+        padding-bottom: 100px;
+        overflow-y: auto;
+        flex: 1;
+    }
+
+    /* ---------------------------------------------------
+       FOOTER PULL UP
+       --------------------------------------------------- */
+    .et_pb_section_0_tb_footer {
+        margin-top: -320px !important;
+    }
+}
+
+/* =====================================================
+   SHARED MENU ITEM STYLES
+   (desktop side nav + mobile drawers)
+   ===================================================== */
+
+.spp-mm-section {
+    margin-bottom: 0.8rem;
+}
+
+.spp-mm-heading {
+    color: var(--spp-text-light) !important;
+    background: var(--spp-primary);
+    font-size: 0.75rem;
+    font-weight: 700;
+    margin-bottom: 0.3rem;
+    padding: 6px 10px;
+    border-radius: var(--spp-radius);
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    display: flex !important;
+    justify-content: space-between;
+    align-items: center;
+    user-select: none;
+}
+
+.spp-mm-heading a {
+    color: var(--spp-text-light) !important;
+    text-decoration: none;
+    flex: 1;
+}
+
+.spp-mm-heading a:hover {
+    color: var(--spp-text-light) !important;
+    opacity: 0.85;
+}
+
+.spp-mm-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.spp-mm-item {
+    margin-bottom: 3px;
+}
+
+.spp-mm-item a {
+    display: block;
+    padding: 8px 10px;
+    color: var(--spp-dark) !important;
+    background: var(--spp-item-bg) !important;
+    text-decoration: none;
+    font-size: 0.75rem;
+    line-height: var(--spp-line-height);
+    border-radius: var(--spp-radius);
+    border-left: 3px solid transparent;
+    transition: background 0.15s ease, color 0.15s ease, border-left-color 0.15s ease;
+}
+
+.spp-mm-item a:hover,
+.spp-mm-item a:active {
+    background: rgba(0, 137, 123, 0.15) !important;
+    color: var(--spp-primary) !important;
+    border-left-color: var(--spp-primary) !important;
+}
+
+.spp-mm-list ul.sub-menu {
+    margin-left: 0.5rem;
+    padding-left: 0.5rem;
+    border-left: 2px solid var(--spp-secondary);
+    margin-top: 3px;
+    list-style: none;
+}
+
+.spp-mm-list ul.sub-menu .spp-mm-item a {
+    font-size: 0.7rem;
+    padding-left: 12px;
+    background: var(--spp-item-bg-sub) !important;
+}
+
+.spp-mm-section--direct .spp-mm-list {
+    display: block !important;
+}
+
+/* =====================================================
+   COLLAPSIBLE ACCORDION
+   ===================================================== */
+
+.spp-side-nav--collapsible .spp-mm-section .spp-mm-list {
+    display: none;
+}
+
+.spp-side-nav--collapsible .spp-mm-section.spp-open .spp-mm-list,
+.spp-side-nav--collapsible .spp-mm-section.spp-always-open .spp-mm-list {
+    display: block !important;
+}
+
+.spp-side-nav--collapsible .spp-mm-heading::after {
+    content: none;
+}
+
+/* Mobile drawer collapsible */
+#spp-mm-bottom-sheet .spp-side-nav--collapsible .spp-mm-section .spp-mm-list,
+#spp-footer-mm-bottom-sheet .spp-side-nav--collapsible .spp-mm-section .spp-mm-list {
+    display: none;
+}
+
+#spp-mm-bottom-sheet .spp-side-nav--collapsible .spp-mm-section.spp-open .spp-mm-list,
+#spp-footer-mm-bottom-sheet .spp-side-nav--collapsible .spp-mm-section.spp-open .spp-mm-list,
+#spp-mm-bottom-sheet .spp-side-nav--collapsible .spp-mm-section.spp-always-open .spp-mm-list,
+#spp-footer-mm-bottom-sheet .spp-side-nav--collapsible .spp-mm-section.spp-always-open .spp-mm-list {
+    display: block !important;
+}
+
+/* Accordion toggle button */
+.spp-accordion-toggle {
+    background: transparent;
+    border: none;
+    color: var(--spp-text-light);
+    cursor: pointer;
+    padding: 0 0 0 8px;
+    font-size: 0.85rem;
+    line-height: 1;
+    transition: transform 0.2s ease;
+    flex-shrink: 0;
+}
+
+.spp-mm-section.spp-open .spp-accordion-toggle {
+    transform: rotate(90deg);
+}

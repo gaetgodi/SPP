@@ -68,8 +68,9 @@ document.addEventListener("DOMContentLoaded", function () {
 
     // =====================================================
     // COLLAPSIBLE ACCORDION SIDE NAV
-    // - Heading text (if a link) navigates on click
-    // - Arrow toggle button expands/collapses section
+    // - Sections with spp-always-open stay open always
+    // - Other sections: single open (closing others on open)
+    // - Heading link navigates, arrow button toggles
     // =====================================================
     document.querySelectorAll('nav.spp-side-nav--collapsible').forEach(function(nav) {
 
@@ -94,28 +95,31 @@ document.addEventListener("DOMContentLoaded", function () {
 
                 const isOpen = section.classList.contains('spp-open');
 
-                // Close all sections except those marked as always-open
-nav.querySelectorAll('.spp-mm-section.spp-open:not(.spp-always-open)').forEach(function(openSection) {
-    openSection.classList.remove('spp-open');
-});
+                // Close all non-always-open sections in this nav
+                nav.querySelectorAll('.spp-mm-section.spp-open:not(.spp-always-open)').forEach(function(openSection) {
+                    openSection.classList.remove('spp-open');
+                });
 
                 // Open clicked section if it was closed
-                if (!isOpen) {
+                // (never close an always-open section)
+                if (!isOpen && !section.classList.contains('spp-always-open')) {
                     section.classList.add('spp-open');
+                } else if (section.classList.contains('spp-always-open')) {
+                    section.classList.add('spp-open'); // ensure always open stays open
                 }
             });
 
-            // If heading has no link, clicking the heading text also toggles
+            // If heading has no link, clicking heading text also toggles
             const headingLink = heading.querySelector('a');
             if (!headingLink) {
                 heading.style.cursor = 'pointer';
                 heading.addEventListener('click', function(e) {
-                    if (e.target === toggleBtn) return; // already handled
+                    if (e.target === toggleBtn) return;
                     const isOpen = section.classList.contains('spp-open');
-                    nav.querySelectorAll('.spp-mm-section.spp-open').forEach(function(openSection) {
+                    nav.querySelectorAll('.spp-mm-section.spp-open:not(.spp-always-open)').forEach(function(openSection) {
                         openSection.classList.remove('spp-open');
                     });
-                    if (!isOpen) {
+                    if (!isOpen && !section.classList.contains('spp-always-open')) {
                         section.classList.add('spp-open');
                     }
                 });
