@@ -236,3 +236,17 @@ a:hover {
         --spp-content-padding:  1rem;
     }
 }
+.et_pb_text h3,
+.et_pb_text_inner h3 {
+    color: var(--spp-h3-color) !important;
+}
+/* Desktop side nav — smaller font size */
+@media (min-width: 981px) {
+    .spp-side-nav .spp-mm-heading {
+        font-size: 0.85rem;
+    }
+    
+    .spp-side-nav .spp-mm-item a {
+        font-size: 0.85rem;
+    }
+}
