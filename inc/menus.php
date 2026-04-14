@@ -113,15 +113,21 @@ function spp_render_section($items, $section_title) {
 
 /* ---------------------------------------------------------
    Render all top-level items dynamically
+   First item gets spp-open + spp-always-open (stays open)
    --------------------------------------------------------- */
 function spp_render_all_sections($items, $nav_classes) {
-    $output = '<nav class="' . esc_attr($nav_classes) . '">';
+    $output   = '<nav class="' . esc_attr($nav_classes) . '">';
+    $is_first = true;
 
     foreach ($items as $item) {
         if ((int) $item->menu_item_parent !== 0) continue;
 
+        // First top-level item is always open
+        $extra_classes = $is_first ? ' spp-open spp-always-open' : '';
+        $is_first      = false;
+
         $children = spp_render_menu_tree($items, $item->ID);
-        $output .= '<div class="spp-mm-section">';
+        $output  .= '<div class="spp-mm-section' . $extra_classes . '">';
 
         if ($children) {
             $output .= spp_render_heading($item->title, $item->url);

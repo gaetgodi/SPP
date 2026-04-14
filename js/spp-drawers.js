@@ -94,10 +94,10 @@ document.addEventListener("DOMContentLoaded", function () {
 
                 const isOpen = section.classList.contains('spp-open');
 
-                // Close all sections in this nav (single open)
-                nav.querySelectorAll('.spp-mm-section.spp-open').forEach(function(openSection) {
-                    openSection.classList.remove('spp-open');
-                });
+                // Close all sections except those marked as always-open
+nav.querySelectorAll('.spp-mm-section.spp-open:not(.spp-always-open)').forEach(function(openSection) {
+    openSection.classList.remove('spp-open');
+});
 
                 // Open clicked section if it was closed
                 if (!isOpen) {
