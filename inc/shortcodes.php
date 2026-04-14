@@ -113,3 +113,27 @@ function spp_dashboard_shortcode() {
     return $output;
 }
 add_shortcode('spp_dashboard', 'spp_dashboard_shortcode');
+
+/* =========================================================
+   SYNC EMAIL CHANGE TO USERMETA
+   When a user updates their email via UM Account form,
+   also update the user_email meta key in usermeta.
+   ========================================================= */
+add_action('um_user_edit_profile', function($args) {
+    if (!isset($args['user_email'])) return;
+    
+    $user_id = get_current_user_id();
+    if (!$user_id) return;
+    
+    update_user_meta($user_id, 'user_email', sanitize_email($args['user_email']));
+}, 10, 1);
+
+// Also hook into standard WordPress email change
+add_action('profile_update', function($user_id, $old_user_data) {
+    $user = get_userdata($user_id);
+    if (!$user) return;
+    
+    if ($user->user_email !== $old_user_data->user_email) {
+        update_user_meta($user_id, 'user_email', $user->user_email);
+    }
+}, 10, 2);
