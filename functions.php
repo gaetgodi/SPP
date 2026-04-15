@@ -1,4 +1,8 @@
 <?php
+// Suppress deprecation warnings from outdated plugins on frontend
+if (!is_admin()) {
+    error_reporting(E_ALL & ~E_DEPRECATED & ~E_USER_DEPRECATED);
+}
 // Enqueue parent and child theme styles
 function divi_spp_child_enqueue_styles() {
     wp_enqueue_style( 'divi-parent-style', get_template_directory_uri() . '/style.css' );
@@ -29,7 +33,3 @@ add_action( 'wp_enqueue_scripts', 'divi_spp_child_enqueue_styles' );
 // Core includes
 require_once get_stylesheet_directory() . '/inc/menus.php';
 require_once get_stylesheet_directory() . '/inc/shortcodes.php';
-// Suppress deprecation warnings from outdated plugins on frontend
-if (!is_admin()) {
-    error_reporting(E_ALL & ~E_DEPRECATED & ~E_USER_DEPRECATED);
-}
