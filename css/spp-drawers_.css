@@ -1,7 +1,7 @@
 /*
 =================================================
-spp-drawers.css
-Mobile right-side drawer navigation
+SPP Drawer Navigation System
+Mobile bottom drawer navigation
 Site: pickleballstouffville.ca (staging)
 =================================================
 All tokens defined in spp-tokens.css
@@ -9,33 +9,72 @@ All tokens defined in spp-tokens.css
 */
 
 /* =====================================================
-   DESKTOP — HIDE ALL MOBILE ELEMENTS
+   DESKTOP — DISABLE ALL MOBILE DRAWERS
    ===================================================== */
 @media (min-width: 981px) {
-    #spp-mm-open,
+    #spp-mm-drawer,
     #spp-mm-bottom-sheet,
-    #spp-mm-overlay {
-        display: none !important;
-    }
+    #spp-footer-mm-bottom-sheet,
+    #spp-mm-overlay,
     .spp-mobile-menu-wrapper {
         display: none !important;
-    }
-    .spp-side-nav {
-        display: block !important;
     }
 }
 
 /* =====================================================
-   GLOBAL — HIDE MENU WRAPPERS OUTSIDE DRAWER
+   GLOBAL — HIDE MOBILE MENUS WHEN NOT IN DRAWERS
    ===================================================== */
 .spp-mobile-menu-wrapper {
     display: none !important;
 }
 
-#spp-mm-bottom-sheet .spp-mm-sheet-body .spp-mobile-menu-wrapper {
+#spp-mm-bottom-sheet .spp-mm-sheet-body .spp-mobile-menu-wrapper,
+#spp-footer-mm-bottom-sheet .spp-mm-sheet-body .spp-mobile-menu-wrapper {
     display: flex !important;
     flex-direction: column !important;
     gap: 0.6rem;
+}
+
+/* =====================================================
+   PREVENT BODY SCROLL WHEN DRAWER OPEN
+   ===================================================== */
+html.spp-mm-open,
+body.spp-mm-open,
+html.spp-footer-mm-open,
+body.spp-footer-mm-open {
+    overflow: hidden;
+    touch-action: none;
+    height: 100%;
+}
+
+body.spp-mm-open,
+body.spp-footer-mm-open {
+    padding-bottom: 100px !important;
+    overflow-y: scroll !important;
+    position: static !important;
+    height: auto !important;
+}
+
+body {
+    overflow-x: visible !important;
+}
+
+#page-container,
+#main-content,
+.et_pb_section,
+.et_builder_inner_content,
+#et-main-area {
+    overflow: visible !important;
+    transform: none !important;
+}
+
+body.spp-mm-open #page-container,
+body.spp-footer-mm-open #page-container {
+    position: relative !important;
+    z-index: 1 !important;
+    overflow: visible !important;
+    height: auto !important;
+    min-height: 150vh !important;
 }
 
 /* =====================================================
@@ -51,30 +90,57 @@ All tokens defined in spp-tokens.css
         display: none !important;
     }
 
-    /* Hide desktop side nav on mobile */
-    .spp-side-nav {
-        display: none !important;
+    /* ---------------------------------------------------
+       DRAWER BUTTON CONTAINER
+       --------------------------------------------------- */
+    #spp-mm-drawer {
+        position: fixed !important;
+        bottom: env(safe-area-inset-bottom, 12px);
+        left: 0 !important;
+        right: 0 !important;
+        width: 100% !important;
+        display: flex !important;
+        flex-direction: column;
+        align-items: center !important;
+        justify-content: center !important;
+        gap: 10px;
+        padding: 0 20px;
+        box-sizing: border-box;
+        z-index: 9999999 !important;
+        pointer-events: none;
+        overflow: visible !important;
+        transform: none !important;
+    }
+
+    body.spp-mm-open #spp-mm-drawer,
+    body.spp-footer-mm-open #spp-mm-drawer {
+        display: flex !important;
+        z-index: 99999999 !important;
+        visibility: visible !important;
+        opacity: 1 !important;
     }
 
     /* ---------------------------------------------------
-       HAMBURGER BUTTON — fixed top right
+       DRAWER BUTTONS
        --------------------------------------------------- */
-    #spp-mm-open {
-        position: fixed !important;
-        top: 12px !important;
-        right: 12px !important;
-        z-index: 9999999 !important;
-        width: 44px !important;
-        height: 44px !important;
-        display: flex !important;
-        align-items: center !important;
-        justify-content: center !important;
-        background: rgba(0, 77, 64, 0.92) !important;
-        border: 1px solid var(--spp-secondary) !important;
-        border-radius: 8px !important;
-        cursor: pointer !important;
-        padding: 0 !important;
+    #spp-mm-open,
+    #spp-footer-mm-open {
         pointer-events: auto !important;
+        display: flex !important;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+        width: auto !important;
+        max-width: 90% !important;
+        min-width: 200px !important;
+        padding: 0.55rem 1.1rem !important;
+        background: rgba(0, 137, 123, 0.92) !important;
+        border-radius: var(--spp-radius-pill) !important;
+        border: 1px solid var(--spp-secondary) !important;
+        color: var(--spp-text-light) !important;
+        font-weight: 600 !important;
+        font-size: var(--spp-font-md) !important;
+        cursor: pointer;
     }
 
     .spp-mm-open-icon::before {
@@ -84,8 +150,21 @@ All tokens defined in spp-tokens.css
         color: var(--spp-text-light);
     }
 
-    body.spp-mm-open #spp-mm-open .spp-mm-open-icon::before {
+    body.spp-mm-open #spp-mm-open .spp-mm-open-icon::before,
+    body.spp-footer-mm-open #spp-footer-mm-open .spp-mm-open-icon::before {
         content: "\4d";
+    }
+
+    body.spp-mm-open #spp-footer-mm-open .spp-mm-open-icon::before,
+    body.spp-footer-mm-open #spp-mm-open .spp-mm-open-icon::before {
+        content: "\61" !important;
+    }
+
+    .spp-mm-open-label {
+        display: inline-block;
+        color: inherit;
+        white-space: nowrap;
+        font-weight: inherit;
     }
 
     /* ---------------------------------------------------
@@ -93,42 +172,48 @@ All tokens defined in spp-tokens.css
        --------------------------------------------------- */
     #spp-mm-overlay {
         position: fixed;
-        inset: 0;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 35vh;
         background: rgba(0, 0, 0, 0.55);
-        z-index: 999998;
+        z-index: 99999999 !important;
         display: none;
-        pointer-events: auto;
+        pointer-events: none;
     }
 
-    body.spp-mm-open #spp-mm-overlay {
+    body.spp-mm-open #spp-mm-overlay,
+    body.spp-footer-mm-open #spp-mm-overlay {
         display: block;
+        opacity: 1 !important;
+        visibility: visible !important;
     }
 
     /* ---------------------------------------------------
-       RIGHT-SIDE DRAWER
+       DRAWER SHEETS
        --------------------------------------------------- */
-    #spp-mm-bottom-sheet {
+    #spp-mm-bottom-sheet,
+    #spp-footer-mm-bottom-sheet {
         position: fixed !important;
-        top: 0 !important;
+        left: 0 !important;
         right: 0 !important;
         bottom: 0 !important;
-        left: auto !important;
-        width: 80vw !important;
-        max-width: 320px !important;
-        height: 100% !important;
-        max-height: 100% !important;
+        height: 65vh !important;
+        max-height: 65vh !important;
         overflow-y: auto !important;
         background: var(--spp-drawer-bg) !important;
-        border-left: 2px solid var(--spp-primary) !important;
-        transform: translateX(100%);
+        border-top: 2px solid var(--spp-primary) !important;
+        transform: translateY(100%);
         transition: transform .25s ease-out;
-        display: flex !important;
+        display: none;
         flex-direction: column;
-        z-index: 999999 !important;
+        z-index: 99998 !important;
     }
 
-    body.spp-mm-open #spp-mm-bottom-sheet {
-        transform: translateX(0) !important;
+    body.spp-mm-open #spp-mm-bottom-sheet,
+    body.spp-footer-mm-open #spp-footer-mm-bottom-sheet {
+        display: flex !important;
+        transform: translateY(0) !important;
     }
 
     /* ---------------------------------------------------
@@ -140,10 +225,7 @@ All tokens defined in spp-tokens.css
         display: flex;
         justify-content: space-between;
         align-items: center;
-        position: sticky;
-        top: 0;
         background: var(--spp-primary);
-        z-index: 1;
     }
 
     .spp-mm-sheet-title {
@@ -151,14 +233,16 @@ All tokens defined in spp-tokens.css
         color: var(--spp-text-light) !important;
     }
 
-    #spp-mm-close {
+    #spp-mm-close,
+    #spp-footer-mm-close {
         background: transparent;
         border: none;
         cursor: pointer;
         padding: 4px;
     }
 
-    #spp-mm-close-icon::before {
+    #spp-mm-close-icon::before,
+    .spp-mm-close-icon::before {
         content: "\4d";
         font-family: "ETmodules";
         font-size: 22px;
@@ -170,19 +254,22 @@ All tokens defined in spp-tokens.css
        --------------------------------------------------- */
     .spp-mm-sheet-body {
         padding: var(--spp-space-sm);
+        padding-bottom: 100px;
         overflow-y: auto;
         flex: 1;
     }
 
-    /* Footer bottom padding no longer needed */
+    /* ---------------------------------------------------
+       FOOTER PULL UP
+       --------------------------------------------------- 
     .et_pb_section_0_tb_footer {
-        padding-bottom: 20px !important;
-    }
+        margin-top: -320px !important;
+    }*/
 }
 
 /* =====================================================
    SHARED MENU ITEM STYLES
-   (desktop side nav + mobile drawer)
+   (desktop side nav + mobile drawers)
    ===================================================== */
 
 .spp-mm-section {
@@ -268,32 +355,29 @@ All tokens defined in spp-tokens.css
    COLLAPSIBLE ACCORDION
    ===================================================== */
 
-/* All sections closed by default */
 .spp-side-nav--collapsible .spp-mm-section .spp-mm-list {
     display: none;
 }
 
-/* Show when open */
-.spp-side-nav--collapsible .spp-mm-section.spp-open .spp-mm-list {
-    display: block;
+.spp-side-nav--collapsible .spp-mm-section.spp-open .spp-mm-list,
+.spp-side-nav--collapsible .spp-mm-section.spp-always-open .spp-mm-list {
+    display: block !important;
 }
 
-/* Arrow handled by JS toggle button */
 .spp-side-nav--collapsible .spp-mm-heading::after {
     content: none;
 }
 
-/* Direct link sections always visible */
-.spp-side-nav--collapsible .spp-mm-section--direct .spp-mm-list {
-    display: block !important;
-}
-
 /* Mobile drawer collapsible */
-#spp-mm-bottom-sheet .spp-side-nav--collapsible .spp-mm-section .spp-mm-list {
+#spp-mm-bottom-sheet .spp-side-nav--collapsible .spp-mm-section .spp-mm-list,
+#spp-footer-mm-bottom-sheet .spp-side-nav--collapsible .spp-mm-section .spp-mm-list {
     display: none;
 }
 
-#spp-mm-bottom-sheet .spp-side-nav--collapsible .spp-mm-section.spp-open .spp-mm-list {
+#spp-mm-bottom-sheet .spp-side-nav--collapsible .spp-mm-section.spp-open .spp-mm-list,
+#spp-footer-mm-bottom-sheet .spp-side-nav--collapsible .spp-mm-section.spp-open .spp-mm-list,
+#spp-mm-bottom-sheet .spp-side-nav--collapsible .spp-mm-section.spp-always-open .spp-mm-list,
+#spp-footer-mm-bottom-sheet .spp-side-nav--collapsible .spp-mm-section.spp-always-open .spp-mm-list {
     display: block !important;
 }
 
@@ -313,11 +397,14 @@ All tokens defined in spp-tokens.css
 .spp-mm-section.spp-open .spp-accordion-toggle {
     transform: rotate(90deg);
 }
-
-/* Desktop side nav font size */
-@media (min-width: 981px) {
-    .spp-side-nav .spp-mm-heading,
-    .spp-side-nav .spp-mm-item a {
-        font-size: 0.75rem;
+/* Hide desktop side nav on mobile */
+@media (max-width: 980px) {
+    .spp-side-nav {
+        display: none !important;
+    }
+}
+@media (max-width: 980px) {
+    .et_pb_section_0_tb_footer {
+        padding-bottom: 120px !important;
     }
 }
