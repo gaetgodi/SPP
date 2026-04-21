@@ -134,8 +134,15 @@ add_action( 'fluentform/submission_inserted', function( $entryId, $formData, $fo
 ------------------------------------------------*/
 add_action( 'template_redirect', function() {
     if ( is_user_logged_in() ) return;
-    
-    if ( is_home() || is_singular( 'post' ) || is_page( 'submit-post' ) ) {
+
+    $blog_page_id   = get_option( 'page_for_posts' );
+    $submit_page_id = get_page_by_path( 'submit-post' )?->ID;
+
+    if (
+        ( $blog_page_id && is_page( $blog_page_id ) ) ||
+        is_singular( 'post' ) ||
+        ( $submit_page_id && is_page( $submit_page_id ) )
+    ) {
         wp_redirect( wp_login_url( get_permalink() ) );
         exit;
     }
