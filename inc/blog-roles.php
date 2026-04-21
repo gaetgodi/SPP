@@ -98,12 +98,13 @@ add_filter( 'show_admin_bar', function( $show ) {
 } );
 
 add_action( 'admin_init', function() {
+    $user = wp_get_current_user();
+    error_log( 'SPP admin_init check — user: ' . $user->ID . ' caps: ' . implode( ', ', array_keys( array_filter( $user->allcaps ) ) ) );
     if ( ! current_user_can( 'publish_posts' ) && ! current_user_can( 'manage_options' ) ) {
         wp_redirect( home_url() );
         exit;
     }
 } );
-
 /*------------------------------------------------
 # 5. Frontend post submission via FluentForms (Form ID 3)
 # Creates a pending post with the logged-in member as author
