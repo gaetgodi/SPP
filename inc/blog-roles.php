@@ -4,6 +4,7 @@
 # Defines blog_author and blog_moderator capability sets.
 # - blog_author: auto-assigned to all active members (YrEndDt = current year Dec 31)
 # - blog_moderator: manually assigned via WP admin user edit screen checkbox
+#   blog_moderator is registered as a real WP role so UM grants backend access
 ================================================*/
 
 /*------------------------------------------------
@@ -33,7 +34,18 @@ function spp_blog_moderator_caps() {
 }
 
 /*------------------------------------------------
-# 2. blog_author — sync on login and profile update
+# 2. Register blog_moderator as a real WordPress role
+# This allows Ultimate Member to recognize it and grant WP admin access
+# Note: UM role 'um_blog_moderator' must have WP Admin Access = Yes in UM settings
+------------------------------------------------*/
+add_action( 'init', function() {
+    if ( ! get_role( 'blog_moderator' ) ) {
+        add_role( 'blog_moderator', 'Blog Moderator', spp_blog_moderator_caps() );
+    }
+} );
+
+/*------------------------------------------------
+# 3. blog_author — sync on login and profile update
 # Active member = YrEndDt meta equals Dec 31 of current year
 ------------------------------------------------*/
 function spp_sync_blog_author_caps( $user_id ) {
@@ -52,7 +64,8 @@ add_action( 'wp_login', function( $user_login, $user ) {
 add_action( 'profile_update', 'spp_sync_blog_author_caps' );
 
 /*------------------------------------------------
-# 3. blog_moderator — checkbox on WP admin user edit screen
+# 4. blog_moderator — checkbox on WP admin user edit screen
+# Assigns/removes the blog_moderator WP role (in addition to subscriber)
 ------------------------------------------------*/
 function spp_moderator_checkbox( $user ) {
     if ( ! current_user_can( 'manage_options' ) ) return;
@@ -82,27 +95,22 @@ function spp_save_moderator_checkbox( $user_id ) {
 
     update_user_meta( $user_id, 'spp_blog_moderator', $is_moderator ? '1' : '' );
 
-    foreach ( spp_blog_moderator_caps() as $cap => $grant ) {
-        $is_moderator ? $user->add_cap( $cap, $grant ) : $user->remove_cap( $cap );
+    if ( $is_moderator ) {
+        $user->add_role( 'blog_moderator' );
+    } else {
+        $user->remove_role( 'blog_moderator' );
     }
 }
 add_action( 'personal_options_update',  'spp_save_moderator_checkbox' );
 add_action( 'edit_user_profile_update', 'spp_save_moderator_checkbox' );
 
 /*------------------------------------------------
-# 4. blog_moderator — WP admin backend access
-# UM blocks backend by role — we override via filter
+# 5. blog_moderator — WP admin backend access
+# admin_init fires after caps are loaded; redirects non-authorized users
 ------------------------------------------------*/
 add_filter( 'show_admin_bar', function( $show ) {
     return current_user_can( 'publish_posts' ) ? true : $show;
 } );
-
-add_filter( 'um_user_permissions_filter', function( $permissions, $user_id ) {
-    if ( user_can( $user_id, 'publish_posts' ) ) {
-        $permissions['can_access_wpadmin'] = true;
-    }
-    return $permissions;
-}, 10, 2 );
 
 add_action( 'admin_init', function() {
     if ( ! current_user_can( 'publish_posts' ) && ! current_user_can( 'manage_options' ) ) {
@@ -110,8 +118,9 @@ add_action( 'admin_init', function() {
         exit;
     }
 } );
+
 /*------------------------------------------------
-# 5. Frontend post submission via FluentForms (Form ID 3)
+# 6. Frontend post submission via FluentForms (Form ID 3)
 # Creates a pending post with the logged-in member as author
 ------------------------------------------------*/
 add_action( 'fluentform/submission_inserted', function( $entryId, $formData, $form ) {
@@ -132,7 +141,7 @@ add_action( 'fluentform/submission_inserted', function( $entryId, $formData, $fo
 }, 10, 3 );
 
 /*------------------------------------------------
-# 6. Email all blog_moderators when a post is submitted (pending)
+# 7. Email all blog_moderators when a post is submitted (pending)
 ------------------------------------------------*/
 add_action( 'transition_post_status', function( $new_status, $old_status, $post ) {
     if ( $new_status !== 'pending' || $old_status === 'pending' ) return;
@@ -155,7 +164,7 @@ add_action( 'transition_post_status', function( $new_status, $old_status, $post 
 }, 10, 3 );
 
 /*------------------------------------------------
-# 7. Redirect non-logged-in users away from blog pages
+# 8. Redirect non-logged-in users away from blog pages
 ------------------------------------------------*/
 add_action( 'template_redirect', function() {
     if ( is_user_logged_in() ) return;
