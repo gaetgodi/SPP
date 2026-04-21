@@ -107,9 +107,15 @@ add_action( 'edit_user_profile_update', 'spp_save_moderator_checkbox' );
 /*------------------------------------------------
 # 5. blog_moderator — WP admin backend access
 # admin_init fires after caps are loaded; redirects non-authorized users
+# um_can_access_wpadmin overrides UM's role-based block for moderators
 ------------------------------------------------*/
 add_filter( 'show_admin_bar', function( $show ) {
     return current_user_can( 'publish_posts' ) ? true : $show;
+} );
+
+add_filter( 'um_can_access_wpadmin', function( $can_access ) {
+    if ( current_user_can( 'publish_posts' ) ) return true;
+    return $can_access;
 } );
 
 add_action( 'admin_init', function() {
@@ -118,7 +124,6 @@ add_action( 'admin_init', function() {
         exit;
     }
 } );
-
 /*------------------------------------------------
 # 6. Frontend post submission via FluentForms (Form ID 3)
 # Creates a pending post with the logged-in member as author
