@@ -91,13 +91,14 @@ add_action( 'edit_user_profile_update', 'spp_save_moderator_checkbox' );
 
 /*------------------------------------------------
 # 4. blog_moderator — WP admin backend access
+# Uses admin_init (not init) so caps are fully loaded before the check
 ------------------------------------------------*/
 add_filter( 'show_admin_bar', function( $show ) {
     return current_user_can( 'publish_posts' ) ? true : $show;
 } );
 
-add_action( 'init', function() {
-    if ( is_admin() && ! current_user_can( 'publish_posts' ) && ! current_user_can( 'manage_options' ) ) {
+add_action( 'admin_init', function() {
+    if ( ! current_user_can( 'publish_posts' ) && ! current_user_can( 'manage_options' ) ) {
         wp_redirect( home_url() );
         exit;
     }
@@ -138,8 +139,8 @@ add_action( 'transition_post_status', function( $new_status, $old_status, $post 
     $post_url = admin_url( 'post.php?post=' . $post->ID . '&action=edit' );
     $subject  = 'New blog post pending review: ' . $post->post_title;
     $message  = "A new blog post has been submitted for review.\n\n"
-              . "Title: "  . $post->post_title      . "\n"
-              . "Author: " . $author->display_name  . "\n\n"
+              . "Title: "  . $post->post_title     . "\n"
+              . "Author: " . $author->display_name . "\n\n"
               . "Review it here: " . $post_url;
 
     foreach ( $moderators as $moderator ) {
