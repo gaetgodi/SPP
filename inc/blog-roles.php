@@ -106,21 +106,19 @@ add_action( 'edit_user_profile_update', 'spp_save_moderator_checkbox' );
 
 /*------------------------------------------------
 # 5. blog_moderator — WP admin backend access
-# UM blocks via um_block_wpadmin_by_user_role() on init priority 99
-# We hook at priority 100 to set can_access_wpadmin for moderators
+# UM checks can_access_wpadmin via um_user_permissions_filter
+# We hook into it to grant access for users with publish_posts cap
 ------------------------------------------------*/
 add_filter( 'show_admin_bar', function( $show ) {
     return current_user_can( 'publish_posts' ) ? true : $show;
 } );
 
-add_action( 'init', function() {
-    if ( ! is_admin() ) return;
-    if ( ! is_user_logged_in() ) return;
-    if ( ! current_user_can( 'publish_posts' ) ) return;
-    
-    // Override UM's block for blog_moderators
-    UM()->user()->set( 'can_access_wpadmin', 1 );
-}, 100 );
+add_filter( 'um_user_permissions_filter', function( $permissions, $user_id ) {
+    if ( user_can( $user_id, 'publish_posts' ) ) {
+        $permissions['can_access_wpadmin'] = 1;
+    }
+    return $permissions;
+}, 10, 2 );
 
 add_action( 'admin_init', function() {
     if ( ! current_user_can( 'publish_posts' ) && ! current_user_can( 'manage_options' ) ) {
