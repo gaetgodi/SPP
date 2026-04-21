@@ -159,7 +159,7 @@ add_action( 'transition_post_status', function( $new_status, $old_status, $post 
 
     $author    = get_userdata( $post->post_author );
     $post_url  = admin_url( 'post.php?post=' . $post->ID . '&action=edit' );
-    $login_url = home_url( '/login/?redirect_to=' . urlencode( $post_url ) );
+    $login_url = home_url( '/pending-posts/' );
     $subject   = 'New blog post pending review: ' . $post->post_title;
     $message   = "A new blog post has been submitted for review.\n\n"
                . "Title: "  . $post->post_title     . "\n"
