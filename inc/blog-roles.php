@@ -91,15 +91,20 @@ add_action( 'edit_user_profile_update', 'spp_save_moderator_checkbox' );
 
 /*------------------------------------------------
 # 4. blog_moderator — WP admin backend access
-# Uses admin_init (not init) so caps are fully loaded before the check
+# UM blocks backend by role — we override via filter
 ------------------------------------------------*/
 add_filter( 'show_admin_bar', function( $show ) {
     return current_user_can( 'publish_posts' ) ? true : $show;
 } );
 
+add_filter( 'um_user_permissions_filter', function( $permissions, $user_id ) {
+    if ( user_can( $user_id, 'publish_posts' ) ) {
+        $permissions['can_access_wpadmin'] = true;
+    }
+    return $permissions;
+}, 10, 2 );
+
 add_action( 'admin_init', function() {
-    $user = wp_get_current_user();
-    error_log( 'SPP admin_init check — user: ' . $user->ID . ' caps: ' . implode( ', ', array_keys( array_filter( $user->allcaps ) ) ) );
     if ( ! current_user_can( 'publish_posts' ) && ! current_user_can( 'manage_options' ) ) {
         wp_redirect( home_url() );
         exit;
