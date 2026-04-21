@@ -157,13 +157,14 @@ add_action( 'transition_post_status', function( $new_status, $old_status, $post 
     $moderators = get_users( [ 'meta_key' => 'spp_blog_moderator', 'meta_value' => '1' ] );
     if ( empty( $moderators ) ) return;
 
-    $author   = get_userdata( $post->post_author );
-    $post_url = admin_url( 'post.php?post=' . $post->ID . '&action=edit' );
-    $subject  = 'New blog post pending review: ' . $post->post_title;
-    $message  = "A new blog post has been submitted for review.\n\n"
-              . "Title: "  . $post->post_title     . "\n"
-              . "Author: " . $author->display_name . "\n\n"
-              . "Review it here: " . $post_url;
+    $author    = get_userdata( $post->post_author );
+    $post_url  = admin_url( 'post.php?post=' . $post->ID . '&action=edit' );
+    $login_url = home_url( '/login/?redirect_to=' . urlencode( $post_url ) );
+    $subject   = 'New blog post pending review: ' . $post->post_title;
+    $message   = "A new blog post has been submitted for review.\n\n"
+               . "Title: "  . $post->post_title     . "\n"
+               . "Author: " . $author->display_name . "\n\n"
+               . "Review it here: " . $login_url;
 
     foreach ( $moderators as $moderator ) {
         wp_mail( $moderator->user_email, $subject, $message );
