@@ -107,3 +107,25 @@ function spp_save_moderator_checkbox( $user_id ) {
 }
 add_action( 'personal_options_update', 'spp_save_moderator_checkbox' );
 add_action( 'edit_user_profile_update', 'spp_save_moderator_checkbox' );
+/*------------------------------------------------
+# FluentForms post submission handler
+# Form ID 3 — "Submit a Blog Post"
+# Creates a pending post with the logged-in member as author
+------------------------------------------------*/
+add_action( 'fluentform/submission_inserted', function( $entryId, $formData, $form ) {
+    if ( $form->id != 3 ) return;
+    if ( ! is_user_logged_in() ) return;
+
+    $title   = sanitize_text_field( $formData['input_text_1'] ?? '' );
+    $content = wp_kses_post( $formData['description'] ?? '' );
+
+    if ( empty( $title ) ) return;
+
+    wp_insert_post( [
+        'post_title'   => $title,
+        'post_content' => $content,
+        'post_status'  => 'pending',
+        'post_author'  => get_current_user_id(),
+        'post_type'    => 'post',
+    ] );
+}, 10, 3 );
