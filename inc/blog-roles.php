@@ -129,3 +129,14 @@ add_action( 'fluentform/submission_inserted', function( $entryId, $formData, $fo
         'post_type'    => 'post',
     ] );
 }, 10, 3 );
+/*------------------------------------------------
+# Redirect non-logged-in users away from blog pages
+------------------------------------------------*/
+add_action( 'template_redirect', function() {
+    if ( is_user_logged_in() ) return;
+    
+    if ( is_home() || is_singular( 'post' ) || is_page( 'submit-post' ) ) {
+        wp_redirect( wp_login_url( get_permalink() ) );
+        exit;
+    }
+} );
