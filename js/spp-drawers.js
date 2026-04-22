@@ -101,31 +101,36 @@ document.addEventListener("DOMContentLoaded", function () {
     });
 
 });
-document.addEventListener('DOMContentLoaded', function() {
-    var container = document.querySelector('.MuiTableContainer-root');
-    if (!container) return;
+// WPDA top scrollbar mirror
+(function() {
+    function addTopScroll(container) {
+        if (container.dataset.topScrollAdded) return;
+        container.dataset.topScrollAdded = '1';
 
-    // Create top scrollbar
-    var topScroll = document.createElement('div');
-    topScroll.className = 'wpda-top-scroll';
-    var inner = document.createElement('div');
-    inner.className = 'wpda-top-scroll-inner';
-    topScroll.appendChild(inner);
-    container.parentNode.insertBefore(topScroll, container);
+        var topScroll = document.createElement('div');
+        topScroll.style.cssText = 'overflow-x:auto;overflow-y:hidden;height:12px;margin-bottom:4px;';
+        var inner = document.createElement('div');
+        inner.style.height = '1px';
+        topScroll.appendChild(inner);
+        container.parentNode.insertBefore(topScroll, container);
 
-    // Sync widths
-    function syncWidth() {
-        inner.style.width = container.scrollWidth + 'px';
+        function syncWidth() {
+            inner.style.width = container.scrollWidth + 'px';
+        }
+        syncWidth();
+        setTimeout(syncWidth, 500);
+        setTimeout(syncWidth, 1500);
+
+        topScroll.addEventListener('scroll', function() { container.scrollLeft = topScroll.scrollLeft; });
+        container.addEventListener('scroll', function() { topScroll.scrollLeft = container.scrollLeft; });
+        window.addEventListener('resize', syncWidth);
     }
-    syncWidth();
 
-    // Sync scroll positions
-    topScroll.addEventListener('scroll', function() {
-        container.scrollLeft = topScroll.scrollLeft;
-    });
-    container.addEventListener('scroll', function() {
-        topScroll.scrollLeft = container.scrollLeft;
+    var observer = new MutationObserver(function() {
+        document.querySelectorAll('.MuiTableContainer-root').forEach(function(el) {
+            addTopScroll(el);
+        });
     });
 
-    window.addEventListener('resize', syncWidth);
-});
+    observer.observe(document.body, { childList: true, subtree: true });
+})();
