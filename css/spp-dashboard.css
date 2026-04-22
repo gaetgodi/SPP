@@ -202,3 +202,37 @@ All tokens defined in spp-drawers.css :root
     color: var(--spp-primary);
     width: 40%;
 }
+/* WPDA table mobile horizontal scroll */
+.wpda_responsive_table,
+.wpda-app-container,
+[class*="wpda"] {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+}
+/* WPDA table horizontal scroll */
+.MuiTableContainer-root {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+}
+
+/* Mirror scrollbar at top */
+.wpda-pp-container {
+    display: flex;
+    flex-direction: column;
+}
+
+.pp-table-container {
+    order: 2;
+}
+
+.wpda-top-scroll {
+    order: 1;
+    overflow-x: auto;
+    overflow-y: hidden;
+    height: 12px;
+    margin-bottom: 4px;
+}
+
+.wpda-top-scroll-inner {
+    height: 1px;
+}

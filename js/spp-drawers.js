@@ -101,3 +101,31 @@ document.addEventListener("DOMContentLoaded", function () {
     });
 
 });
+document.addEventListener('DOMContentLoaded', function() {
+    var container = document.querySelector('.MuiTableContainer-root');
+    if (!container) return;
+
+    // Create top scrollbar
+    var topScroll = document.createElement('div');
+    topScroll.className = 'wpda-top-scroll';
+    var inner = document.createElement('div');
+    inner.className = 'wpda-top-scroll-inner';
+    topScroll.appendChild(inner);
+    container.parentNode.insertBefore(topScroll, container);
+
+    // Sync widths
+    function syncWidth() {
+        inner.style.width = container.scrollWidth + 'px';
+    }
+    syncWidth();
+
+    // Sync scroll positions
+    topScroll.addEventListener('scroll', function() {
+        container.scrollLeft = topScroll.scrollLeft;
+    });
+    container.addEventListener('scroll', function() {
+        topScroll.scrollLeft = container.scrollLeft;
+    });
+
+    window.addEventListener('resize', syncWidth);
+});
