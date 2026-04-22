@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPP Hints System
  * Description: Pickleball hints and strategies CPT for Stouffville Pickleball Players.
- * Version: 1.0.0
+ * Version: 1.1.0
  * Author: Stouffville Pickleball Players
  *
  * FILE LOCATION: /wp-content/mu-plugins/spp-hints-system.php
@@ -81,7 +81,7 @@ class SPP_Hints_System {
             'hierarchical'      => true,
             'public'            => false,
             'show_ui'           => true,
-            'show_admin_column' => true,
+            'show_admin_column' => false,
             'show_in_rest'      => true,
             'rewrite'           => false,
         ) );
@@ -92,15 +92,23 @@ class SPP_Hints_System {
     ------------------------------------------------*/
     public function custom_columns( $columns ) {
         return array(
-            'cb'                              => $columns['cb'],
-            'title'                           => 'Title',
-            'taxonomy-' . self::TAXONOMY      => 'Category',
-            'date'                            => 'Date',
+            'cb'            => $columns['cb'],
+            'title'         => 'Title',
+            'hint_category' => 'Category',
+            'date'          => 'Date',
         );
     }
 
     public function custom_column_content( $column, $post_id ) {
-        // Taxonomy column is handled automatically by WordPress
+        if ( $column === 'hint_category' ) {
+            $terms = get_the_terms( $post_id, self::TAXONOMY );
+            if ( $terms && ! is_wp_error( $terms ) ) {
+                $names = wp_list_pluck( $terms, 'name' );
+                echo esc_html( implode( ', ', $names ) );
+            } else {
+                echo '—';
+            }
+        }
     }
 
     /*------------------------------------------------
@@ -108,7 +116,10 @@ class SPP_Hints_System {
     ------------------------------------------------*/
     public function enqueue_styles() {
         wp_add_inline_style( 'spp-tokens', '
-            .spp-hints-filter { margin-bottom: 1.5em; }
+            /* Hints filter buttons */
+            .spp-hints-filter {
+                margin-bottom: 1.5em;
+            }
             .spp-hints-filter button {
                 background: var(--spp-teal, #42afa3);
                 color: #fff;
@@ -123,31 +134,91 @@ class SPP_Hints_System {
             .spp-hints-filter button:hover {
                 background: var(--spp-dark-teal, #2d8a7e);
             }
-            .spp-hints-list { list-style: none; padding: 0; margin: 0; }
+
+            /* Hints accordion list */
+            .spp-hints-list {
+                list-style: none;
+                padding: 0;
+                margin: 0;
+            }
             .spp-hint-item {
-                background: #fff;
                 border: 1px solid #ddd;
                 border-radius: 6px;
-                padding: 1.2em 1.4em;
-                margin-bottom: 1em;
+                margin-bottom: 0.6em;
+                overflow: hidden;
+                background: #fff;
             }
-            .spp-hint-item h4 { margin: 0 0 0.5em; color: var(--spp-teal, #42afa3); }
-            .spp-hint-item .spp-hint-category {
+            .spp-hint-item.hidden {
+                display: none;
+            }
+
+            /* Accordion toggle button */
+            .spp-hint-toggle {
+                width: 100%;
+                text-align: left;
+                background: none;
+                border: none;
+                padding: 0.9em 1.2em;
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 1em;
+            }
+            .spp-hint-toggle:hover {
+                background: #f5fafa;
+            }
+            .spp-hint-toggle-left {
+                display: flex;
+                align-items: center;
+                gap: 0.7em;
+                flex: 1;
+            }
+            .spp-hint-category-badge {
+                font-size: 0.75em;
+                color: #fff;
+                background: var(--spp-teal, #42afa3);
+                border-radius: 3px;
+                padding: 2px 7px;
+                white-space: nowrap;
+            }
+            .spp-hint-title {
+                font-weight: 600;
+                color: #333;
+                font-size: 1em;
+            }
+            .spp-hint-arrow {
                 font-size: 0.8em;
-                color: #888;
-                margin-bottom: 0.5em;
+                color: #999;
+                transition: transform 0.2s;
+                flex-shrink: 0;
             }
-            .spp-hint-item.hidden { display: none; }
+            .spp-hint-item.open .spp-hint-arrow {
+                transform: rotate(180deg);
+            }
+
+            /* Accordion content */
+            .spp-hint-content {
+                display: none;
+                padding: 0 1.2em 1.2em;
+                border-top: 1px solid #eee;
+                color: #444;
+                line-height: 1.7;
+            }
+            .spp-hint-item.open .spp-hint-content {
+                display: block;
+            }
         ' );
     }
 
     /*------------------------------------------------
     # [spp_hints] shortcode
-    # Renders filterable list of all published hints
+    # Renders accordion list of all published hints
+    # with optional category filter buttons
     ------------------------------------------------*/
     public function hints_shortcode( $atts ) {
         $atts = shortcode_atts( array(
-            'category' => '', // optional: pre-filter by category slug
+            'category' => '',
         ), $atts );
 
         $hints = get_posts( array(
@@ -185,7 +256,7 @@ class SPP_Hints_System {
             $output .= '</div>';
         }
 
-        // Hints list
+        // Accordion hints list
         $output .= '<ul class="spp-hints-list">';
         foreach ( $hints as $hint ) {
             $terms     = get_the_terms( $hint->ID, self::TAXONOMY );
@@ -198,21 +269,49 @@ class SPP_Hints_System {
                 }
             }
 
-            $data_cats = implode( ' ', $cat_slugs );
-            $output   .= '<li class="spp-hint-item" data-categories="' . $data_cats . '">';
+            $data_cats  = implode( ' ', $cat_slugs );
+            $item_id    = 'spp-hint-' . $hint->ID;
+
+            $output .= '<li class="spp-hint-item" data-categories="' . $data_cats . '">';
+            $output .= '<button class="spp-hint-toggle" aria-expanded="false" aria-controls="' . $item_id . '">';
+            $output .= '<span class="spp-hint-toggle-left">';
             if ( ! empty( $cat_names ) ) {
-                $output .= '<div class="spp-hint-category">' . implode( ', ', $cat_names ) . '</div>';
+                $output .= '<span class="spp-hint-category-badge">' . implode( ', ', $cat_names ) . '</span>';
             }
-            $output .= '<h4>' . esc_html( $hint->post_title ) . '</h4>';
-            $output .= '<div class="spp-hint-content">' . wpautop( wp_kses_post( $hint->post_content ) ) . '</div>';
+            $output .= '<span class="spp-hint-title">' . esc_html( $hint->post_title ) . '</span>';
+            $output .= '</span>';
+            $output .= '<span class="spp-hint-arrow">▼</span>';
+            $output .= '</button>';
+            $output .= '<div class="spp-hint-content" id="' . $item_id . '">';
+            $output .= wpautop( wp_kses_post( $hint->post_content ) );
+            $output .= '</div>';
             $output .= '</li>';
         }
         $output .= '</ul>';
 
-        // Filter JS
+        // Accordion + filter JS
         $output .= '
         <script>
         (function() {
+            // Accordion
+            document.querySelectorAll(".spp-hint-toggle").forEach(function(btn) {
+                btn.addEventListener("click", function() {
+                    var item = this.closest(".spp-hint-item");
+                    var isOpen = item.classList.contains("open");
+                    // Close all
+                    document.querySelectorAll(".spp-hint-item.open").forEach(function(el) {
+                        el.classList.remove("open");
+                        el.querySelector(".spp-hint-toggle").setAttribute("aria-expanded", "false");
+                    });
+                    // Open clicked if it was closed
+                    if (!isOpen) {
+                        item.classList.add("open");
+                        this.setAttribute("aria-expanded", "true");
+                    }
+                });
+            });
+
+            // Category filter
             var buttons = document.querySelectorAll(".spp-hints-filter button");
             var items   = document.querySelectorAll(".spp-hint-item");
             buttons.forEach(function(btn) {
@@ -225,6 +324,7 @@ class SPP_Hints_System {
                             item.classList.remove("hidden");
                         } else {
                             item.classList.add("hidden");
+                            item.classList.remove("open");
                         }
                     });
                 });
