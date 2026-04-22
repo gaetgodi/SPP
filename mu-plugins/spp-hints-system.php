@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPP Hints System
  * Description: Pickleball hints and strategies CPT for Stouffville Pickleball Players.
- * Version: 1.1.0
+ * Version: 1.2.0
  * Author: Stouffville Pickleball Players
  *
  * FILE LOCATION: /wp-content/mu-plugins/spp-hints-system.php
@@ -149,7 +149,7 @@ class SPP_Hints_System {
                 background: #fff;
             }
             .spp-hint-item.hidden {
-                display: none;
+                display: none !important;
             }
 
             /* Accordion toggle button */
@@ -181,6 +181,8 @@ class SPP_Hints_System {
                 border-radius: 3px;
                 padding: 2px 7px;
                 white-space: nowrap;
+                margin-right: 0.5em;
+                flex-shrink: 0;
             }
             .spp-hint-title {
                 font-weight: 600;
@@ -197,16 +199,20 @@ class SPP_Hints_System {
                 transform: rotate(180deg);
             }
 
-            /* Accordion content */
+            /* Accordion content — closed by default using max-height */
             .spp-hint-content {
-                display: none;
-                padding: 0 1.2em 1.2em;
-                border-top: 1px solid #eee;
+                max-height: 0;
+                overflow: hidden;
+                padding: 0 1.2em;
+                border-top: 0px solid #eee;
                 color: #444;
                 line-height: 1.7;
+                transition: max-height 0.3s ease, padding 0.3s ease, border-top 0.3s ease;
             }
             .spp-hint-item.open .spp-hint-content {
-                display: block;
+                max-height: 2000px;
+                padding: 0.8em 1.2em 1.2em;
+                border-top: 1px solid #eee;
             }
         ' );
     }
@@ -269,8 +275,8 @@ class SPP_Hints_System {
                 }
             }
 
-            $data_cats  = implode( ' ', $cat_slugs );
-            $item_id    = 'spp-hint-' . $hint->ID;
+            $data_cats = implode( ' ', $cat_slugs );
+            $item_id   = 'spp-hint-' . $hint->ID;
 
             $output .= '<li class="spp-hint-item" data-categories="' . $data_cats . '">';
             $output .= '<button class="spp-hint-toggle" aria-expanded="false" aria-controls="' . $item_id . '">';
@@ -293,17 +299,17 @@ class SPP_Hints_System {
         $output .= '
         <script>
         (function() {
-            // Accordion
+            // Accordion — all closed by default
             document.querySelectorAll(".spp-hint-toggle").forEach(function(btn) {
                 btn.addEventListener("click", function() {
                     var item = this.closest(".spp-hint-item");
                     var isOpen = item.classList.contains("open");
-                    // Close all
+                    // Close all open items
                     document.querySelectorAll(".spp-hint-item.open").forEach(function(el) {
                         el.classList.remove("open");
                         el.querySelector(".spp-hint-toggle").setAttribute("aria-expanded", "false");
                     });
-                    // Open clicked if it was closed
+                    // Open clicked item if it was closed
                     if (!isOpen) {
                         item.classList.add("open");
                         this.setAttribute("aria-expanded", "true");
@@ -312,12 +318,12 @@ class SPP_Hints_System {
             });
 
             // Category filter
-            var buttons = document.querySelectorAll(".spp-hints-filter button");
-            var items   = document.querySelectorAll(".spp-hint-item");
-            buttons.forEach(function(btn) {
+            var filterBtns = document.querySelectorAll(".spp-hints-filter button");
+            var items      = document.querySelectorAll(".spp-hint-item");
+            filterBtns.forEach(function(btn) {
                 btn.addEventListener("click", function() {
                     var filter = this.getAttribute("data-filter");
-                    buttons.forEach(function(b) { b.classList.remove("active"); });
+                    filterBtns.forEach(function(b) { b.classList.remove("active"); });
                     this.classList.add("active");
                     items.forEach(function(item) {
                         if (filter === "all" || item.getAttribute("data-categories").indexOf(filter) !== -1) {
