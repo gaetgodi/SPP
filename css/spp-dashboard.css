@@ -236,3 +236,8 @@ All tokens defined in spp-drawers.css :root
 .wpda-top-scroll-inner {
     height: 1px;
 }
+/* Fix WPDA 24px overflow on rtec_xref table */
+.pp-table .MuiTableCell-root {
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+}
