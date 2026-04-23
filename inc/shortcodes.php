@@ -184,16 +184,19 @@ function spp_pending_posts_shortcode() {
 
     return $output;
 }
-add_shortcode( 'spp_pending_posts', 'spp_pending_posts_shortcode' );
-/* =========================================================
-   [spp_events]
-   Events list shortcode — auto-filters by current category
-   URL context, or shows all events if no category in URL.
-   ========================================================= */
-   add_shortcode('spp_events', function() {
-    $queried = get_queried_object();
-    if ($queried && isset($queried->slug) && tribe_is_event_category()) {
-        return do_shortcode('[tribe_events view="list" category="' . esc_attr($queried->slug) . '"]');
+add_shortcode('spp_events', function() {
+    global $wp_query;
+    $cat_slug = '';
+    if (!empty($wp_query->query['tribe_events_cat'])) {
+        $cat_slug = $wp_query->query['tribe_events_cat'];
+    } elseif (tribe_is_event_category()) {
+        $obj = get_queried_object();
+        if ($obj && isset($obj->slug)) {
+            $cat_slug = $obj->slug;
+        }
+    }
+    if ($cat_slug) {
+        return do_shortcode('[tribe_events view="list" category="' . esc_attr($cat_slug) . '"]');
     }
     return do_shortcode('[tribe_events view="list"]');
 });
