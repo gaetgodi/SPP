@@ -135,24 +135,24 @@ document.addEventListener("DOMContentLoaded", function () {
         window.addEventListener('resize', syncWidth);
     }
 
-    function manageBottomScroll(container) {
-        if (container.dataset.bottomScrollManaged) return;
-        container.dataset.bottomScrollManaged = '1';
+  function manageBottomScroll(container) {
+    if (container.dataset.bottomScrollManaged) return;
+    container.dataset.bottomScrollManaged = '1';
 
-        function check() {
-            var table = container.querySelector('table');
-            var tableWidth = table ? table.offsetWidth : 0;
-            if (tableWidth <= container.clientWidth) {
-                container.style.overflowX = 'hidden';
-            } else {
-                container.style.overflowX = 'auto';
-            }
+    function check() {
+        var table = container.querySelector('table');
+        var tableWidth = table ? table.offsetWidth : 0;
+        if (tableWidth <= container.clientWidth) {
+            container.parentElement.classList.add('spp-no-hscroll');
+        } else {
+            container.parentElement.classList.remove('spp-no-hscroll');
         }
-        check();
-        setTimeout(check, 500);
-        setTimeout(check, 1500);
-        window.addEventListener('resize', check);
     }
+    check();
+    setTimeout(check, 500);
+    setTimeout(check, 1500);
+    window.addEventListener('resize', check);
+}
 
     var observer = new MutationObserver(function() {
         document.querySelectorAll('.MuiTableContainer-root').forEach(function(el) {

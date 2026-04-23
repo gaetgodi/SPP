@@ -220,3 +220,6 @@ All tokens defined in spp-drawers.css :root
     overflow-x: auto !important;
     -webkit-overflow-scrolling: touch !important;
 }
+.spp-no-hscroll .MuiTableContainer-root {
+    overflow: hidden !important;
+}
