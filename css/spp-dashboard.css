@@ -222,30 +222,4 @@ All tokens defined in spp-drawers.css :root
 }
 .spp-no-hscroll .MuiTableContainer-root {
     overflow: hidden !important;
-}/* =====================================================
-EVENTS LIST TWO-COLUMN LAYOUT
-===================================================== */
-.spp-events-layout {
- display: flex;
- gap: 2rem;
- align-items: flex-start;
-}
-
-.spp-events-main {
- flex: 1;
- min-width: 0;
-}
-
-.spp-events-sidebar {
- width: 260px;
- flex-shrink: 0;
-}
-
-@media (max-width: 768px) {
- .spp-events-layout {
-     flex-direction: column;
- }
- .spp-events-sidebar {
-     width: 100%;
- }
 }
