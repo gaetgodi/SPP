@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPP Hints System
  * Description: Pickleball hints and strategies CPT for Stouffville Pickleball Players.
- * Version: 1.4.0
+ * Version: 1.3.0
  * Author: Stouffville Pickleball Players
  *
  * FILE LOCATION: /wp-content/mu-plugins/spp-hints-system.php
@@ -143,35 +143,18 @@ class SPP_Hints_System {
             }
         }
 
-        $teal     = '#00897B';
-        $darkteal = '#004D40';
+        $teal     = '#42afa3';
+        $darkteal = '#2d8a7e';
 
         $output = '<div class="spp-hints" style="font-family: inherit;">';
 
-        // Category filter dropdown (only if more than one category)
+        // Category filter buttons (only if more than one category)
         if ( count( $categories ) > 1 ) {
-            $output .= '<div style="margin-bottom:1.5em;display:flex;align-items:center;gap:0.75em;flex-wrap:wrap;">';
-            $output .= '<label for="spp-hints-select" style="font-weight:700;color:' . $teal . ';font-size:1em;white-space:nowrap;">Select Category:</label>';
-            $output .= '<select id="spp-hints-select" style="'
-                . 'flex:1;min-width:200px;max-width:500px;'
-                . 'padding:0.5em 2.2em 0.5em 0.9em;'
-                . 'border:2px solid ' . $teal . ';'
-                . 'border-radius:4px;'
-                . 'font-size:1em;'
-                . 'color:#333;'
-                . 'background-color:#fff;'
-                . 'background-image:url(\'data:image/svg+xml;charset=UTF-8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path fill="%23333" d="M5 7l5 5 5-5z"/></svg>\');'
-                . 'background-repeat:no-repeat;'
-                . 'background-position:right 0.6em center;'
-                . 'background-size:1.2em;'
-                . 'appearance:none;-webkit-appearance:none;'
-                . 'cursor:pointer;'
-                . '">';
-            $output .= '<option value="all">All Categories</option>';
+            $output .= '<div class="spp-hints-filter" style="margin-bottom:1.5em;">';
+            $output .= '<button class="spp-filter-btn active" data-filter="all" style="background:' . $teal . ';color:#fff;border:none;border-radius:4px;padding:6px 14px;margin:0 4px 6px 0;cursor:pointer;font-size:0.9em;">All</button>';
             foreach ( $categories as $slug => $name ) {
-                $output .= '<option value="' . esc_attr( $slug ) . '">' . esc_html( $name ) . '</option>';
+                $output .= '<button class="spp-filter-btn" data-filter="' . esc_attr( $slug ) . '" style="background:' . $teal . ';color:#fff;border:none;border-radius:4px;padding:6px 14px;margin:0 4px 6px 0;cursor:pointer;font-size:0.9em;">' . esc_html( $name ) . '</button>';
             }
-            $output .= '</select>';
             $output .= '</div>';
         }
 
@@ -213,14 +196,17 @@ class SPP_Hints_System {
         }
         $output .= '</ul>';
 
-        // JS for accordion and dropdown filter
+        // JS for accordion and filter
         $output .= '
         <script>
         (function() {
+            var teal = "' . $teal . '";
+            var darkteal = "' . $darkteal . '";
+
             // Accordion
             document.querySelectorAll(".spp-hint-toggle").forEach(function(btn) {
                 btn.addEventListener("click", function() {
-                    var item    = this.closest(".spp-hint-item");
+                    var item   = this.closest(".spp-hint-item");
                     var content = item.querySelector(".spp-hint-content");
                     var arrow   = item.querySelector(".spp-hint-arrow");
                     var isOpen  = content.style.display === "block";
@@ -259,35 +245,33 @@ class SPP_Hints_System {
                 });
             });
 
-            // Dropdown category filter
-            var select = document.getElementById("spp-hints-select");
-            if (select) {
-                select.addEventListener("change", function() {
-                    var filter = this.value;
+            // Category filter
+            document.querySelectorAll(".spp-filter-btn").forEach(function(btn) {
+                btn.addEventListener("click", function() {
+                    var filter = this.getAttribute("data-filter");
 
-                    // Close all open hints first
-                    document.querySelectorAll(".spp-hint-content").forEach(function(c) {
-                        c.style.display = "none";
+                    // Update button styles
+                    document.querySelectorAll(".spp-filter-btn").forEach(function(b) {
+                        b.style.background = teal;
+                        b.classList.remove("active");
                     });
-                    document.querySelectorAll(".spp-hint-arrow").forEach(function(a) {
-                        a.style.transform = "rotate(0deg)";
-                    });
-                    document.querySelectorAll(".spp-hint-toggle").forEach(function(b) {
-                        b.setAttribute("aria-expanded", "false");
-                        b.style.background = "none";
-                    });
+                    this.style.background = darkteal;
+                    this.classList.add("active");
 
-                    // Show/hide items
+                    // Filter items
                     document.querySelectorAll(".spp-hint-item").forEach(function(item) {
                         var cats = item.getAttribute("data-categories");
                         if (filter === "all" || cats.indexOf(filter) !== -1) {
                             item.style.display = "block";
                         } else {
                             item.style.display = "none";
+                            // Close any open content in hidden items
+                            var c = item.querySelector(".spp-hint-content");
+                            if (c) c.style.display = "none";
                         }
                     });
                 });
-            }
+            });
         })();
         </script>';
 
