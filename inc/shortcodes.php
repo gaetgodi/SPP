@@ -197,3 +197,11 @@ add_shortcode('spp_events', function() {
     }
     return do_shortcode('[tribe_events view="list"]');
 });
+add_action('wp_footer', function() {
+    if (tribe_is_event_category()) {
+        $cat = get_queried_object();
+        echo '<div style="position:fixed;bottom:0;left:0;background:red;color:white;padding:10px;z-index:9999">';
+        echo 'Cat slug: ' . $cat->slug;
+        echo '</div>';
+    }
+});
