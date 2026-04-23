@@ -143,7 +143,7 @@ document.addEventListener("DOMContentLoaded", function () {
         function check() {
             var table = container.querySelector('table');
             var tableWidth = table ? table.offsetWidth : 0;
-            if (tableWidth <= container.clientWidth - 20) {
+            if (tableWidth <= container.clientWidth + 20) {
                 container.parentElement.classList.add('spp-no-hscroll');
             } else {
                 container.parentElement.classList.remove('spp-no-hscroll');
