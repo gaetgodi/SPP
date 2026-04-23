@@ -185,3 +185,15 @@ function spp_pending_posts_shortcode() {
     return $output;
 }
 add_shortcode( 'spp_pending_posts', 'spp_pending_posts_shortcode' );
+/* =========================================================
+   [spp_events]
+   Events list shortcode — auto-filters by current category
+   URL context, or shows all events if no category in URL.
+   ========================================================= */
+add_shortcode('spp_events', function() {
+    $category = get_query_var('tribe_events_cat');
+    if ($category) {
+        return do_shortcode('[tribe_events view="list" category="' . esc_attr($category) . '"]');
+    }
+    return do_shortcode('[tribe_events view="list"]');
+});
