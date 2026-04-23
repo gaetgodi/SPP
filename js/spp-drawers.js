@@ -115,8 +115,10 @@ document.addEventListener("DOMContentLoaded", function () {
         container.parentNode.insertBefore(topScroll, container);
 
         function syncWidth() {
-            inner.style.width = container.scrollWidth + 'px';
-            topScroll.style.display = container.scrollWidth > container.clientWidth ? 'block' : 'none';
+            var table = container.querySelector('table');
+            var tableWidth = table ? table.offsetWidth : container.scrollWidth;
+            inner.style.width = tableWidth + 'px';
+            topScroll.style.display = tableWidth > container.clientWidth ? 'block' : 'none';
         }
         syncWidth();
         setTimeout(syncWidth, 500);
