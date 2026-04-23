@@ -190,18 +190,10 @@ add_shortcode( 'spp_pending_posts', 'spp_pending_posts_shortcode' );
    Events list shortcode — auto-filters by current category
    URL context, or shows all events if no category in URL.
    ========================================================= */
-add_shortcode('spp_events', function() {
-    $category = get_query_var('tribe_events_cat');
-    if ($category) {
-        return do_shortcode('[tribe_events view="list" category="' . esc_attr($category) . '"]');
+   add_shortcode('spp_events', function() {
+    $queried = get_queried_object();
+    if ($queried && isset($queried->slug) && tribe_is_event_category()) {
+        return do_shortcode('[tribe_events view="list" category="' . esc_attr($queried->slug) . '"]');
     }
     return do_shortcode('[tribe_events view="list"]');
-});
-add_action('wp_footer', function() {
-    if (tribe_is_event_category()) {
-        $cat = get_queried_object();
-        echo '<div style="position:fixed;bottom:0;left:0;background:red;color:white;padding:10px;z-index:9999">';
-        echo 'Cat slug: ' . $cat->slug;
-        echo '</div>';
-    }
 });
