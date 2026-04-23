@@ -116,6 +116,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
         function syncWidth() {
             inner.style.width = container.scrollWidth + 'px';
+            topScroll.style.display = container.scrollWidth > container.clientWidth ? 'block' : 'none';
         }
         syncWidth();
         setTimeout(syncWidth, 500);
