@@ -101,8 +101,14 @@ document.addEventListener("DOMContentLoaded", function () {
     });
 
 });
-// WPDA top scrollbar mirror
+
+// =====================================================
+// WPDA TABLE SCROLL MANAGEMENT
+// - Adds mirrored top scrollbar
+// - Hides bottom scrollbar when content fits
+// =====================================================
 (function() {
+
     function addTopScroll(container) {
         if (container.dataset.topScrollAdded) return;
         container.dataset.topScrollAdded = '1';
@@ -129,11 +135,32 @@ document.addEventListener("DOMContentLoaded", function () {
         window.addEventListener('resize', syncWidth);
     }
 
+    function manageBottomScroll(container) {
+        if (container.dataset.bottomScrollManaged) return;
+        container.dataset.bottomScrollManaged = '1';
+
+        function check() {
+            var table = container.querySelector('table');
+            var tableWidth = table ? table.offsetWidth : 0;
+            if (tableWidth <= container.clientWidth) {
+                container.style.overflowX = 'hidden';
+            } else {
+                container.style.overflowX = 'auto';
+            }
+        }
+        check();
+        setTimeout(check, 500);
+        setTimeout(check, 1500);
+        window.addEventListener('resize', check);
+    }
+
     var observer = new MutationObserver(function() {
         document.querySelectorAll('.MuiTableContainer-root').forEach(function(el) {
             addTopScroll(el);
+            manageBottomScroll(el);
         });
     });
 
     observer.observe(document.body, { childList: true, subtree: true });
+
 })();
