@@ -187,30 +187,25 @@ function spp_pending_posts_shortcode() {
 
 add_shortcode( 'spp_pending_posts', 'spp_pending_posts_shortcode' );
 
-add_shortcode('spp_events', function() {
-    global $wp_query;
-    $cat_slug = '';
-    if (!empty($wp_query->query['tribe_events_cat'])) {
-        $cat_slug = $wp_query->query['tribe_events_cat'];
-    } elseif (tribe_is_event_category()) {
-        $obj = get_queried_object();
-        if ($obj && isset($obj->slug)) {
-            $cat_slug = $obj->slug;
+aadd_shortcode('spp_events', function($atts) {
+    $atts = shortcode_atts(['category' => ''], $atts);
+    $cat_slug = $atts['category'];
+
+    // Fall back to query detection if no category passed
+    if (!$cat_slug) {
+        global $wp_query;
+        if (!empty($wp_query->query['tribe_events_cat'])) {
+            $cat_slug = $wp_query->query['tribe_events_cat'];
+        } elseif (tribe_is_event_category()) {
+            $obj = get_queried_object();
+            if ($obj && isset($obj->slug)) {
+                $cat_slug = $obj->slug;
+            }
         }
     }
+
     if ($cat_slug) {
         return do_shortcode('[tribe_events view="list" category="' . esc_attr($cat_slug) . '"]');
     }
     return do_shortcode('[tribe_events view="list"]');
-});
-add_shortcode('spp_debug_template', function() {
-    global $wp_query;
-    $output = '<pre>';
-    $output .= 'Post type: ' . get_post_type() . "\n";
-    $output .= 'Is event category: ' . (tribe_is_event_category() ? 'yes' : 'no') . "\n";
-    $output .= 'Queried object: ' . print_r(get_queried_object(), true) . "\n";
-    $output .= 'Template: ' . get_page_template() . "\n";
-    $output .= 'Theme Builder layout: ' . (function_exists('et_theme_builder_get_template_layouts') ? print_r(et_theme_builder_get_template_layouts(), true) : 'function not found') . "\n";
-    $output .= '</pre>';
-    return $output;
 });
