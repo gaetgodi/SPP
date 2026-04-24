@@ -184,19 +184,5 @@ function spp_pending_posts_shortcode() {
 
     return $output;
 }
-add_shortcode('spp_events', function() {
-    global $wp_query;
-    $cat_slug = '';
-    if (!empty($wp_query->query['tribe_events_cat'])) {
-        $cat_slug = $wp_query->query['tribe_events_cat'];
-    } elseif (tribe_is_event_category()) {
-        $obj = get_queried_object();
-        if ($obj && isset($obj->slug)) {
-            $cat_slug = $obj->slug;
-        }
-    }
-    if ($cat_slug) {
-        return do_shortcode('[tribe_events view="list" category="' . esc_attr($cat_slug) . '"]');
-    }
-    return do_shortcode('[tribe_events view="list"]');
-});
+
+add_shortcode( 'spp_pending_posts', 'spp_pending_posts_shortcode' );
