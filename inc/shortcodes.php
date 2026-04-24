@@ -209,3 +209,16 @@ aadd_shortcode('spp_events', function($atts) {
     }
     return do_shortcode('[tribe_events view="list"]');
 });
+add_shortcode('spp_events_test', function($atts) {
+    $atts = shortcode_atts(['category' => ''], $atts);
+    ob_start();
+    try {
+        $cat_slug = $atts['category'];
+        echo 'category attr: ' . $cat_slug . '<br>';
+        echo 'tribe_is_event_category exists: ' . (function_exists('tribe_is_event_category') ? 'yes' : 'no') . '<br>';
+        echo 'tribe_events view exists: ' . (function_exists('tribe_get_events') ? 'yes' : 'no') . '<br>';
+    } catch (Exception $e) {
+        echo 'Error: ' . $e->getMessage();
+    }
+    return ob_get_clean();
+});
