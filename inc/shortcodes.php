@@ -203,3 +203,14 @@ add_shortcode('spp_events', function() {
     }
     return do_shortcode('[tribe_events view="list"]');
 });
+add_shortcode('spp_debug_template', function() {
+    global $wp_query;
+    $output = '<pre>';
+    $output .= 'Post type: ' . get_post_type() . "\n";
+    $output .= 'Is event category: ' . (tribe_is_event_category() ? 'yes' : 'no') . "\n";
+    $output .= 'Queried object: ' . print_r(get_queried_object(), true) . "\n";
+    $output .= 'Template: ' . get_page_template() . "\n";
+    $output .= 'Theme Builder layout: ' . (function_exists('et_theme_builder_get_template_layouts') ? print_r(et_theme_builder_get_template_layouts(), true) : 'function not found') . "\n";
+    $output .= '</pre>';
+    return $output;
+});
