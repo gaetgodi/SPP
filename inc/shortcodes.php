@@ -187,7 +187,7 @@ function spp_pending_posts_shortcode() {
 
 add_shortcode( 'spp_pending_posts', 'spp_pending_posts_shortcode' );
 
-aadd_shortcode('spp_events', function($atts) {
+add_shortcode('spp_events', function($atts) {
     $atts = shortcode_atts(['category' => ''], $atts);
     $cat_slug = $atts['category'];
 
