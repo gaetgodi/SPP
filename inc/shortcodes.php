@@ -248,7 +248,7 @@ add_shortcode('spp_events', function($atts) {
         WHERE o.start_date >= NOW()
 AND o.start_date <= DATE_ADD(NOW(), INTERVAL 3 WEEK)
 AND p.post_status = 'publish'
-        GROUP BY o.post_id
+GROUP BY o.occurrence_id
         ORDER BY o.start_date ASC
     ");
 
