@@ -246,7 +246,8 @@ add_shortcode('spp_events', function($atts) {
             )
         ) latest ON o.post_id = latest.event_id
         WHERE o.start_date >= NOW()
-        AND p.post_status = 'publish'
+AND o.start_date <= DATE_ADD(NOW(), INTERVAL 3 WEEK)
+AND p.post_status = 'publish'
         GROUP BY o.post_id
         ORDER BY o.start_date ASC
     ");
