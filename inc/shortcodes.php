@@ -250,7 +250,7 @@ add_shortcode('spp_events', function($atts) {
     $out .= '<table class="spp-dashboard-table">';
     $out .= '<thead><tr>';
     $out .= '<th>Date</th><th>Event</th>';
-    $out .= '<th>Confirmed</th><th>Capacity</th><th>Waiting</th><th>Pending</th><th>Unregistered</th>';
+    $out .= '<th>Confirmed</th><th>Max</th><th>Queue</th><th>?</th><th>Dropped</th>';
     $out .= '</tr></thead><tbody>';
 
     if (empty($rows)) {
