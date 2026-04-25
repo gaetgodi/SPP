@@ -222,6 +222,7 @@ add_shortcode('spp_events', function($atts) {
             o.post_id,
             o.start_date,
             p.post_title,
+            t.name AS category,
             pm_max.meta_value AS max_registrations,
             pm_limit.meta_value AS limit_registrations,
             COUNT(CASE WHEN latest.status = 'confirmed'    THEN 1 END) AS confirmed,
@@ -230,6 +231,9 @@ add_shortcode('spp_events', function($atts) {
             COUNT(CASE WHEN latest.status = 'unregistered' THEN 1 END) AS unregistered
         FROM {$p}tec_occurrences o
         JOIN {$p}posts p ON o.post_id = p.ID
+        JOIN {$p}term_relationships tr ON o.post_id = tr.object_id
+        JOIN {$p}term_taxonomy tt ON tr.term_taxonomy_id = tt.term_taxonomy_id AND tt.taxonomy = 'tribe_events_cat'
+        JOIN {$p}terms t ON tt.term_id = t.term_id
         LEFT JOIN {$p}postmeta pm_max   ON o.post_id = pm_max.post_id   AND pm_max.meta_key   = '_RTECmaxRegistrations'
         LEFT JOIN {$p}postmeta pm_limit ON o.post_id = pm_limit.post_id AND pm_limit.meta_key = '_RTEClimitRegistrations'
         LEFT JOIN (
@@ -241,13 +245,32 @@ add_shortcode('spp_events', function($atts) {
                 AND e2.user_id = e1.user_id
             )
         ) latest ON o.post_id = latest.event_id
-        WHERE o.start_date >= NOW() AND p.post_status = 'publish'
-        GROUP BY o.post_id
-        ORDER BY o.start_date ASC
+        WHERE o.start_date >= NOW()
+        AND p.post_status = 'publish'
+        GROUP BY o.post_id, t.term_id
+        ORDER BY t.name ASC, o.start_date ASC
     ");
 
+    // Build unique category list
+    $categories = [];
+    foreach ($rows as $row) {
+        $categories[$row->category] = $row->category;
+    }
+
     $out  = '<div class="spp-event-registrations">';
-    $out .= '<table class="spp-dashboard-table">';
+
+    // Dropdown
+    $out .= '<div style="margin-bottom:1rem;">';
+    $out .= '<label for="spp-cat-filter" style="font-weight:600; margin-right:0.5rem;">Category:</label>';
+    $out .= '<select id="spp-cat-filter" onchange="sppFilterEvents(this.value)">';
+    $out .= '<option value="">All</option>';
+    foreach ($categories as $cat) {
+        $out .= '<option value="' . esc_attr($cat) . '">' . esc_html($cat) . '</option>';
+    }
+    $out .= '</select>';
+    $out .= '</div>';
+
+    $out .= '<table class="spp-dashboard-table" id="spp-events-table">';
     $out .= '<thead><tr>';
     $out .= '<th>Date</th><th>Event</th>';
     $out .= '<th>Confirmed</th><th>Max</th><th>Queue</th><th>?</th><th>Dropped</th>';
@@ -264,11 +287,10 @@ add_shortcode('spp_events', function($atts) {
             $waiting      = (int)$row->waiting;
             $pending      = (int)$row->pending;
             $unregistered = (int)$row->unregistered;
+            $full         = $limit && $confirmed >= (int)$row->max_registrations;
+            $row_class    = $full ? 'spp-event-full' : '';
 
-            $full      = $limit && $confirmed >= (int)$row->max_registrations;
-            $row_class = $full ? ' class="spp-event-full"' : '';
-
-            $out .= "<tr{$row_class}>";
+            $out .= '<tr class="' . $row_class . '" data-category="' . esc_attr($row->category) . '">';
             $out .= '<td>' . esc_html($date) . '</td>';
             $out .= '<td>' . esc_html($row->post_title) . '</td>';
             $out .= '<td>' . $confirmed . '</td>';
@@ -281,5 +303,19 @@ add_shortcode('spp_events', function($atts) {
     }
 
     $out .= '</tbody></table></div>';
+
+    $out .= '<script>
+    function sppFilterEvents(cat) {
+        var rows = document.querySelectorAll("#spp-events-table tbody tr");
+        rows.forEach(function(row) {
+            if (!cat || row.getAttribute("data-category") === cat) {
+                row.style.display = "";
+            } else {
+                row.style.display = "none";
+            }
+        });
+    }
+    </script>';
+
     return $out;
 });
