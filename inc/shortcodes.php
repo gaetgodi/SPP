@@ -241,7 +241,7 @@ add_shortcode('spp_events', function($atts) {
                 AND e2.user_id = e1.user_id
             )
         ) latest ON o.post_id = latest.event_id
-        WHERE o.start_date >= NOW()
+        WHERE o.start_date >= NOW() AND p.post_status = 'publish'
         GROUP BY o.post_id
         ORDER BY o.start_date ASC
     ");
