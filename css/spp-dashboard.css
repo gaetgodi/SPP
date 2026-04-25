@@ -227,6 +227,6 @@ All tokens defined in spp-drawers.css :root
     display: block !important;
 }
 /* Hide past events section in event list views */
-.tribe-events-calendar-latest-past__container {
+.tribe-events-calendar-latest-past {
     display: none;
 }
