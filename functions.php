@@ -39,4 +39,4 @@ add_filter('template_include', function($template) {
         error_log('TEC single event template: ' . $template);
     }
     return $template;
-});
+}, 100);
