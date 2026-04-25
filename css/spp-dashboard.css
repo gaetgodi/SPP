@@ -246,3 +246,7 @@ All tokens defined in spp-drawers.css :root
 .spp-event-registrations table.spp-dashboard-table th:nth-child(n+3) {
     text-align: center;
 }
+.spp-event-registrations table.spp-dashboard-table td:nth-child(1),
+.spp-event-registrations table.spp-dashboard-table td:nth-child(2) {
+    white-space: nowrap;
+}
