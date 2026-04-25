@@ -236,7 +236,8 @@ All tokens defined in spp-drawers.css :root
 .spp-event-full td {
     background-color: #fff3e0;
 }
-/* Event single page background */
-.tribe-events-single {
+/* Event pages section background */
+body.single-tribe_events #page-container,
+body.single-tribe_events .et_pb_section {
     background-color: var(--spp-bg-page);
 }
