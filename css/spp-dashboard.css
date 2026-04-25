@@ -226,3 +226,7 @@ All tokens defined in spp-drawers.css :root
 .et_pb_post_title h1.entry-title {
     display: block !important;
 }
+/* Hide past events section in event list views */
+.tribe-events-calendar-latest-past__container {
+    display: none;
+}
