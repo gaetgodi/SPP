@@ -1,18 +1,6 @@
 <?php
-/**
- * Single Event Template - SPP Custom Override
- */
 get_header();
 ?>
-<div class="et_pb_row et_flex_row spp-two-col-row">
-    <div class="et_pb_column et_flex_column et_flex_column_18_24" id="content_column">
-        <?php while ( have_posts() ) : the_post(); ?>
-            <?php tribe_get_template_part( 'single-event' ); ?>
-        <?php endwhile; ?>
-    </div>
-    <div class="et_pb_column et_flex_column et-last-child et_flex_column_6_24">
-        <?php echo do_shortcode('[spp_side_nav]'); ?>
-    </div>
-</div>
+<h1 style="color:red; font-size:48px;">SPP TEMPLATE IS RUNNING</h1>
 <?php
 get_footer();
