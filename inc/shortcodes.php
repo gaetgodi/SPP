@@ -213,7 +213,7 @@ add_shortcode('spp_events', function($atts) {
    [spp_event_registrations]
    Shows all upcoming events with registration counts.
    ========================================================= */
-add_shortcode('spp_event_registrations', function() {
+   add_shortcode('spp_event_registrations', function() {
     global $wpdb;
     $p = $wpdb->prefix;
 
@@ -222,7 +222,6 @@ add_shortcode('spp_event_registrations', function() {
             o.post_id,
             o.start_date,
             p.post_title,
-            t.name AS category,
             pm_max.meta_value AS max_registrations,
             pm_limit.meta_value AS limit_registrations,
             COUNT(CASE WHEN e.status = 'confirmed' THEN 1 END) AS confirmed,
@@ -230,49 +229,44 @@ add_shortcode('spp_event_registrations', function() {
             COUNT(CASE WHEN e.status = 'pending'   THEN 1 END) AS pending
         FROM {$p}tec_occurrences o
         JOIN {$p}posts p ON o.post_id = p.ID
-        JOIN {$p}term_relationships tr ON o.post_id = tr.object_id
-        JOIN {$p}term_taxonomy tt ON tr.term_taxonomy_id = tt.term_taxonomy_id AND tt.taxonomy = 'tribe_events_cat'
-        JOIN {$p}terms t ON tt.term_id = t.term_id
         LEFT JOIN {$p}postmeta pm_max   ON o.post_id = pm_max.post_id   AND pm_max.meta_key   = '_RTECmaxRegistrations'
         LEFT JOIN {$p}postmeta pm_limit ON o.post_id = pm_limit.post_id AND pm_limit.meta_key = '_RTEClimitRegistrations'
         LEFT JOIN {$p}rtec_entries e ON o.post_id = e.event_id
         WHERE o.start_date >= NOW()
-        GROUP BY o.post_id, t.term_id
-        ORDER BY o.start_date ASC, t.name ASC
+        GROUP BY o.post_id
+        ORDER BY o.start_date ASC
     ");
-
-    if (empty($rows)) {
-        return '<p>No upcoming events found.</p>';
-    }
 
     $out  = '<div class="spp-event-registrations">';
     $out .= '<table class="spp-dashboard-table">';
     $out .= '<thead><tr>';
-    $out .= '<th>Date</th><th>Event</th><th>Category</th>';
+    $out .= '<th>Date</th><th>Event</th>';
     $out .= '<th>Confirmed</th><th>Capacity</th><th>Waiting</th><th>Pending</th>';
     $out .= '</tr></thead><tbody>';
 
-    foreach ($rows as $row) {
-        $date      = date('M j, Y g:i a', strtotime($row->start_date));
-        $limit     = ($row->limit_registrations == '1');
-        $capacity  = $limit ? (int)$row->max_registrations : '∞';
-        $confirmed = (int)$row->confirmed;
-        $waiting   = (int)$row->waiting;
-        $pending   = (int)$row->pending;
+    if (empty($rows)) {
+        $out .= '<tr><td colspan="6" style="text-align:center;font-style:italic;">No upcoming events found.</td></tr>';
+    } else {
+        foreach ($rows as $row) {
+            $date      = date('M j, Y g:i a', strtotime($row->start_date));
+            $limit     = ($row->limit_registrations == '1');
+            $capacity  = $limit ? (int)$row->max_registrations : '∞';
+            $confirmed = (int)$row->confirmed;
+            $waiting   = (int)$row->waiting;
+            $pending   = (int)$row->pending;
 
-        // Highlight full events
-        $full = $limit && $confirmed >= (int)$row->max_registrations;
-        $row_class = $full ? ' class="spp-event-full"' : '';
+            $full      = $limit && $confirmed >= (int)$row->max_registrations;
+            $row_class = $full ? ' class="spp-event-full"' : '';
 
-        $out .= "<tr{$row_class}>";
-        $out .= '<td>' . esc_html($date) . '</td>';
-        $out .= '<td>' . esc_html($row->post_title) . '</td>';
-        $out .= '<td>' . esc_html($row->category) . '</td>';
-        $out .= '<td>' . $confirmed . '</td>';
-        $out .= '<td>' . $capacity . '</td>';
-        $out .= '<td>' . $waiting . '</td>';
-        $out .= '<td>' . $pending . '</td>';
-        $out .= '</tr>';
+            $out .= "<tr{$row_class}>";
+            $out .= '<td>' . esc_html($date) . '</td>';
+            $out .= '<td>' . esc_html($row->post_title) . '</td>';
+            $out .= '<td>' . $confirmed . '</td>';
+            $out .= '<td>' . $capacity . '</td>';
+            $out .= '<td>' . $waiting . '</td>';
+            $out .= '<td>' . $pending . '</td>';
+            $out .= '</tr>';
+        }
     }
 
     $out .= '</tbody></table></div>';
