@@ -236,3 +236,12 @@ All tokens defined in spp-drawers.css :root
 .spp-event-full td {
     background-color: #fff3e0;
 }
+/* Event registrations table */
+.spp-event-registrations table.spp-dashboard-table {
+    width: 100%;
+}
+
+.spp-event-registrations table.spp-dashboard-table td:nth-child(n+3),
+.spp-event-registrations table.spp-dashboard-table th:nth-child(n+3) {
+    text-align: center;
+}
