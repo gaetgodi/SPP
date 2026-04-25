@@ -222,7 +222,7 @@ add_shortcode('spp_events', function($atts) {
             o.post_id,
             o.start_date,
             p.post_title,
-            t.name AS category,
+            MIN(t.name) AS category,
             pm_max.meta_value AS max_registrations,
             pm_limit.meta_value AS limit_registrations,
             COUNT(CASE WHEN latest.status = 'confirmed'    THEN 1 END) AS confirmed,
@@ -247,8 +247,8 @@ add_shortcode('spp_events', function($atts) {
         ) latest ON o.post_id = latest.event_id
         WHERE o.start_date >= NOW()
         AND p.post_status = 'publish'
-        GROUP BY o.post_id, t.term_id
-        ORDER BY t.name ASC, o.start_date ASC
+        GROUP BY o.post_id
+        ORDER BY o.start_date ASC
     ");
 
     // Build unique category list
@@ -256,6 +256,7 @@ add_shortcode('spp_events', function($atts) {
     foreach ($rows as $row) {
         $categories[$row->category] = $row->category;
     }
+    ksort($categories);
 
     $out  = '<div class="spp-event-registrations">';
 
