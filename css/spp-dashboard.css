@@ -230,3 +230,9 @@ All tokens defined in spp-drawers.css :root
 .tribe-events-calendar-latest-past {
     display: none;
 }
+.spp-event-registrations {
+    overflow-x: auto;
+}
+.spp-event-full td {
+    background-color: #fff3e0;
+}
