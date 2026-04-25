@@ -241,3 +241,6 @@ body.single-tribe_events #page-container,
 body.single-tribe_events .et_pb_section {
     background-color: var(--spp-bg-page);
 }
+body.single-tribe_events {
+    background-color: var(--spp-bg-page) !important;
+}
