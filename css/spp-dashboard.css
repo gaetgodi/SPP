@@ -223,7 +223,9 @@ All tokens defined in spp-drawers.css :root
 .spp-no-hscroll .MuiTableContainer-root {
     overflow: hidden !important;
 }
-.et_pb_post_title h1.entry-title {
+
+.et_pb_post .entry-title,
+.et_pb_blog .entry-title {
     display: block !important;
 }
 /* Hide past events section in event list views */
