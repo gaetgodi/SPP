@@ -252,3 +252,10 @@ All tokens defined in spp-drawers.css :root
 .spp-event-registrations table.spp-dashboard-table td:nth-child(2) {
     white-space: nowrap;
 }
+/* Blog single post title */
+.spp-post-thumbnail ~ h1.entry-title,
+h1.entry-title {
+    display: block !important;
+    color: var(--spp-primary);
+    margin-bottom: 0.5rem;
+}
