@@ -5,7 +5,16 @@ get_header();
     <div class="et_pb_row et_flex_row spp-two-col-row">
         <div class="et_pb_column et_flex_column et_flex_column_18_24" id="content_column">
             <?php while ( have_posts() ) : the_post(); ?>
+                <?php if ( has_post_thumbnail() ) : ?>
+                    <div class="spp-post-thumbnail">
+                        <?php the_post_thumbnail('large'); ?>
+                    </div>
+                <?php endif; ?>
                 <h1 class="entry-title"><?php the_title(); ?></h1>
+                <p class="spp-post-meta">
+                    by <?php the_author(); ?> | <?php echo get_the_date(); ?>
+                    | <?php the_category(', '); ?>
+                </p>
                 <div class="entry-content">
                     <?php the_content(); ?>
                 </div>
