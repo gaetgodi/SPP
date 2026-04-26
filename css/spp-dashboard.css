@@ -239,7 +239,7 @@ All tokens defined in spp-drawers.css :root
     background-color: #fff3e0;
 }
 /* Event registrations table */
-..spp-event-registrations table.spp-dashboard-table {
+.spp-event-registrations table.spp-dashboard-table {
     width: auto;
     min-width: 100%;
 }
@@ -258,4 +258,10 @@ h1.entry-title {
     display: block !important;
     color: var(--spp-primary);
     margin-bottom: 0.5rem;
+}
+.spp-post-thumbnail img {
+    max-width: 60%;
+    height: auto;
+    display: block;
+    margin: 1rem auto;
 }
