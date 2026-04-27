@@ -307,7 +307,7 @@ h1.entry-title {
     margin-top: 2px;
 }
 .MuiTableContainer-root {
-    height: 70vh;
-    max-height: 70vh;
+    height: 80vh !important;
+    max-height: 80vh !important;
     overflow-y: scroll !important;
 }
