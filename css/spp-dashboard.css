@@ -306,6 +306,3 @@ h1.entry-title {
     color: var(--spp-text-subtle);
     margin-top: 2px;
 }
-.wpda-app-container .MuiTableContainer-root {
-    overflow-y: auto !important;
-}
