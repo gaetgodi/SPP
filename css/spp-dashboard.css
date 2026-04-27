@@ -311,3 +311,6 @@ h1.entry-title {
     max-height: 80vh !important;
     overflow: scroll !important;
 }
+.MuiPaper-root.pp-table {
+    overflow: scroll !important;
+}
