@@ -306,11 +306,3 @@ h1.entry-title {
     color: var(--spp-text-subtle);
     margin-top: 2px;
 }
-.MuiTableContainer-root {
-    height: 80vh !important;
-    max-height: 80vh !important;
-    overflow: scroll !important;
-}
-.MuiPaper-root.pp-table {
-    overflow: scroll !important;
-}
