@@ -40,10 +40,3 @@ add_filter('template_include', function($template) {
     }
     return $template;
 }, 100);
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-    setTimeout(function() {
-        window.dispatchEvent(new Event('resize'));
-    }, 500);
-});
-</script>
