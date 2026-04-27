@@ -259,3 +259,31 @@ function spp_side_nav_shortcode() {
     return spp_render_all_sections($items, 'spp-side-nav spp-side-nav--collapsible');
 }
 add_shortcode('spp_side_nav', 'spp_side_nav_shortcode');
+function spp_side_nav_shortcode() {
+    $items = spp_get_main_menu_items();
+    if (!$items) return '';
+    
+    $output = spp_render_all_sections($items, 'spp-side-nav spp-side-nav--collapsible');
+
+    // Recent Blog Posts
+    $recent_posts = get_posts([
+        'numberposts' => 3,
+        'post_status' => 'publish',
+        'post_type'   => 'post',
+    ]);
+
+    if ($recent_posts) {
+        $output .= '<div class="spp-recent-posts">';
+        $output .= '<h4 class="spp-recent-posts-title">Recent Blog Posts</h4>';
+        foreach ($recent_posts as $post) {
+            $output .= '<div class="spp-recent-post-item">';
+            $output .= '<a href="' . get_permalink($post->ID) . '">' . esc_html($post->post_title) . '</a>';
+            $output .= '<span class="spp-recent-post-date">' . get_the_date('M j, Y', $post->ID) . '</span>';
+            $output .= '</div>';
+        }
+        $output .= '</div>';
+    }
+
+    return $output;
+}
+add_shortcode('spp_side_nav', 'spp_side_nav_shortcode');

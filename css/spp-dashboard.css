@@ -265,3 +265,44 @@ h1.entry-title {
     display: block;
     margin: 1rem auto;
 }
+/* Recent Blog Posts in side nav */
+.spp-recent-posts {
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 2px solid var(--spp-primary);
+}
+
+.spp-recent-posts-title {
+    color: var(--spp-text-light);
+    background: var(--spp-primary);
+    padding: 8px 12px;
+    margin: 0 0 0.5rem 0;
+    font-size: var(--spp-font-sm);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
+.spp-recent-post-item {
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--spp-border-light);
+    background: var(--spp-item-bg);
+}
+
+.spp-recent-post-item a {
+    display: block;
+    color: var(--spp-dark);
+    font-size: var(--spp-font-sm);
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.spp-recent-post-item a:hover {
+    color: var(--spp-primary);
+}
+
+.spp-recent-post-date {
+    display: block;
+    font-size: var(--spp-font-xs);
+    color: var(--spp-text-subtle);
+    margin-top: 2px;
+}
