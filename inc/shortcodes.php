@@ -219,16 +219,17 @@ add_shortcode('spp_events', function($atts) {
 
     $rows = $wpdb->get_results("
         SELECT
+            o.occurrence_id,
             o.post_id,
             o.start_date,
             p.post_title,
             MIN(t.name) AS category,
             pm_max.meta_value AS max_registrations,
             pm_limit.meta_value AS limit_registrations,
-            COUNT(CASE WHEN latest.status = 'confirmed'    THEN 1 END) AS confirmed,
-            COUNT(CASE WHEN latest.status = 'waiting'      THEN 1 END) AS waiting,
-            COUNT(CASE WHEN latest.status = 'pending'      THEN 1 END) AS pending,
-            COUNT(CASE WHEN latest.status = 'unregistered' THEN 1 END) AS unregistered
+            COUNT(DISTINCT CASE WHEN latest.status = 'confirmed'    THEN latest.user_id END) AS confirmed,
+            COUNT(DISTINCT CASE WHEN latest.status = 'waiting'      THEN latest.user_id END) AS waiting,
+            COUNT(DISTINCT CASE WHEN latest.status = 'pending'      THEN latest.user_id END) AS pending,
+            COUNT(DISTINCT CASE WHEN latest.status = 'unregistered' THEN latest.user_id END) AS unregistered
         FROM {$p}tec_occurrences o
         JOIN {$p}posts p ON o.post_id = p.ID
         JOIN {$p}term_relationships tr ON o.post_id = tr.object_id
@@ -246,9 +247,9 @@ add_shortcode('spp_events', function($atts) {
             )
         ) latest ON (o.post_id = latest.event_id OR o.occurrence_id + 30000000 = latest.event_id)
         WHERE o.start_date >= NOW()
-AND o.start_date <= DATE_ADD(NOW(), INTERVAL 5 WEEK)
-AND p.post_status = 'publish'
-GROUP BY o.occurrence_id
+        AND o.start_date <= DATE_ADD(NOW(), INTERVAL 5 WEEK)
+        AND p.post_status = 'publish'
+        GROUP BY o.occurrence_id
         ORDER BY o.start_date ASC
     ");
 
