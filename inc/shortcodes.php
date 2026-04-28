@@ -244,7 +244,7 @@ add_shortcode('spp_events', function($atts) {
                 WHERE e2.event_id = e1.event_id
                 AND e2.user_id = e1.user_id
             )
-        ) latest ON o.post_id = latest.event_id
+        ) latest ON (o.post_id = latest.event_id OR o.occurrence_id + 30000000 = latest.event_id)
         WHERE o.start_date >= NOW()
 AND o.start_date <= DATE_ADD(NOW(), INTERVAL 5 WEEK)
 AND p.post_status = 'publish'
