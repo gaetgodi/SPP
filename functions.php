@@ -60,3 +60,17 @@ add_action('template_redirect', function() {
         exit;
     }
 });
+add_action('wp_footer', function() {
+    if (!is_singular('tribe_events')) return;
+    ?>
+    <script>
+    window.onerror = function(message, source, line, col, error) {
+        fetch('/js-error-log.php', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({message: message, source: source, line: line})
+        });
+    };
+    </script>
+    <?php
+});
