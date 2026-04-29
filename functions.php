@@ -47,3 +47,16 @@ add_action('pre_get_posts', function($query) {
         $query->set('post_status', 'publish');
     }
 });
+// Restrict cmruncode pages to editors and admins only, with exceptions for member-facing pages
+add_action('template_redirect', function() {
+    if (!is_page()) return;
+    if (current_user_can('administrator') || current_user_can('editor')) return;
+    
+    $member_pages = [1517, 20003754, 20003889, 20009040, 20009451, 20005967];
+    
+    global $post;
+    if ($post && !in_array($post->ID, $member_pages) && has_shortcode($post->post_content, 'cmruncode')) {
+        wp_redirect(home_url());
+        exit;
+    }
+});
