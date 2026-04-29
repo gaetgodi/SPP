@@ -82,3 +82,7 @@ add_action('wp_ajax_rtec_submit_registration', function() {
 add_action('wp_ajax_nopriv_rtec_submit_registration', function() {
     error_log('RTEC registration attempt (nopriv) - POST: ' . print_r($_POST, true));
 }, 1);
+// Temporary RTEC debug logging
+add_action('wp_ajax_rtec_process_form_submission', function() {
+    error_log('RTEC submission - user: ' . get_current_user_id() . ' POST: ' . print_r($_POST, true));
+}, 1);
