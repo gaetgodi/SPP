@@ -37,6 +37,7 @@ get_header();
                 }
                 if (!empty($blog_cats)) {
                     echo '<p class="spp-post-categories">Filed under: ' . implode(', ', $blog_cats) . '</p>';
+                    
                 }
                 <?php
 // Browse all blog categories
@@ -59,7 +60,6 @@ foreach ($all_cats as $cat) {
 if (!empty($all_blog_cats)) {
     echo '<p class="spp-post-categories">Browse all blog categories: ' . implode(' | ', $all_blog_cats) . '</p>';
 }
-?>
                 ?>
             <?php endwhile; ?>
         </div>
