@@ -31,7 +31,12 @@ get_header();
                          AND p.post_status = 'publish'",
                         $cat->term_id
                     ));
-                    echo $cat->name . ': ' . $count . '<br>';
+                    if ($count > 0) {
+                        $blog_cats[] = '<a href="' . get_category_link($cat->term_id) . '">' . esc_html($cat->name) . '</a>';
+                    }
+                }
+                if (!empty($blog_cats)) {
+                    echo '<p class="spp-post-categories">Filed under: ' . implode(', ', $blog_cats) . '</p>';
                 }
                 ?>
             <?php endwhile; ?>
