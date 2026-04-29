@@ -1,14 +1,11 @@
 <?php
+add_action('pre_get_posts', function($query) {
+    if ($query->is_category() && $query->is_main_query() && !is_admin()) {
+        $query->set('post_type', 'post');
+        $query->set('post_status', 'publish');
+    }
+});
 get_header();
-
-// Restrict category archives to published posts only, not pages
-query_posts(array_merge(
-    $wp_query->query_vars,
-    array(
-        'post_type'   => 'post',
-        'post_status' => 'publish'
-    )
-));
 ?>
 <div id="et-main-area" style="background-color: var(--spp-bg-page); padding: 2rem 0;">
     <div class="et_pb_row et_flex_row spp-two-col-row">
@@ -24,7 +21,6 @@ query_posts(array_merge(
             <?php endwhile; else : ?>
                 <p>No blog posts found in this category.</p>
             <?php endif; ?>
-            <?php wp_reset_query(); ?>
         </div>
         <div class="et_pb_column et_flex_column et-last-child et_flex_column_6_24">
             <?php echo do_shortcode('[spp_side_nav]'); ?>
