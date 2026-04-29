@@ -18,18 +18,20 @@ get_header();
                     </div>
                 <?php endif; ?>
                 <?php
+                global $wpdb;
                 $categories = get_the_category();
                 $blog_cats = [];
                 foreach ($categories as $cat) {
-                    $posts_in_cat = get_posts([
-                        'post_type'      => 'post',
-                        'post_status'    => 'publish',
-                        'category__in'   => [$cat->term_id],
-                        'posts_per_page' => 1,
-                    ]);
-                    if (!empty($posts_in_cat)) {
-                        $blog_cats[] = '<a href="' . get_category_link($cat->term_id) . '">' . esc_html($cat->name) . '</a>';
-                    }
+                    $count = $wpdb->get_var($wpdb->prepare(
+                        "SELECT COUNT(*) FROM {$wpdb->posts} p 
+                         JOIN {$wpdb->term_relationships} tr ON p.ID = tr.object_id
+                         JOIN {$wpdb->term_taxonomy} tt ON tr.term_taxonomy_id = tt.term_taxonomy_id
+                         WHERE tt.term_id = %d 
+                         AND p.post_type = 'post' 
+                         AND p.post_status = 'publish'",
+                        $cat->term_id
+                    ));
+                    echo $cat->name . ': ' . $count . '<br>';
                 }
                 ?>
             <?php endwhile; ?>
