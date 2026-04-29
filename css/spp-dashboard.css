@@ -306,3 +306,20 @@ h1.entry-title {
     color: var(--spp-text-subtle);
     margin-top: 2px;
 }
+/* Blog post categories */
+.spp-post-categories {
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--spp-border-color);
+    font-size: var(--spp-font-sm);
+    color: var(--spp-text-subtle);
+}
+
+.spp-post-categories a {
+    color: var(--spp-primary);
+    text-decoration: none;
+}
+
+.spp-post-categories a:hover {
+    color: var(--spp-accent);
+}

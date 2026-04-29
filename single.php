@@ -8,7 +8,6 @@ get_header();
                 <h1 class="entry-title"><?php the_title(); ?></h1>
                 <p class="spp-post-meta">
                     by <?php the_author(); ?> | <?php echo get_the_date(); ?>
-                    | <?php the_category(', '); ?>
                 </p>
                 <div class="entry-content">
                     <?php the_content(); ?>
@@ -18,6 +17,18 @@ get_header();
                         <?php the_post_thumbnail('large'); ?>
                     </div>
                 <?php endif; ?>
+                <?php
+                $categories = get_the_category();
+                $blog_cats = [];
+                foreach ($categories as $cat) {
+                    if ($cat->count > 0) {
+                        $blog_cats[] = '<a href="' . get_category_link($cat->term_id) . '">' . esc_html($cat->name) . '</a>';
+                    }
+                }
+                if (!empty($blog_cats)) {
+                    echo '<p class="spp-post-categories">Filed under: ' . implode(', ', $blog_cats) . '</p>';
+                }
+                ?>
             <?php endwhile; ?>
         </div>
         <div class="et_pb_column et_flex_column et-last-child et_flex_column_6_24">
