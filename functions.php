@@ -40,3 +40,10 @@ add_filter('template_include', function($template) {
     }
     return $template;
 }, 100);
+// Restrict category archive pages to published posts only
+add_action('pre_get_posts', function($query) {
+    if ($query->is_category() && $query->is_main_query() && !is_admin()) {
+        $query->set('post_type', 'post');
+        $query->set('post_status', 'publish');
+    }
+});
