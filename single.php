@@ -21,12 +21,15 @@ get_header();
                 $categories = get_the_category();
                 $blog_cats = [];
                 foreach ($categories as $cat) {
-                    if ($cat->count > 0) {
+                    $posts_in_cat = get_posts([
+                        'post_type'      => 'post',
+                        'post_status'    => 'publish',
+                        'category__in'   => [$cat->term_id],
+                        'posts_per_page' => 1,
+                    ]);
+                    if (!empty($posts_in_cat)) {
                         $blog_cats[] = '<a href="' . get_category_link($cat->term_id) . '">' . esc_html($cat->name) . '</a>';
                     }
-                }
-                if (!empty($blog_cats)) {
-                    echo '<p class="spp-post-categories">Filed under: ' . implode(', ', $blog_cats) . '</p>';
                 }
                 ?>
             <?php endwhile; ?>
