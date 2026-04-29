@@ -37,30 +37,27 @@ get_header();
                 }
                 if (!empty($blog_cats)) {
                     echo '<p class="spp-post-categories">Filed under: ' . implode(', ', $blog_cats) . '</p>';
-                    
                 }
-                <?php
-// Browse all blog categories
-$all_cats = get_categories(['hide_empty' => true]);
-$all_blog_cats = [];
-foreach ($all_cats as $cat) {
-    $count = $wpdb->get_var($wpdb->prepare(
-        "SELECT COUNT(*) FROM {$wpdb->posts} p 
-         JOIN {$wpdb->term_relationships} tr ON p.ID = tr.object_id
-         JOIN {$wpdb->term_taxonomy} tt ON tr.term_taxonomy_id = tt.term_taxonomy_id
-         WHERE tt.term_id = %d 
-         AND p.post_type = 'post' 
-         AND p.post_status = 'publish'",
-        $cat->term_id
-    ));
-    if ($count > 0) {
-        $all_blog_cats[] = '<a href="' . get_category_link($cat->term_id) . '">' . esc_html($cat->name) . ' (' . $count . ')</a>';
-    }
-}
-if (!empty($all_blog_cats)) {
-    echo '<p class="spp-post-categories">Browse all blog categories: ' . implode(' | ', $all_blog_cats) . '</p>';
-}
-?>
+
+                $all_cats = get_categories(['hide_empty' => true]);
+                $all_blog_cats = [];
+                foreach ($all_cats as $cat) {
+                    $count = $wpdb->get_var($wpdb->prepare(
+                        "SELECT COUNT(*) FROM {$wpdb->posts} p 
+                         JOIN {$wpdb->term_relationships} tr ON p.ID = tr.object_id
+                         JOIN {$wpdb->term_taxonomy} tt ON tr.term_taxonomy_id = tt.term_taxonomy_id
+                         WHERE tt.term_id = %d 
+                         AND p.post_type = 'post' 
+                         AND p.post_status = 'publish'",
+                        $cat->term_id
+                    ));
+                    if ($count > 0) {
+                        $all_blog_cats[] = '<a href="' . get_category_link($cat->term_id) . '">' . esc_html($cat->name) . ' (' . $count . ')</a>';
+                    }
+                }
+                if (!empty($all_blog_cats)) {
+                    echo '<p class="spp-post-categories">Browse all blog categories: ' . implode(' | ', $all_blog_cats) . '</p>';
+                }
                 ?>
             <?php endwhile; ?>
         </div>
