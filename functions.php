@@ -74,14 +74,3 @@ add_action('wp_footer', function() {
     </script>
     <?php
 });
-add_action('template_redirect', function() {
-    if (!empty($_POST['rtec_event_id'])) {
-        error_log('RTEC honeypot: [' . ($_POST['rtec_user_comments'] ?? 'NOT SET') . ']');
-    }
-}, 1);
-// Honeypot debug
-add_action('template_redirect', function() {
-    if (!empty($_POST['rtec_event_id'])) {
-        error_log('RTEC honeypot: [' . ($_POST['rtec_user_comments'] ?? 'NOT SET') . ']');
-    }
-}, 1);
