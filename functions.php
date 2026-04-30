@@ -74,20 +74,8 @@ add_action('wp_footer', function() {
     </script>
     <?php
 });
-// Temporary RTEC debug logging
-// Temporary RTEC submission debug
-add_action('wp_ajax_rtec_process_form_submission', function() {
-    $event_id = isset($_POST['rtec_event_id']) ? (int)$_POST['rtec_event_id'] : 0;
-    $user_id = get_current_user_id();
-    error_log('RTEC submission - user_id: ' . $user_id . ' event_id: ' . $event_id);
-    $post = get_post($event_id);
-    error_log('RTEC post status: ' . ($post ? $post->post_status : 'no post') . ' post_type: ' . ($post ? $post->post_type : 'n/a'));
-    error_log('RTEC can_access: ' . (rtec_current_user_can_access_event($event_id) ? 'yes' : 'no'));
-}, 1);
 add_action('template_redirect', function() {
     if (!empty($_POST['rtec_event_id'])) {
-        error_log('RTEC POST - user: ' . get_current_user_id() . 
-                  ' event: ' . $_POST['rtec_event_id'] . 
-                  ' post_keys: ' . implode(',', array_keys($_POST)));
+        error_log('RTEC honeypot: [' . ($_POST['rtec_user_comments'] ?? 'NOT SET') . ']');
     }
 }, 1);
