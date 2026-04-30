@@ -75,14 +75,12 @@ add_action('wp_footer', function() {
     <?php
 });
 // Temporary RTEC debug logging
-add_action('wp_ajax_rtec_submit_registration', function() {
-    error_log('RTEC registration attempt - user: ' . get_current_user_id() . ' POST: ' . print_r($_POST, true));
-}, 1);
-
-add_action('wp_ajax_nopriv_rtec_submit_registration', function() {
-    error_log('RTEC registration attempt (nopriv) - POST: ' . print_r($_POST, true));
-}, 1);
-// Temporary RTEC debug logging
+// Temporary RTEC submission debug
 add_action('wp_ajax_rtec_process_form_submission', function() {
-    error_log('RTEC submission - user: ' . get_current_user_id() . ' POST: ' . print_r($_POST, true));
+    $event_id = isset($_POST['rtec_event_id']) ? (int)$_POST['rtec_event_id'] : 0;
+    $user_id = get_current_user_id();
+    error_log('RTEC submission - user_id: ' . $user_id . ' event_id: ' . $event_id);
+    $post = get_post($event_id);
+    error_log('RTEC post status: ' . ($post ? $post->post_status : 'no post') . ' post_type: ' . ($post ? $post->post_type : 'n/a'));
+    error_log('RTEC can_access: ' . (rtec_current_user_can_access_event($event_id) ? 'yes' : 'no'));
 }, 1);
