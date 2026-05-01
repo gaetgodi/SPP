@@ -74,3 +74,30 @@ add_action('wp_footer', function() {
     </script>
     <?php
 });
+/* =========================================================
+   LOGIN RESTRICTION — EXPIRED MEMBERSHIP
+   Prevents login for members whose YrEndDt is not current year.
+   Admins, editors, blog_moderators and blog_authors are exempt.
+   ========================================================= */
+add_filter('authenticate', function($user, $username, $password) {
+    if (is_wp_error($user)) return $user;
+    if (!$user) return $user;
+
+    // Exempt administrators, editors, blog_moderators and blog_authors
+    $exempt_roles = ['administrator', 'editor', 'blog_moderator', 'blog_author'];
+    foreach ($exempt_roles as $role) {
+        if (in_array($role, (array)$user->roles)) {
+            return $user;
+        }
+    }
+
+    $yr_end_dt = get_user_meta($user->ID, 'YrEndDt', true);
+    $current_year_end = date('Y') . '-12-31';
+
+    if (empty($yr_end_dt) || $yr_end_dt < $current_year_end) {
+        return new WP_Error('invalid_membership', 
+            'You are not currently registered with Stouffville Pickleball Players. Please renew your membership at <a href="https://www.pickleballcanada.org/club/stouffville-pickleball-players/">Pickleball Canada</a>.');
+    }
+
+    return $user;
+}, 30, 3);
