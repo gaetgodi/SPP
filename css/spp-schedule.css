@@ -304,3 +304,20 @@ table.spp-player-table {
         display: none !important;
     }
 }
+@media print {
+    /* Hide nav and Divi chrome */
+    .spp-drawer-nav,
+    .spp-mobile-header,
+    #et-main-area > .et_pb_section:first-child,
+    .et_pb_section.et_pb_section_first,
+    [class*="spp-drawer"],
+    .spp-print-button {
+        display: none !important;
+    }
+    
+    /* Show schedule content */
+    .et_pb_text_inner,
+    .styled-table {
+        display: block !important;
+    }
+}
