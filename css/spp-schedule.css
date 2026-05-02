@@ -305,19 +305,72 @@ table.spp-player-table {
     }
 }
 @media print {
-    /* Hide nav and Divi chrome */
-    .spp-drawer-nav,
-    .spp-mobile-header,
-    #et-main-area > .et_pb_section:first-child,
-    .et_pb_section.et_pb_section_first,
-    [class*="spp-drawer"],
+    @page {
+        size: letter landscape;
+        margin: 0.5in;
+    }
+
+    /* Hide everything except schedule content */
+    #wpadminbar,
+    #main-header,
+    #top-header,
+    footer,
+    footer.et-l,
+    #map-column,
+    nav,
     .spp-print-button {
         display: none !important;
     }
-    
-    /* Show schedule content */
-    .et_pb_text_inner,
-    .styled-table {
+
+    /* Show only the schedule tables */
+    body, #et-main-area, #main-content, 
+    article, .entry-content,
+    .et-l, .et_builder_inner_content,
+    .et_pb_section, .et_pb_row, 
+    .et_pb_column, .et_pb_text,
+    .et_pb_text_inner {
         display: block !important;
+        width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        box-shadow: none !important;
+    }
+
+    table.styled-table {
+        width: 100% !important;
+        font-size: 10px !important;
+        box-shadow: none !important;
+        margin: 0 0 10px 0 !important;
+        page-break-inside: avoid;
+    }
+
+    .styled-table thead td,
+    .styled-table th,
+    .styled-table td {
+        padding: 3px 5px !important;
+    }
+
+    /* Page break between time slots */
+    .et_pb_text_3, .et_pb_text_4, .et_pb_text_5 {
+        page-break-after: always;
+    }
+
+    .et_pb_text_5 {
+        page-break-after: avoid;
+    }
+
+    * {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+    }
+
+    h1.title {
+        font-size: 24px !important;
+        margin: 5px 0 !important;
+    }
+
+    center h1 {
+        font-size: 16px !important;
+        margin: 5px 0 !important;
     }
 }
