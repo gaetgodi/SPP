@@ -299,3 +299,8 @@ table.spp-player-table {
         font-size: 36px !important;
     }
 }
+@media print {
+    .spp-print-button {
+        display: none !important;
+    }
+}
