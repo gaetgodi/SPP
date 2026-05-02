@@ -30,7 +30,7 @@
 }
 
 /* =========================================================
-   EDITOR VIEW — scoring table
+   EDITOR VIEW — scoring table (screen)
    ========================================================= */
 body {
     font-size: 12px;
@@ -38,9 +38,9 @@ body {
 
 table.styled-table {
     border: 2px solid #147205;
-    font-size: 1.3em;
+    font-size: 1.5em;
     table-layout: auto;
-    width: 80% !important;
+    width: 90% !important;
     margin-left: auto !important;
     margin-right: auto !important;
     font-weight: bold;
@@ -55,12 +55,12 @@ table.styled-table {
     background-color: #3766AB;
     color: #ffffff;
     text-align: left;
-    padding: 8px 10px !important;
+    padding: 6px 8px !important;
 }
 
 .styled-table th,
 .styled-table td {
-    padding: 8px 10px !important;
+    padding: 6px 8px !important;
 }
 
 .styled-table tbody tr {
@@ -73,7 +73,7 @@ table.styled-table {
 }
 
 .styled-table tr td {
-    padding: 6px 4px 6px 6px !important;
+    padding: 4px 4px 4px 6px !important;
     width: auto;
 }
 
@@ -88,7 +88,7 @@ tr:nth-child(odd) {
 }
 
 /* =========================================================
-   GAME SQUARES — editor view
+   GAME SQUARES — editor view (screen)
    ========================================================= */
 .Game1, .Game2, .Game3, .Game4, .Game5, .Score {
     width: auto;
@@ -138,7 +138,7 @@ tr:nth-child(odd) {
     border: 3px solid orange;
 }
 
-/* Neutral squares — no border style */
+/* Neutral squares */
 .GameA1, .GameB2, .GameC3, .GameD4, .GameE5 {
     background: white;
     border: 4px solid black;
@@ -153,7 +153,7 @@ tr:nth-child(odd) {
 }
 
 /* =========================================================
-   NAME / PHONE / RANK COLUMNS — editor view
+   NAME / PHONE / RANK COLUMNS — screen
    ========================================================= */
 .FirstName-0,.LastName-0,.FirstName-1,.LastName-1,
 .FirstName-2,.LastName-2,.FirstName-3,.LastName-3,
@@ -234,34 +234,34 @@ table.spp-player-table {
     border: none !important;
 }
 
-/* Highlight logged-in player's own row */
 .spp-player-highlight {
     background-color: #e8f5e9 !important;
     font-weight: bold;
 }
 
 /* =========================================================
-   PRINT STYLES — letter landscape
-   All courts for one time slot must fit on one page
+   PRINT STYLES
+   Portrait letter — one time slot per page
+   Optimized for:
+   - Fence reading (large font, bold names)
+   - Score recording (large game squares, white background)
    ========================================================= */
 @media print {
     @page {
-        size: letter landscape;
-        margin: 0.3in;
+        size: letter portrait;
+        margin: 0.4in;
     }
 
-    /* Hide everything first, then show only what we need */
+    /* Hide everything, then show only schedule content */
     body * {
         visibility: hidden;
     }
 
-    /* Show only the schedule content */
     #main-content,
     #main-content * {
         visibility: visible;
     }
 
-    /* Position content at top of page */
     #main-content {
         position: absolute;
         top: 0;
@@ -280,85 +280,131 @@ table.spp-player-table {
     .et_pb_text_4 { page-break-after: always; }
     .et_pb_text_5 { page-break-after: avoid; }
 
-    /* Hide Group column — court already identifies the group */
-    .Court-0:first-child,
-    .Court-1:first-child,
-    .Court-2:first-child,
-    .Court-3:first-child,
-    .Court-4:first-child,
-    thead td:first-child {
-        display: none !important;
-    }
-
-    /* Table sizing — fit all courts on one page */
+    /* Main table — full width, large font for fence reading */
     table.styled-table {
         width: 100% !important;
-        font-size: 8.5px !important;
+        font-size: 13px !important;
+        font-weight: bold !important;
         box-shadow: none !important;
-        margin: 0 0 4px 0 !important;
+        margin: 0 0 6px 0 !important;
         border-collapse: collapse !important;
-        table-layout: fixed !important;
+        table-layout: auto !important;
     }
 
-    /* Compact padding */
+    /* Cell padding — tight but readable */
     .styled-table thead td,
     .styled-table th,
     .styled-table td {
-        padding: 2px 4px !important;
+        padding: 3px 5px !important;
         line-height: 1.4em !important;
     }
 
-    /* Allow names and phones to wrap */
+    /* Bold names for easy scanning on fence */
     .FirstName-0,.LastName-0,.FirstName-1,.LastName-1,
     .FirstName-2,.LastName-2,.FirstName-3,.LastName-3,
-    .FirstName-4,.LastName-4,
+    .FirstName-4,.LastName-4 {
+        font-weight: bold !important;
+        white-space: nowrap !important;
+        line-height: 1.4em !important;
+    }
+
     .Phone-0,.Phone-1,.Phone-2,.Phone-3,.Phone-4 {
-        white-space: normal !important;
-        line-height: 1.3em !important;
+        white-space: nowrap !important;
+        line-height: 1.4em !important;
     }
 
-    /* Compact row heights */
+    .Crt,.Court-0,.Court-1,.Court-2,.Court-3,.Court-4 {
+        white-space: nowrap !important;
+        line-height: 1.4em !important;
+    }
+
+    .Rank-0,.Rank-1,.Rank-2,.Rank-3,.Rank-4 {
+        line-height: 1.4em !important;
+    }
+
     .first, .second {
-        line-height: 1.3em !important;
+        line-height: 1.4em !important;
     }
 
-    /* Shrink game squares to minimum viable size */
-    .Game1,.Game2,.Game3,.Game4,.Game5,.Score,
+    /* White backgrounds throughout — saves ink */
+    tr:nth-child(odd) {
+        background-color: white !important;
+    }
+
+    .first, .second {
+        background: white !important;
+    }
+
+    /* Game squares — large enough to write scores in */
+    .Game1,.Game2,.Game3,.Game4,.Game5,.Score {
+        width: 32px !important;
+        min-width: 32px !important;
+        background: white !important;
+        border: 2px solid black !important;
+    }
+
+    /* Blue squares — keep colour for team identification */
     .GameA51-0,.GameA51-1,.GameA41-0,.GameA41-1,
     .GameB52-0,.GameB52-2,.GameB42-0,.GameB42-2,
     .GameC53-0,.GameC53-3,.GameC43-0,.GameC43-3,
-    .GameD54-0,.GameD54-4,.GameE55-1,.GameE55-2,
+    .GameD54-0,.GameD54-4,.GameE55-1,.GameE55-2 {
+        background: rgb(175, 216, 230) !important;
+        color: rgb(175, 216, 230) !important;
+        border: 3px solid blue !important;
+        width: 32px !important;
+        min-width: 32px !important;
+    }
+
+    /* Red squares — keep colour for team identification */
     .GameA51-2,.GameA51-3,.GameA41-2,.GameA41-3,
     .GameB52-1,.GameB52-4,.GameB42-1,.GameB42-3,
     .GameC53-2,.GameC53-4,.GameC43-1,.GameC43-2,
-    .GameD54-1,.GameD54-3,.GameE55-3,.GameE55-4,
-    .GameA51-4,.GameB52-3,.GameC53-1,.GameD54-2,.GameE55-0,
-    .Score-0,.Score-1,.Score-2,.Score-3,.Score-4 {
-        width: 22px !important;
-        min-width: 22px !important;
-        max-width: 22px !important;
+    .GameD54-1,.GameD54-3,.GameE55-3,.GameE55-4 {
+        background: lightpink !important;
+        color: lightpink !important;
+        border: 3px solid red !important;
+        width: 32px !important;
+        min-width: 32px !important;
     }
 
-    /* Compact blank rows */
+    /* Bye squares */
+    .GameA51-4,.GameB52-3,.GameC53-1,.GameD54-2,.GameE55-0 {
+        background: #33691e !important;
+        color: #33691e !important;
+        width: 32px !important;
+        min-width: 32px !important;
+    }
+
+    /* Score squares — white for writing */
+    .Score-0,.Score-1,.Score-2,.Score-3,.Score-4 {
+        background: white !important;
+        color: white !important;
+        border: 2px solid orange !important;
+        width: 32px !important;
+        min-width: 32px !important;
+    }
+
+    /* Blank separator rows — visible but compact */
     .blank {
-        height: 3px !important;
+        height: 4px !important;
+        border-bottom: 2px solid #147205 !important;
     }
 
     /* Headings */
     h1.title {
-        margin: 2px 0 4px 0 !important;
+        margin: 0 0 4px 0 !important;
     }
 
     h1.title span:first-child {
-        font-size: 28px !important;
+        font-size: 42px !important;
     }
 
     h1.title span:last-child {
-        font-size: 12px !important;
+        font-size: 14px !important;
     }
 
     center h1 {
-        font-size: 12px !important;
+        font-size: 13px !important;
         margin: 2px 0 4px 0 !important;
     }
 
