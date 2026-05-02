@@ -27,11 +27,6 @@
 
 .spp-time-section {
     margin-bottom: 30px;
-    page-break-after: always;
-}
-
-.spp-time-section:last-child {
-    page-break-after: avoid;
 }
 
 /* =========================================================
@@ -246,7 +241,7 @@ table.spp-player-table {
 }
 
 /* =========================================================
-   PRINT STYLES — editor view, letter landscape
+   PRINT STYLES — letter landscape
    ========================================================= */
 @media print {
     @page {
@@ -254,94 +249,42 @@ table.spp-player-table {
         margin: 0.5in;
     }
 
-    #wpadminbar,
-    #main-header,
-    #top-header,
-    footer,
-    nav,
-    .et_pb_section:first-child {
-        display: none !important;
+    /* Hide everything first, then show only what we need */
+    body * {
+        visibility: hidden;
     }
 
-    table.styled-table {
-        width: 100% !important;
-        font-size: 11px !important;
-        box-shadow: none !important;
-        margin: 0 !important;
+    /* Show only the schedule content */
+    #main-content,
+    #main-content * {
+        visibility: visible;
     }
 
-    .styled-table thead td,
-    .styled-table th,
-    .styled-table td {
-        padding: 4px 6px !important;
+    /* Position content at top of page */
+    #main-content {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
     }
 
-    .spp-time-section {
-        page-break-after: always;
-    }
-
-    .spp-time-section:last-child {
-        page-break-after: avoid;
-    }
-
-    * {
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
-    }
-
-    body {
-        font-size: 11px !important;
-        margin: 0 !important;
-        padding: 0 !important;
-    }
-
-    .spp-time-heading {
-        font-size: 36px !important;
-    }
-}
-@media print {
+    /* Hide print button */
     .spp-print-button {
         display: none !important;
-    }
-}
-@media print {
-    @page {
-        size: letter landscape;
-        margin: 0.5in;
+        visibility: hidden !important;
     }
 
-    /* Hide everything except schedule content */
-    #wpadminbar,
-    #main-header,
-    #top-header,
-    footer,
-    footer.et-l,
-    #map-column,
-    nav,
-    .spp-print-button {
-        display: none !important;
-    }
+    /* Page breaks between time slots */
+    .et_pb_text_3 { page-break-after: always; }
+    .et_pb_text_4 { page-break-after: always; }
+    .et_pb_text_5 { page-break-after: avoid; }
 
-    /* Show only the schedule tables */
-    body, #et-main-area, #main-content, 
-    article, .entry-content,
-    .et-l, .et_builder_inner_content,
-    .et_pb_section, .et_pb_row, 
-    .et_pb_column, .et_pb_text,
-    .et_pb_text_inner {
-        display: block !important;
-        width: 100% !important;
-        margin: 0 !important;
-        padding: 0 !important;
-        box-shadow: none !important;
-    }
-
+    /* Table sizing for print */
     table.styled-table {
         width: 100% !important;
         font-size: 10px !important;
         box-shadow: none !important;
         margin: 0 0 10px 0 !important;
-        page-break-inside: avoid;
     }
 
     .styled-table thead td,
@@ -350,27 +293,19 @@ table.spp-player-table {
         padding: 3px 5px !important;
     }
 
-    /* Page break between time slots */
-    .et_pb_text_3, .et_pb_text_4, .et_pb_text_5 {
-        page-break-after: always;
-    }
-
-    .et_pb_text_5 {
-        page-break-after: avoid;
-    }
-
-    * {
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
-    }
-
-    h1.title {
-        font-size: 24px !important;
-        margin: 5px 0 !important;
+    /* Headings */
+    h1.title span {
+        font-size: 36px !important;
     }
 
     center h1 {
-        font-size: 16px !important;
-        margin: 5px 0 !important;
+        font-size: 14px !important;
+        margin: 4px 0 !important;
+    }
+
+    /* Force colour printing */
+    * {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
     }
 }
