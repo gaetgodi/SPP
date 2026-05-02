@@ -178,6 +178,11 @@ tr:nth-child(odd) {
     width: 35px;
 }
 
+.FullName-0,.FullName-1,.FullName-2,.FullName-3,.FullName-4 {
+    line-height: 1.8em;
+    white-space: nowrap;
+}
+
 .first {
     border-collapse: collapse;
     border: 2px solid black;
@@ -240,11 +245,9 @@ table.spp-player-table {
 }
 
 /* =========================================================
-   PRINT STYLES
-   Portrait letter — one time slot per page
-   Optimized for:
-   - Fence reading (large font, bold names)
-   - Score recording (large game squares, white background)
+   PRINT STYLES — letter portrait
+   One time slot per page
+   Optimized for fence reading and score recording
    ========================================================= */
 @media print {
     @page {
@@ -267,6 +270,18 @@ table.spp-player-table {
         top: 0;
         left: 0;
         width: 100%;
+    }
+
+    /* Remove page background colour — structural elements only */
+    body,
+    #et-main-area,
+    #main-content,
+    article,
+    .et_pb_section,
+    .et_pb_row,
+    .et_pb_column {
+        background-color: white !important;
+        background: white !important;
     }
 
     /* Hide print button */
@@ -300,9 +315,7 @@ table.spp-player-table {
     }
 
     /* Bold names for easy scanning on fence */
-    .FirstName-0,.LastName-0,.FirstName-1,.LastName-1,
-    .FirstName-2,.LastName-2,.FirstName-3,.LastName-3,
-    .FirstName-4,.LastName-4 {
+    .FullName-0,.FullName-1,.FullName-2,.FullName-3,.FullName-4 {
         font-weight: bold !important;
         white-space: nowrap !important;
         line-height: 1.4em !important;
@@ -413,16 +426,4 @@ table.spp-player-table {
         -webkit-print-color-adjust: exact !important;
         print-color-adjust: exact !important;
     }
-}
-/* Remove page background colour for print */
-body,
-.et_pb_section,
-.et_pb_row,
-.et_pb_column,
-.et_pb_text,
-.et_pb_text_inner,
-#main-content,
-#et-main-area {
-    background-color: white !important;
-    background: white !important;
 }
