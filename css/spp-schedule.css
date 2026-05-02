@@ -414,8 +414,15 @@ table.spp-player-table {
         print-color-adjust: exact !important;
     }
 }
-.Score-0,.Score-1,.Score-2,.Score-3,.Score-4 {
+/* Remove page background colour for print */
+body,
+.et_pb_section,
+.et_pb_row,
+.et_pb_column,
+.et_pb_text,
+.et_pb_text_inner,
+#main-content,
+#et-main-area {
+    background-color: white !important;
     background: white !important;
-    color: white !important;
-    border: 2px solid orange !important;
 }
