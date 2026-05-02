@@ -1,0 +1,301 @@
+/* =========================================================
+   SPP Schedule CSS
+   Site: pickleballstouffville.ca
+   
+   Editor view: scoring table for courts and score entry
+   Player view: clean schedule display for members
+   
+   Based on original Divi page Custom CSS
+   ========================================================= */
+
+/* =========================================================
+   SHARED — both views
+   ========================================================= */
+.spp-time-heading {
+    font-size: 60px;
+    font-weight: bold;
+    color: red;
+    display: inline;
+    margin-right: 12px;
+}
+
+.spp-time-instruction {
+    font-size: 30px;
+    color: black;
+    display: inline;
+}
+
+.spp-time-section {
+    margin-bottom: 30px;
+    page-break-after: always;
+}
+
+.spp-time-section:last-child {
+    page-break-after: avoid;
+}
+
+/* =========================================================
+   EDITOR VIEW — scoring table
+   ========================================================= */
+body {
+    font-size: 12px;
+}
+
+table.styled-table {
+    border: 2px solid #147205;
+    font-size: 1.3em;
+    table-layout: auto;
+    width: 80% !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    font-weight: bold;
+    font-family: sans-serif;
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.15);
+    border-collapse: collapse;
+}
+
+.styled-table thead td {
+    border: 1px solid black;
+    border-collapse: collapse;
+    background-color: #3766AB;
+    color: #ffffff;
+    text-align: left;
+    padding: 8px 10px !important;
+}
+
+.styled-table th,
+.styled-table td {
+    padding: 8px 10px !important;
+}
+
+.styled-table tbody tr {
+    border: 2px solid #dddddd;
+    width: auto;
+}
+
+.styled-table tbody tr:last-of-type {
+    border-bottom: 2px solid #009879;
+}
+
+.styled-table tr td {
+    padding: 6px 4px 6px 6px !important;
+    width: auto;
+}
+
+tr:nth-child(odd) {
+    background-color: LightGray;
+}
+
+.blank {
+    height: 8px;
+    background: transparent !important;
+    border: none !important;
+}
+
+/* =========================================================
+   GAME SQUARES — editor view
+   ========================================================= */
+.Game1, .Game2, .Game3, .Game4, .Game5, .Score {
+    width: auto;
+    background: white;
+    border: 2px solid black;
+}
+
+/* Blue team squares */
+.GameA51-0,.GameA51-1,.GameA41-0,.GameA41-1,
+.GameB52-0,.GameB52-2,.GameB42-0,.GameB42-2,
+.GameC53-0,.GameC53-3,.GameC43-0,.GameC43-3,
+.GameD54-0,.GameD54-4,.GameE55-1,.GameE55-2 {
+    background: rgb(175, 216, 230);
+    color: rgb(175, 216, 230);
+    border: 3px solid blue;
+}
+
+/* Red team squares */
+.GameA51-2,.GameA51-3,.GameA41-2,.GameA41-3,
+.GameB52-1,.GameB52-4,.GameB42-1,.GameB42-3,
+.GameC53-2,.GameC53-4,.GameC43-1,.GameC43-2,
+.GameD54-1,.GameD54-3,.GameE55-3,.GameE55-4 {
+    background: lightpink;
+    color: lightpink;
+    border: 3px solid red;
+}
+
+/* Diagonal squares — bye */
+.GameA51-4,.GameB52-3,.GameC53-1,.GameD54-2,.GameE55-0 {
+    background: #33691e;
+    color: #33691e;
+}
+
+.GameA51-4::before,.GameB52-3::before,.GameC53-1::before,
+.GameD54-2::before,.GameE55-0::before {
+    content: 'bye';
+    color: white;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+/* Score squares */
+.Score-0,.Score-1,.Score-2,.Score-3,.Score-4 {
+    background: #ffeac2;
+    color: #ffd485;
+    border: 3px solid orange;
+}
+
+/* Neutral squares — no border style */
+.GameA1, .GameB2, .GameC3, .GameD4, .GameE5 {
+    background: white;
+    border: 4px solid black;
+}
+
+/* Hidden game columns for groups of 4 */
+.Game5-0,.Game5-1,.Game5-2,.Game5-3,
+.Game4-0,.Game4-1,.Game4-2,.Game4-3 {
+    display: none;
+    background: white;
+    border: 0px white;
+}
+
+/* =========================================================
+   NAME / PHONE / RANK COLUMNS — editor view
+   ========================================================= */
+.FirstName-0,.LastName-0,.FirstName-1,.LastName-1,
+.FirstName-2,.LastName-2,.FirstName-3,.LastName-3,
+.FirstName-4,.LastName-4 {
+    line-height: 1.8em;
+    white-space: nowrap;
+}
+
+.Phone-0,.Phone-1,.Phone-2,.Phone-3,.Phone-4 {
+    line-height: 1.8em;
+    white-space: nowrap;
+}
+
+.Crt, .Court-0,.Court-1,.Court-2,.Court-3,.Court-4 {
+    line-height: 1.8em;
+    white-space: nowrap;
+}
+
+.Rank-0,.Rank-1,.Rank-2,.Rank-3,.Rank-4 {
+    line-height: 1.8em;
+    text-align: center;
+    width: 35px;
+}
+
+.first {
+    border-collapse: collapse;
+    border: 2px solid black;
+    background: white;
+    line-height: 1.8em;
+}
+
+.second {
+    border-collapse: collapse;
+    border: 2px solid black;
+    background: white;
+    line-height: 1.8em;
+}
+
+/* =========================================================
+   PLAYER VIEW — clean schedule for members
+   ========================================================= */
+table.spp-player-table {
+    border: 2px solid #147205;
+    font-size: 15px;
+    width: 90% !important;
+    margin: 10px auto 20px auto !important;
+    font-family: Arial, sans-serif;
+    border-collapse: collapse;
+    box-shadow: 0 0 15px rgba(0, 0, 0, 0.1);
+}
+
+.spp-player-table thead td {
+    background-color: #3766AB;
+    color: white;
+    padding: 12px 14px !important;
+    font-weight: bold;
+    border: 1px solid #2a559a;
+    white-space: nowrap;
+}
+
+.spp-player-table tbody td {
+    padding: 10px 14px !important;
+    border: 1px solid #dddddd;
+    line-height: 1.8em;
+}
+
+.spp-player-table tbody tr:nth-child(odd) {
+    background-color: #f5f5f5;
+}
+
+.spp-player-table tbody tr:last-of-type {
+    border-bottom: 2px solid #009879;
+}
+
+.spp-player-table .spp-group-break {
+    height: 10px;
+    background: transparent !important;
+    border: none !important;
+}
+
+/* Highlight logged-in player's own row */
+.spp-player-highlight {
+    background-color: #e8f5e9 !important;
+    font-weight: bold;
+}
+
+/* =========================================================
+   PRINT STYLES — editor view, letter landscape
+   ========================================================= */
+@media print {
+    @page {
+        size: letter landscape;
+        margin: 0.5in;
+    }
+
+    #wpadminbar,
+    #main-header,
+    #top-header,
+    footer,
+    nav,
+    .et_pb_section:first-child {
+        display: none !important;
+    }
+
+    table.styled-table {
+        width: 100% !important;
+        font-size: 11px !important;
+        box-shadow: none !important;
+        margin: 0 !important;
+    }
+
+    .styled-table thead td,
+    .styled-table th,
+    .styled-table td {
+        padding: 4px 6px !important;
+    }
+
+    .spp-time-section {
+        page-break-after: always;
+    }
+
+    .spp-time-section:last-child {
+        page-break-after: avoid;
+    }
+
+    * {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+    }
+
+    body {
+        font-size: 11px !important;
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+
+    .spp-time-heading {
+        font-size: 36px !important;
+    }
+}

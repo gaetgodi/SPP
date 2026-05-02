@@ -8,7 +8,7 @@
    ========================================================= */
 
 /// Schedule display temporarily disabled
-// TODO: re-enable after draft/publish workflow is implemented
+// TODO: re-enable after draft/publish workflow is implemented1. 
 
 /* =========================================================
    SYNC EMAIL CHANGE TO USERMETA

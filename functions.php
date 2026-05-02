@@ -101,3 +101,12 @@ add_filter('authenticate', function($user, $username, $password) {
 
     return $user;
 }, 30, 3);
+// Enqueue schedule CSS
+add_action('wp_enqueue_scripts', function() {
+    wp_enqueue_style(
+        'spp-schedule',
+        get_stylesheet_directory_uri() . '/css/spp-schedule.css',
+        [],
+        '1.0.0'
+    );
+});
