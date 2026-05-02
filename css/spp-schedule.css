@@ -242,11 +242,12 @@ table.spp-player-table {
 
 /* =========================================================
    PRINT STYLES — letter landscape
+   All courts for one time slot must fit on one page
    ========================================================= */
 @media print {
     @page {
         size: letter landscape;
-        margin: 0.5in;
+        margin: 0.3in;
     }
 
     /* Hide everything first, then show only what we need */
@@ -279,28 +280,86 @@ table.spp-player-table {
     .et_pb_text_4 { page-break-after: always; }
     .et_pb_text_5 { page-break-after: avoid; }
 
-    /* Table sizing for print */
-    table.styled-table {
-        width: 100% !important;
-        font-size: 10px !important;
-        box-shadow: none !important;
-        margin: 0 0 10px 0 !important;
+    /* Hide Group column — court already identifies the group */
+    .Court-0:first-child,
+    .Court-1:first-child,
+    .Court-2:first-child,
+    .Court-3:first-child,
+    .Court-4:first-child,
+    thead td:first-child {
+        display: none !important;
     }
 
+    /* Table sizing — fit all courts on one page */
+    table.styled-table {
+        width: 100% !important;
+        font-size: 8.5px !important;
+        box-shadow: none !important;
+        margin: 0 0 4px 0 !important;
+        border-collapse: collapse !important;
+        table-layout: fixed !important;
+    }
+
+    /* Compact padding */
     .styled-table thead td,
     .styled-table th,
     .styled-table td {
-        padding: 3px 5px !important;
+        padding: 2px 4px !important;
+        line-height: 1.4em !important;
+    }
+
+    /* Allow names and phones to wrap */
+    .FirstName-0,.LastName-0,.FirstName-1,.LastName-1,
+    .FirstName-2,.LastName-2,.FirstName-3,.LastName-3,
+    .FirstName-4,.LastName-4,
+    .Phone-0,.Phone-1,.Phone-2,.Phone-3,.Phone-4 {
+        white-space: normal !important;
+        line-height: 1.3em !important;
+    }
+
+    /* Compact row heights */
+    .first, .second {
+        line-height: 1.3em !important;
+    }
+
+    /* Shrink game squares to minimum viable size */
+    .Game1,.Game2,.Game3,.Game4,.Game5,.Score,
+    .GameA51-0,.GameA51-1,.GameA41-0,.GameA41-1,
+    .GameB52-0,.GameB52-2,.GameB42-0,.GameB42-2,
+    .GameC53-0,.GameC53-3,.GameC43-0,.GameC43-3,
+    .GameD54-0,.GameD54-4,.GameE55-1,.GameE55-2,
+    .GameA51-2,.GameA51-3,.GameA41-2,.GameA41-3,
+    .GameB52-1,.GameB52-4,.GameB42-1,.GameB42-3,
+    .GameC53-2,.GameC53-4,.GameC43-1,.GameC43-2,
+    .GameD54-1,.GameD54-3,.GameE55-3,.GameE55-4,
+    .GameA51-4,.GameB52-3,.GameC53-1,.GameD54-2,.GameE55-0,
+    .Score-0,.Score-1,.Score-2,.Score-3,.Score-4 {
+        width: 22px !important;
+        min-width: 22px !important;
+        max-width: 22px !important;
+    }
+
+    /* Compact blank rows */
+    .blank {
+        height: 3px !important;
     }
 
     /* Headings */
-    h1.title span {
-        font-size: 36px !important;
+    h1.title {
+        margin: 2px 0 4px 0 !important;
+    }
+
+    h1.title span:first-child {
+        font-size: 28px !important;
+    }
+
+    h1.title span:last-child {
+        font-size: 12px !important;
     }
 
     center h1 {
-        font-size: 14px !important;
-        margin: 4px 0 !important;
+        font-size: 12px !important;
+        margin: 2px 0 4px 0 !important;
     }
 
     /* Force colour printing */
