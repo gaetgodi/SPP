@@ -263,6 +263,7 @@ table.spp-player-table {
         background-color: white !important;
         background: white !important;
     }
+
     .spp-schedule-title {
         font-size: 20px !important;
         color: #147205 !important;
@@ -270,6 +271,14 @@ table.spp-player-table {
         margin: 0 0 6px 0 !important;
         text-align: center !important;
     }
+      
+    .spp-schedule-title {
+    font-size: 20px !important;
+    color: #147205 !important;
+    font-weight: bold !important;
+    margin: 0 0 6px 0 !important;
+    text-align: center !important;
+}
     #main-content,
     #main-content * {
         visibility: visible;
