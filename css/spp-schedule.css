@@ -340,13 +340,7 @@ table.spp-player-table {
     }
 
     /* White backgrounds throughout — saves ink */
-    tr:nth-child(odd) {
-        background-color: white !important;
-    }
 
-    .first, .second {
-        background: white !important;
-    }
 
     /* Game squares — large enough to write scores in */
     .Game1,.Game2,.Game3,.Game4,.Game5,.Score {
