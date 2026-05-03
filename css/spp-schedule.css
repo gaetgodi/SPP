@@ -259,7 +259,10 @@ table.spp-player-table {
     body * {
         visibility: hidden;
     }
-
+    .et_pb_section_1 {
+        background-color: white !important;
+        background: white !important;
+    }
     #main-content,
     #main-content * {
         visibility: visible;
