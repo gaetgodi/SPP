@@ -382,14 +382,6 @@ table.spp-player-table {
         min-width: 32px !important;
     }
 
-    /* Score squares — white for writing */
-    .Score-0,.Score-1,.Score-2,.Score-3,.Score-4 {
-        background: white !important;
-        color: white !important;
-        border: 2px solid orange !important;
-        width: 32px !important;
-        min-width: 32px !important;
-    }
 
     /* Blank separator rows — visible but compact */
     .blank {
