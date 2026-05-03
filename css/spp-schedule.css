@@ -243,7 +243,12 @@ table.spp-player-table {
     background-color: #e8f5e9 !important;
     font-weight: bold;
 }
-
+.spp-schedule-title {
+    font-size: 24px;
+    color: #147205;
+    font-weight: bold;
+    margin: 0 0 10px 0;
+}
 /* =========================================================
    PRINT STYLES — letter portrait
    One time slot per page
@@ -262,6 +267,13 @@ table.spp-player-table {
     .et_pb_section_1 {
         background-color: white !important;
         background: white !important;
+    }
+    .spp-schedule-title {
+        font-size: 20px !important;
+        color: #147205 !important;
+        font-weight: bold !important;
+        margin: 0 0 6px 0 !important;
+        text-align: center !important;
     }
     #main-content,
     #main-content * {
