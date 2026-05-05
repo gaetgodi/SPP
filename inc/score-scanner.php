@@ -158,7 +158,6 @@ add_action('wp_ajax_spp_save_scores', function() {
 
     $time_map = [];
     foreach ($wpdb->get_results("SELECT T_ID, T_desc FROM Times WHERE Active = 1", ARRAY_A) as $t) {
-        // Index by time portion only e.g. "5:30", "6:40", "7:50"
         preg_match('/\d+:\d+/', $t['T_desc'], $m);
         if ($m) $time_map[$m[0]] = $t['T_ID'];
     }
@@ -167,48 +166,61 @@ add_action('wp_ajax_spp_save_scores', function() {
     $errors = [];
 
     foreach ($players as $p) {
-        $rank   = intval($p['rank']);
-        $is_sub = !empty($p['substitution']);
+        $rank    = intval($p['rank']);
+        $is_sub  = !empty($p['substitution']);
+        $name    = sanitize_text_field($p['name']);
 
-        // --- Match player ---
+        // Split name into parts for fuzzy matching
+        $name_parts = explode(' ', $name);
+        $last_name  = end($name_parts);
+        $first_name = reset($name_parts);
+
+        $user_id = null;
+
         if ($is_sub) {
-            // Substitution: fuzzy match by name
-            $name       = sanitize_text_field($p['name']);
-            $name_parts = explode(' ', $name);
-            $last_name  = end($name_parts);
-            $first_name = reset($name_parts);
-
+            // Substitution: match by last name only (no rank)
             $user_id = $wpdb->get_var($wpdb->prepare(
                 "SELECT user_id FROM Schedules WHERE last_name LIKE %s",
                 '%' . $wpdb->esc_like($last_name) . '%'
             ));
+            // Try first name if last name fails
             if (!$user_id) {
                 $user_id = $wpdb->get_var($wpdb->prepare(
                     "SELECT user_id FROM Schedules WHERE first_name LIKE %s",
                     '%' . $wpdb->esc_like($first_name) . '%'
                 ));
             }
+        } else {
+            // Normal player: rank + last name
+            $user_id = $wpdb->get_var($wpdb->prepare(
+                "SELECT user_id FROM Schedules WHERE Rank = %d AND last_name LIKE %s",
+                $rank,
+                '%' . $wpdb->esc_like($last_name) . '%'
+            ));
+            // Rank + first name fallback
             if (!$user_id) {
                 $user_id = $wpdb->get_var($wpdb->prepare(
-                    "SELECT user_id FROM Schedules WHERE CONCAT(first_name, ' ', last_name) LIKE %s",
-                    '%' . $wpdb->esc_like($name) . '%'
+                    "SELECT user_id FROM Schedules WHERE Rank = %d AND first_name LIKE %s",
+                    $rank,
+                    '%' . $wpdb->esc_like($first_name) . '%'
                 ));
             }
-        } else {
-            // Normal player: match by rank
-            $user_id = $wpdb->get_var($wpdb->prepare(
-                "SELECT user_id FROM Schedules WHERE Rank = %d", $rank
-            ));
+            // Rank only as last resort
+            if (!$user_id) {
+                $user_id = $wpdb->get_var($wpdb->prepare(
+                    "SELECT user_id FROM Schedules WHERE Rank = %d",
+                    $rank
+                ));
+            }
         }
 
         if (!$user_id) {
-            $errors[] = "Could not match: rank {$rank} / {$p['name']}";
+            $errors[] = "Could not match: rank {$rank} / {$name}";
             continue;
         }
 
         $sv = function($v) { return ($v === 'bye' || $v === null || $v === '') ? null : intval($v); };
 
-        // Build update array — always update scores
         $update_data   = [
             'Game1' => $sv($p['rnd1']),
             'Game2' => $sv($p['rnd2']),
@@ -247,7 +259,7 @@ add_action('wp_ajax_spp_save_scores', function() {
         );
 
         if ($result !== false) $saved++;
-        else $errors[] = "DB error for rank {$rank} / {$p['name']}";
+        else $errors[] = "DB error for rank {$rank} / {$name}";
     }
 
     wp_send_json_success(['saved' => $saved, 'errors' => $errors]);
