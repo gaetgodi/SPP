@@ -177,11 +177,9 @@ add_action( 'transition_post_status', function( $new_status, $old_status, $post 
 add_action( 'template_redirect', function() {
     if ( is_user_logged_in() ) return;
 
-    $blog_page_id   = get_option( 'page_for_posts' );
     $submit_page_id = get_page_by_path( 'submit-post' )?->ID;
 
     if (
-        ( $blog_page_id   && is_page( $blog_page_id ) ) ||
         ( $submit_page_id && is_page( $submit_page_id ) ) ||
         is_singular( 'post' )
     ) {
