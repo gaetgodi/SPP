@@ -170,7 +170,6 @@ add_action('wp_ajax_spp_save_scores', function() {
         $is_sub  = !empty($p['substitution']);
         $name    = sanitize_text_field($p['name']);
 
-        // Split name into parts for fuzzy matching
         $name_parts = explode(' ', $name);
         $last_name  = end($name_parts);
         $first_name = reset($name_parts);
@@ -183,7 +182,6 @@ add_action('wp_ajax_spp_save_scores', function() {
                 "SELECT user_id FROM Schedules WHERE last_name LIKE %s",
                 '%' . $wpdb->esc_like($last_name) . '%'
             ));
-            // Try first name if last name fails
             if (!$user_id) {
                 $user_id = $wpdb->get_var($wpdb->prepare(
                     "SELECT user_id FROM Schedules WHERE first_name LIKE %s",
@@ -263,4 +261,17 @@ add_action('wp_ajax_spp_save_scores', function() {
     }
 
     wp_send_json_success(['saved' => $saved, 'errors' => $errors]);
+});
+
+// AJAX: Clear all scores
+add_action('wp_ajax_spp_clear_scores', function() {
+    global $wpdb;
+    if (!check_ajax_referer('spp_score_scan', 'nonce', false)) {
+        wp_send_json_error('Invalid nonce');
+    }
+    if (!current_user_can('editor') && !current_user_can('administrator')) {
+        wp_send_json_error('Insufficient permissions');
+    }
+    $wpdb->query("UPDATE Schedules SET Game1=NULL, Game2=NULL, Game3=NULL, Game4=NULL, Game5=NULL");
+    wp_send_json_success(['message' => 'All scores cleared.']);
 });

@@ -121,6 +121,21 @@ async function sppSaveScores() {
     }
 }
 
+async function sppClearScores() {
+    if (!confirm('Clear ALL scores? This cannot be undone.')) return;
+    var resp = await fetch(sppScanner.ajaxurl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+            action: 'spp_clear_scores',
+            nonce: sppScanner.nonce
+        })
+    });
+    var data = await resp.json();
+    if (data.success) sppStatus('All scores cleared.', 'success');
+    else sppStatus('Error: ' + data.data, 'error');
+}
+
 function sppCancelReview() {
     document.getElementById('spp-review').innerHTML = '';
     document.getElementById('spp-status').innerHTML = '';
