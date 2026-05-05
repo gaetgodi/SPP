@@ -52,7 +52,7 @@ add_action('template_redirect', function() {
     if (!is_page()) return;
     if (current_user_can('administrator') || current_user_can('editor')) return;
     
-    $member_pages = [1517, 20003754, 20003889, 20009040, 20009451, 20005967, 20009765];
+    $member_pages = [1517, 20003754, 20003889, 20009040, 20009451, 20005967];
     
     global $post;
     if ($post && !in_array($post->ID, $member_pages) && has_shortcode($post->post_content, 'cmruncode')) {
