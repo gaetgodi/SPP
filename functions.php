@@ -90,6 +90,8 @@ add_filter('authenticate', function($user, $username, $password) {
             return $user;
         }
     }
+    $ok_to_login = get_user_meta($user->ID, 'OkToLogin', true);
+if ($ok_to_login === 'Yes') return $user;
 
     $yr_end_dt = get_user_meta($user->ID, 'YrEndDt', true);
     $current_year_end = date('Y') . '-12-31';
