@@ -1,7 +1,25 @@
 <?php
 // -------------------------------------------------------
-// SCORE SCANNER AJAX HANDLERS
+// SCORE SCANNER — AJAX HANDLERS + ENQUEUE
 // -------------------------------------------------------
+
+// Enqueue JS and pass PHP vars to it
+add_action('wp_enqueue_scripts', function() {
+    wp_enqueue_script(
+        'spp-score-scanner',
+        get_stylesheet_directory_uri() . '/js/score-scanner.js',
+        ['jquery'],
+        '1.0.0',
+        true
+    );
+    wp_localize_script('spp-score-scanner', 'sppScanner', [
+        'ajaxurl' => admin_url('admin-ajax.php'),
+        'nonce'   => wp_create_nonce('spp_score_scan'),
+        'event'   => get_option('spp_current_event')
+    ]);
+});
+
+// AJAX: Scan scores
 add_action('wp_ajax_spp_scan_scores', function() {
     if (!check_ajax_referer('spp_score_scan', 'nonce', false)) {
         wp_send_json_error('Invalid nonce');
@@ -47,7 +65,7 @@ Important:
 - Scores are integers or "bye" or null'
     ];
 
-    $files = $_FILES['files'];
+    $files      = $_FILES['files'];
     $file_count = count($files['name']);
 
     for ($i = 0; $i < $file_count; $i++) {
@@ -60,7 +78,7 @@ Important:
             exec("convert -density 150 -quality 85 " . escapeshellarg($tmp) . " " . escapeshellarg($img_path) . " 2>&1");
             $page = 0;
             while (file_exists(str_replace('%d', $page, $img_path))) {
-                $img_file = str_replace('%d', $page, $img_path);
+                $img_file  = str_replace('%d', $page, $img_path);
                 $content[] = [
                     'type'   => 'image',
                     'source' => ['type' => 'base64', 'media_type' => 'image/jpeg', 'data' => base64_encode(file_get_contents($img_file))]
@@ -99,8 +117,8 @@ Important:
         wp_send_json_error('No response from Claude');
     }
 
-    $text = preg_replace('/^```json\s*/m', '', $body['content'][0]['text']);
-    $text = preg_replace('/^```\s*/m', '', $text);
+    $text   = preg_replace('/^```json\s*/m', '', $body['content'][0]['text']);
+    $text   = preg_replace('/^```\s*/m', '', $text);
     $parsed = json_decode(trim($text), true);
 
     if (json_last_error() !== JSON_ERROR_NONE) {
@@ -110,6 +128,7 @@ Important:
     wp_send_json_success($parsed);
 });
 
+// AJAX: Save scores
 add_action('wp_ajax_spp_save_scores', function() {
     global $wpdb;
 
@@ -152,7 +171,8 @@ add_action('wp_ajax_spp_save_scores', function() {
         $result = $wpdb->update('Schedules',
             ['Game1' => $sv($p['rnd1']), 'Game2' => $sv($p['rnd2']), 'Game3' => $sv($p['rnd3']), 'Game4' => $sv($p['rnd4']), 'Game5' => $sv($p['rnd5'])],
             ['user_id' => $user_id],
-            ['%d','%d','%d','%d','%d'], ['%d']
+            ['%d', '%d', '%d', '%d', '%d'],
+            ['%d']
         );
 
         if ($result !== false) $saved++;
