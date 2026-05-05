@@ -42,6 +42,7 @@ add_action('wp_ajax_spp_scan_scores', function() {
         'text' => 'These are scanned score sheets from a pickleball ladder tournament. Each page shows one time slot. For each player, extract:
 - group (e.g. "Group 07")
 - court (e.g. "Court 1")
+- time_slot (the time shown at the top of the page e.g. "5:30", "6:40", "7:50")
 - rank (the number in the Rank column)
 - name (the name written on the sheet — use the handwritten name if the printed name is crossed out)
 - rnd1 through rnd5 (the score in each round column — use null if blank, "bye" if it says bye)
@@ -51,7 +52,7 @@ add_action('wp_ajax_spp_scan_scores', function() {
 Return ONLY a JSON object with this structure:
 {
   "players": [
-    {"group":"Group 07","court":"Court 1","rank":47,"name":"Robin Lawrence","rnd1":18,"rnd2":20,"rnd3":20,"rnd4":null,"rnd5":null,"substitution":false,"warning":""},
+    {"group":"Group 07","court":"Court 1","time_slot":"5:30","rank":47,"name":"Robin Lawrence","rnd1":18,"rnd2":20,"rnd3":20,"rnd4":null,"rnd5":null,"substitution":false,"warning":""},
     ...
   ],
   "warnings": []
@@ -60,7 +61,7 @@ Return ONLY a JSON object with this structure:
 Important:
 - "bye" cells contain no score
 - Some cells may be blank (player did not play that round)
-- Crossed out names mean a substitute played — use the handwritten replacement name
+- Crossed out names mean a substitute played — use the handwritten replacement name and set substitution to true
 - Ranks are integers
 - Scores are integers or "bye" or null'
     ];
@@ -144,20 +145,59 @@ add_action('wp_ajax_spp_save_scores', function() {
         wp_send_json_error('No player data received');
     }
 
+    // Build lookup maps for courts, groups and times
+    $court_map = [];
+    foreach ($wpdb->get_results("SELECT Crt_ID, Crt_name FROM Courts", ARRAY_A) as $c) {
+        $court_map[strtolower(trim($c['Crt_name']))] = $c['Crt_ID'];
+    }
+
+    $group_map = [];
+    foreach ($wpdb->get_results("SELECT GP_ID, GP_name FROM Groups", ARRAY_A) as $g) {
+        $group_map[strtolower(trim($g['GP_name']))] = $g['GP_ID'];
+    }
+
+    $time_map = [];
+    foreach ($wpdb->get_results("SELECT T_ID, T_desc FROM Times WHERE Active = 1", ARRAY_A) as $t) {
+        // Index by time portion only e.g. "5:30", "6:40", "7:50"
+        preg_match('/\d+:\d+/', $t['T_desc'], $m);
+        if ($m) $time_map[$m[0]] = $t['T_ID'];
+    }
+
     $saved  = 0;
     $errors = [];
 
     foreach ($players as $p) {
-        $rank = intval($p['rank']);
-        if (!$rank) continue;
+        $rank   = intval($p['rank']);
+        $is_sub = !empty($p['substitution']);
 
-        $user_id = $wpdb->get_var($wpdb->prepare("SELECT user_id FROM Schedules WHERE Rank = %d", $rank));
+        // --- Match player ---
+        if ($is_sub) {
+            // Substitution: fuzzy match by name
+            $name       = sanitize_text_field($p['name']);
+            $name_parts = explode(' ', $name);
+            $last_name  = end($name_parts);
+            $first_name = reset($name_parts);
 
-        if (!$user_id) {
-            $name    = sanitize_text_field($p['name']);
             $user_id = $wpdb->get_var($wpdb->prepare(
-                "SELECT user_id FROM Schedules WHERE full_name LIKE %s",
-                '%' . $wpdb->esc_like($name) . '%'
+                "SELECT user_id FROM Schedules WHERE last_name LIKE %s",
+                '%' . $wpdb->esc_like($last_name) . '%'
+            ));
+            if (!$user_id) {
+                $user_id = $wpdb->get_var($wpdb->prepare(
+                    "SELECT user_id FROM Schedules WHERE first_name LIKE %s",
+                    '%' . $wpdb->esc_like($first_name) . '%'
+                ));
+            }
+            if (!$user_id) {
+                $user_id = $wpdb->get_var($wpdb->prepare(
+                    "SELECT user_id FROM Schedules WHERE CONCAT(first_name, ' ', last_name) LIKE %s",
+                    '%' . $wpdb->esc_like($name) . '%'
+                ));
+            }
+        } else {
+            // Normal player: match by rank
+            $user_id = $wpdb->get_var($wpdb->prepare(
+                "SELECT user_id FROM Schedules WHERE Rank = %d", $rank
             ));
         }
 
@@ -168,15 +208,46 @@ add_action('wp_ajax_spp_save_scores', function() {
 
         $sv = function($v) { return ($v === 'bye' || $v === null || $v === '') ? null : intval($v); };
 
-        $result = $wpdb->update('Schedules',
-            ['Game1' => $sv($p['rnd1']), 'Game2' => $sv($p['rnd2']), 'Game3' => $sv($p['rnd3']), 'Game4' => $sv($p['rnd4']), 'Game5' => $sv($p['rnd5'])],
+        // Build update array — always update scores
+        $update_data   = [
+            'Game1' => $sv($p['rnd1']),
+            'Game2' => $sv($p['rnd2']),
+            'Game3' => $sv($p['rnd3']),
+            'Game4' => $sv($p['rnd4']),
+            'Game5' => $sv($p['rnd5']),
+        ];
+        $update_format = ['%d', '%d', '%d', '%d', '%d'];
+
+        // For substitutions: also update group_id, Crt_ID and time_id
+        if ($is_sub) {
+            $group_key = strtolower(trim($p['group']));
+            $court_key = strtolower(trim($p['court']));
+            $time_key  = isset($p['time_slot']) ? trim($p['time_slot']) : '';
+
+            if (isset($group_map[$group_key])) {
+                $update_data['group_id'] = $group_map[$group_key];
+                $update_format[] = '%d';
+            }
+            if (isset($court_map[$court_key])) {
+                $update_data['Crt_ID'] = $court_map[$court_key];
+                $update_format[] = '%d';
+            }
+            if ($time_key && isset($time_map[$time_key])) {
+                $update_data['time_id'] = $time_map[$time_key];
+                $update_format[] = '%d';
+            }
+        }
+
+        $result = $wpdb->update(
+            'Schedules',
+            $update_data,
             ['user_id' => $user_id],
-            ['%d', '%d', '%d', '%d', '%d'],
+            $update_format,
             ['%d']
         );
 
         if ($result !== false) $saved++;
-        else $errors[] = "DB error for rank {$rank}";
+        else $errors[] = "DB error for rank {$rank} / {$p['name']}";
     }
 
     wp_send_json_success(['saved' => $saved, 'errors' => $errors]);
