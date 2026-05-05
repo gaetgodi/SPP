@@ -52,7 +52,8 @@ function spp_sync_blog_author_caps( $user_id ) {
     $user = get_userdata( $user_id );
     if ( ! $user ) return;
 
-    $is_active = ( get_user_meta( $user_id, 'YrEndDt', true ) === date('Y') . '-12-31' );
+    $is_active = ( get_user_meta( $user_id, 'YrEndDt', true ) === date('Y') . '-12-31' ) || ( get_user_meta( $user_id, 'OkToLogin', true ) === 'Yes' );
+    
 
     foreach ( spp_blog_author_caps() as $cap => $grant ) {
         $is_active ? $user->add_cap( $cap, $grant ) : $user->remove_cap( $cap );
