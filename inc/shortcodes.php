@@ -54,56 +54,15 @@ function spp_dashboard_shortcode() {
 
         if ($is_ladder && $is_current) {
             // -----------------------------------------------
-            // Active ladder member — show rank
+            // Active ladder member — show rank only
             // -----------------------------------------------
             $output .= '<div class="spp-dashboard-rank">';
             $output .= '<p>Your current ladder rank: <strong>';
             $output .= ($rank > 0) ? esc_html($rank) : 'To be determined';
             $output .= '</strong></p>';
             $output .= '</div>';
-
-            // -----------------------------------------------
-            // Check if a schedule has been published
-            // -----------------------------------------------
-            $event = get_option('spp_current_event');
-
-            $output .= '<div class="spp-dashboard-schedule">';
-
-            if (!$event) {
-                $output .= '<p class="spp-dashboard-notice">No schedule published yet for this week.</p>';
-            } else {
-                // Query for current user in schedules_w view
-                $schedule = $wpdb->get_row($wpdb->prepare("
-                    SELECT w.Rank, w.GP_name, w.Crt_name, w.T_desc
-                    FROM schedules_w w
-                    WHERE w.user_id = %d
-                    LIMIT 1
-                ", $user_id));
-
-                if (!$schedule) {
-                    $output .= '<p class="spp-dashboard-notice">You are not on this week\'s schedule.</p>';
-                } else {
-                    $output .= '<h3>This Week\'s Schedule</h3>';
-                    $output .= '<table class="spp-dashboard-table">';
-                    $output .= '<tr><th>Group</th><td>'       . esc_html($schedule->GP_name)  . '</td></tr>';
-                    $output .= '<tr><th>Court</th><td>'       . esc_html($schedule->Crt_name) . '</td></tr>';
-                    $output .= '<tr><th>Time</th><td>'        . esc_html($schedule->T_desc)   . '</td></tr>';
-                    $output .= '<tr><th>Ladder Rank</th><td>' . esc_html($schedule->Rank)     . '</td></tr>';
-                    $output .= '</table>';
-                }
-            }
-
-            $output .= '</div>';
-
-        } elseif ($is_ladder && !$is_current) {
-            // -----------------------------------------------
-            // Ladder member but expired membership
-            // -----------------------------------------------
-            $output .= '<p class="spp-dashboard-notice">Your membership has expired. Please renew with 
-                <a href="https://www.pickleballcanada.org" target="_blank">Pickleball Canada</a> 
-                to access ladder features.</p>';
         }
-        // Non-ladder members see only the welcome message — nothing extra needed
+        // Non-ladder and expired members see only the welcome message — nothing extra needed
     }
 
     $output .= '</div>';
