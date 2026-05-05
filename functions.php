@@ -34,6 +34,8 @@ add_action( 'wp_enqueue_scripts', 'divi_spp_child_enqueue_styles' );
 require_once get_stylesheet_directory() . '/inc/menus.php';
 require_once get_stylesheet_directory() . '/inc/shortcodes.php';
 require_once get_stylesheet_directory() . '/inc/blog-roles.php';
+require_once get_stylesheet_directory() . '/inc/score-scanner.php';
+
 add_filter('template_include', function($template) {
     if (is_singular('tribe_events')) {
         error_log('TEC single event template: ' . $template);
