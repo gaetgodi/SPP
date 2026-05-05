@@ -75,7 +75,7 @@ Important:
 
         if (strtolower(pathinfo($name, PATHINFO_EXTENSION)) === 'pdf') {
             $img_path = sys_get_temp_dir() . '/spp_score_' . $i . '_%d.jpg';
-            exec("convert -density 150 -quality 85 " . escapeshellarg($tmp) . " " . escapeshellarg($img_path) . " 2>&1");
+            exec("/usr/bin/convert -density 150 -quality 85 " . escapeshellarg($tmp) . " " . escapeshellarg($img_path) . " 2>&1");
             $page = 0;
             while (file_exists(str_replace('%d', $page, $img_path))) {
                 $img_file  = str_replace('%d', $page, $img_path);
