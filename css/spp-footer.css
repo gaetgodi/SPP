@@ -139,7 +139,7 @@
 }
 @media (max-width: 768px) {
     .footer-horizontal-menu ul li a {
-        padding: 3px 6px !important;
+        padding: 1px 2px !important;
     }
 }
 /* Target copyright paragraphs directly via Divi's footer classes */
