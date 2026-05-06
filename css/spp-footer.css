@@ -131,6 +131,16 @@
         font-size: 0.65rem !important;
  
     }
+    @media (max-width: 768px) {
+    .footer-horizontal-menu ul li a {
+        padding: 3px 6px !important;
+    }
+}
+}
+@media (max-width: 768px) {
+    .footer-horizontal-menu ul li a {
+        padding: 3px 6px !important;
+    }
 }
 /* Target copyright paragraphs directly via Divi's footer classes */
 .et_pb_row_1_tb_footer .spp-footer-copyright {
