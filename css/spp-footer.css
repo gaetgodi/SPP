@@ -132,3 +132,29 @@
  
     }
 }
+/* Target copyright paragraphs directly via Divi's footer classes */
+.et_pb_row_1_tb_footer .spp-footer-copyright {
+    text-align: center !important;
+    width: 100% !important;
+    display: block !important;
+}
+
+.et_pb_row_1_tb_footer .spp-footer-copyright p {
+    font-size: 0.75rem !important;
+    line-height: 1.4 !important;
+    margin: 2px auto !important;
+    text-align: center !important;
+    display: block !important;
+    width: 100% !important;
+}
+
+.et_pb_row_1_tb_footer .spp-footer-copy {
+    color: rgba(255,255,255,0.8) !important;
+    letter-spacing: 0.02em !important;
+}
+
+.et_pb_row_1_tb_footer .spp-footer-credit {
+    color: rgba(255,255,255,0.45) !important;
+    font-style: italic !important;
+    font-size: 0.68rem !important;
+}
