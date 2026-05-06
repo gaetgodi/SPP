@@ -16,9 +16,26 @@
     align-items: center !important;
 }
 
+/* Force flat list — never hamburger */
+.footer-horizontal-menu .et_mobile_nav_menu {
+    display: none !important;
+}
+
+.footer-horizontal-menu .et_pb_menu__wrap {
+    display: flex !important;
+    justify-content: center !important;
+    flex-wrap: wrap !important;
+}
+
+.footer-horizontal-menu .et_pb_menu__menu {
+    display: block !important;
+}
+
 .footer-horizontal-menu .et_pb_menu,
 .footer-horizontal-menu nav,
-.footer-horizontal-menu ul {
+.footer-horizontal-menu .et_pb_menu__menu nav,
+.footer-horizontal-menu ul,
+.footer-horizontal-menu .et_pb_menu__menu ul {
     display: flex !important;
     flex-wrap: wrap !important;
     justify-content: center !important;
@@ -29,7 +46,8 @@
     list-style: none !important;
 }
 
-.footer-horizontal-menu ul li {
+.footer-horizontal-menu ul li,
+.footer-horizontal-menu .et_pb_menu__menu ul li {
     display: inline-flex !important;
     align-items: center !important;
 }
@@ -66,13 +84,12 @@
 
     .footer-horizontal-menu ul li a {
         font-size: 0.813rem !important;
-        padding: 4px 10px !important;
+        padding: 3px 6px !important;
     }
 }
 
 /* ---------------------------------------------------------
    Phone (480px and below)
-   Items wrap to two rows naturally, pill stays intact
    --------------------------------------------------------- */
 @media (max-width: 480px) {
     .footer-horizontal-menu {
@@ -82,12 +99,7 @@
 
     .footer-horizontal-menu ul li a {
         font-size: 0.75rem !important;
-        padding: 3px 8px !important;
-    }
-
-    /* Hide separators on phone — too cramped when wrapping */
-    .footer-horizontal-menu ul li + li::before {
-        display: none !important;
+        padding: 3px 6px !important;
     }
 }
 
@@ -100,27 +112,37 @@
     padding: 6px 0 10px !important;
 }
 
-.spp-footer-copyright {
+.spp-footer-copyright,
+.et_pb_row_1_tb_footer .spp-footer-copyright {
     text-align: center !important;
     padding: 4px 0 !important;
     width: 100% !important;
+    display: block !important;
 }
 
-.spp-footer-copyright .spp-footer-copy {
+.spp-footer-copyright .spp-footer-copy,
+.et_pb_row_1_tb_footer .spp-footer-copyright p.spp-footer-copy {
     font-size: 0.8rem !important;
     color: rgba(255,255,255,0.8) !important;
     margin: 0 0 2px !important;
     letter-spacing: 0.02em !important;
     text-align: center !important;
+    line-height: 1.4 !important;
+    display: block !important;
+    width: 100% !important;
 }
 
-.spp-footer-copyright .spp-footer-credit {
+.spp-footer-copyright .spp-footer-credit,
+.et_pb_row_1_tb_footer .spp-footer-copyright p.spp-footer-credit {
     font-size: 0.7rem !important;
     color: rgba(255,255,255,0.45) !important;
     margin: 0 !important;
     font-style: italic !important;
     letter-spacing: 0.01em !important;
     text-align: center !important;
+    line-height: 1.4 !important;
+    display: block !important;
+    width: 100% !important;
 }
 
 @media (max-width: 480px) {
@@ -129,67 +151,5 @@
     }
     .spp-footer-copyright .spp-footer-credit {
         font-size: 0.65rem !important;
- 
     }
-    @media (max-width: 768px) {
-    .footer-horizontal-menu ul li a {
-        padding: 3px 6px !important;
-    }
-}
-}
-@media (max-width: 768px) {
-    .footer-horizontal-menu ul li a {
-        padding: 1px 2px !important;
-    }
-}
-/* Target copyright paragraphs directly via Divi's footer classes */
-.et_pb_row_1_tb_footer .spp-footer-copyright {
-    text-align: center !important;
-    width: 100% !important;
-    display: block !important;
-}
-
-.et_pb_row_1_tb_footer .spp-footer-copyright p {
-    font-size: 0.75rem !important;
-    line-height: 1.4 !important;
-    margin: 2px auto !important;
-    text-align: center !important;
-    display: block !important;
-    width: 100% !important;
-}
-
-.et_pb_row_1_tb_footer .spp-footer-copy {
-    color: rgba(255,255,255,0.8) !important;
-    letter-spacing: 0.02em !important;
-}
-
-.et_pb_row_1_tb_footer .spp-footer-credit {
-    color: rgba(255,255,255,0.45) !important;
-    font-style: italic !important;
-    font-size: 0.68rem !important;
-}
-/* Force footer menu to always show as flat list, never hamburger */
-.footer-horizontal-menu .et_mobile_nav_menu {
-    display: none !important;
-}
-
-.footer-horizontal-menu .et_pb_menu__wrap {
-    display: flex !important;
-    justify-content: center !important;
-    flex-wrap: wrap !important;
-}
-
-.footer-horizontal-menu .et_pb_menu__menu {
-    display: block !important;
-}
-
-.footer-horizontal-menu .et_pb_menu__menu nav,
-.footer-horizontal-menu .et_pb_menu__menu ul {
-    display: flex !important;
-    flex-wrap: wrap !important;
-    justify-content: center !important;
-}
-
-.footer-horizontal-menu .et_pb_menu__menu ul li {
-    display: inline-flex !important;
 }
