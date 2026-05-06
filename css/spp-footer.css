@@ -93,28 +93,38 @@
 
 /* ---------------------------------------------------------
    Footer copyright row
-   Add a Divi Code module below the menu row with the
-   HTML block below this CSS section.
+   Divi row class: footer-copyright-row
    --------------------------------------------------------- */
+.footer-copyright-row {
+    background: transparent !important;
+    padding: 6px 0 10px !important;
+}
+
 .spp-footer-copyright {
     text-align: center;
-    padding: 10px 0 4px;
+    padding: 4px 0;
 }
 
-.spp-footer-copyright .spp-footer-copy,
-.spp-footer-copyright .spp-footer-credit {
-    font-size: 0.75rem;
-    color: rgba(255,255,255,0.65);
-    margin: 2px 0;
+.spp-footer-copyright .spp-footer-copy {
+    font-size: 0.8rem;
+    color: rgba(255,255,255,0.8);
+    margin: 0 0 2px;
+    letter-spacing: 0.02em;
 }
 
 .spp-footer-copyright .spp-footer-credit {
+    font-size: 0.7rem;
     color: rgba(255,255,255,0.45);
+    margin: 0;
+    font-style: italic;
+    letter-spacing: 0.01em;
 }
 
 @media (max-width: 480px) {
-    .spp-footer-copyright .spp-footer-copy,
+    .spp-footer-copyright .spp-footer-copy {
+        font-size: 0.72rem;
+    }
     .spp-footer-copyright .spp-footer-credit {
-        font-size: 0.68rem;
+        font-size: 0.65rem;
     }
 }
