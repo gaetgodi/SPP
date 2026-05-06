@@ -101,30 +101,34 @@
 }
 
 .spp-footer-copyright {
-    text-align: center;
-    padding: 4px 0;
+    text-align: center !important;
+    padding: 4px 0 !important;
+    width: 100% !important;
 }
 
 .spp-footer-copyright .spp-footer-copy {
-    font-size: 0.8rem;
-    color: rgba(255,255,255,0.8);
-    margin: 0 0 2px;
-    letter-spacing: 0.02em;
+    font-size: 0.8rem !important;
+    color: rgba(255,255,255,0.8) !important;
+    margin: 0 0 2px !important;
+    letter-spacing: 0.02em !important;
+    text-align: center !important;
 }
 
 .spp-footer-copyright .spp-footer-credit {
-    font-size: 0.7rem;
-    color: rgba(255,255,255,0.45);
-    margin: 0;
-    font-style: italic;
-    letter-spacing: 0.01em;
+    font-size: 0.7rem !important;
+    color: rgba(255,255,255,0.45) !important;
+    margin: 0 !important;
+    font-style: italic !important;
+    letter-spacing: 0.01em !important;
+    text-align: center !important;
 }
 
 @media (max-width: 480px) {
     .spp-footer-copyright .spp-footer-copy {
-        font-size: 0.72rem;
+        font-size: 0.72rem !important;
     }
     .spp-footer-copyright .spp-footer-credit {
-        font-size: 0.65rem;
+        font-size: 0.65rem !important;
+ 
     }
 }
