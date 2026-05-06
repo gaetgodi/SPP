@@ -1,0 +1,120 @@
+/* =========================================================
+   SPP Footer — horizontal menu row + copyright row
+   Add to: spp-tokens.css or a dedicated spp-footer.css
+   ========================================================= */
+
+/* ---------------------------------------------------------
+   Footer horizontal menu row
+   Divi row class: footer-horizontal-menu
+   --------------------------------------------------------- */
+.footer-horizontal-menu {
+    background: linear-gradient(135deg, #1a9e8f, #2bb5a0) !important;
+    border-radius: 30px !important;
+    padding: 8px 20px !important;
+    display: flex !important;
+    justify-content: center !important;
+    align-items: center !important;
+}
+
+.footer-horizontal-menu .et_pb_menu,
+.footer-horizontal-menu nav,
+.footer-horizontal-menu ul {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    justify-content: center !important;
+    align-items: center !important;
+    gap: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    list-style: none !important;
+}
+
+.footer-horizontal-menu ul li {
+    display: inline-flex !important;
+    align-items: center !important;
+}
+
+.footer-horizontal-menu ul li a {
+    color: #ffffff !important;
+    font-size: 0.875rem !important;
+    font-weight: 500 !important;
+    text-decoration: none !important;
+    padding: 4px 14px !important;
+    white-space: nowrap !important;
+    transition: opacity 0.2s ease !important;
+}
+
+.footer-horizontal-menu ul li a:hover {
+    opacity: 0.75 !important;
+}
+
+/* Separators between items */
+.footer-horizontal-menu ul li + li::before {
+    content: '|' !important;
+    color: rgba(255,255,255,0.4) !important;
+    font-size: 0.75rem !important;
+}
+
+/* ---------------------------------------------------------
+   Tablet (768px and below)
+   --------------------------------------------------------- */
+@media (max-width: 768px) {
+    .footer-horizontal-menu {
+        border-radius: 16px !important;
+        padding: 10px 16px !important;
+    }
+
+    .footer-horizontal-menu ul li a {
+        font-size: 0.813rem !important;
+        padding: 4px 10px !important;
+    }
+}
+
+/* ---------------------------------------------------------
+   Phone (480px and below)
+   Items wrap to two rows naturally, pill stays intact
+   --------------------------------------------------------- */
+@media (max-width: 480px) {
+    .footer-horizontal-menu {
+        border-radius: 14px !important;
+        padding: 10px 12px !important;
+    }
+
+    .footer-horizontal-menu ul li a {
+        font-size: 0.75rem !important;
+        padding: 3px 8px !important;
+    }
+
+    /* Hide separators on phone — too cramped when wrapping */
+    .footer-horizontal-menu ul li + li::before {
+        display: none !important;
+    }
+}
+
+/* ---------------------------------------------------------
+   Footer copyright row
+   Add a Divi Code module below the menu row with the
+   HTML block below this CSS section.
+   --------------------------------------------------------- */
+.spp-footer-copyright {
+    text-align: center;
+    padding: 10px 0 4px;
+}
+
+.spp-footer-copyright .spp-footer-copy,
+.spp-footer-copyright .spp-footer-credit {
+    font-size: 0.75rem;
+    color: rgba(255,255,255,0.65);
+    margin: 2px 0;
+}
+
+.spp-footer-copyright .spp-footer-credit {
+    color: rgba(255,255,255,0.45);
+}
+
+@media (max-width: 480px) {
+    .spp-footer-copyright .spp-footer-copy,
+    .spp-footer-copyright .spp-footer-credit {
+        font-size: 0.68rem;
+    }
+}
