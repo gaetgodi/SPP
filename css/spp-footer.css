@@ -158,3 +158,28 @@
     font-style: italic !important;
     font-size: 0.68rem !important;
 }
+/* Force footer menu to always show as flat list, never hamburger */
+.footer-horizontal-menu .et_mobile_nav_menu {
+    display: none !important;
+}
+
+.footer-horizontal-menu .et_pb_menu__wrap {
+    display: flex !important;
+    justify-content: center !important;
+    flex-wrap: wrap !important;
+}
+
+.footer-horizontal-menu .et_pb_menu__menu {
+    display: block !important;
+}
+
+.footer-horizontal-menu .et_pb_menu__menu nav,
+.footer-horizontal-menu .et_pb_menu__menu ul {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    justify-content: center !important;
+}
+
+.footer-horizontal-menu .et_pb_menu__menu ul li {
+    display: inline-flex !important;
+}
