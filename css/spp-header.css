@@ -134,14 +134,15 @@
         padding: 1px 2px !important;
     }
 }
-/* ---------------------------------------------------------
-   Prevent header from overlapping page content
-   --------------------------------------------------------- */
-.et-l--header {
-    position: relative !important;
-    z-index: 100 !important;
+/* Hide mobile menu list that Divi renders separately */
+.et-l--header .et_mobile_menu {
+    display: none !important;
 }
 
-.et_pb_section_0_tb_header {
-    position: relative !important;
+.et-l--header .mobile_nav {
+    display: none !important;
+}
+
+.et-l--header .et_mobile_nav_menu {
+    display: none !important;
 }
