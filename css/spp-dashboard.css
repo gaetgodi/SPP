@@ -221,7 +221,7 @@ All tokens defined in spp-drawers.css :root
     -webkit-overflow-scrolling: touch !important;
 }
 .spp-no-hscroll .MuiTableContainer-root {
-    overflow: hidden !important;
+    overflow: auto !important;
 }
 
 .et_pb_post .entry-title,
