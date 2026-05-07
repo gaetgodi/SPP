@@ -134,3 +134,14 @@
         padding: 1px 2px !important;
     }
 }
+/* ---------------------------------------------------------
+   Prevent header from overlapping page content
+   --------------------------------------------------------- */
+.et-l--header {
+    position: relative !important;
+    z-index: 100 !important;
+}
+
+.et_pb_section_0_tb_header {
+    position: relative !important;
+}
