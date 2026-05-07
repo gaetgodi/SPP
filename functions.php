@@ -11,6 +11,7 @@ function divi_spp_child_enqueue_styles() {
     wp_enqueue_style( 'spp-dashboard',get_stylesheet_directory_uri() . '/css/spp-dashboard.css',['spp-tokens'], '1.0.0' );
     wp_enqueue_script( 'spp-drawers', get_stylesheet_directory_uri() . '/js/spp-drawers.js', [], '1.0.0', true );
     wp_enqueue_style( 'spp-footer',   get_stylesheet_directory_uri() . '/css/spp-footer.css',   ['spp-tokens'], '1.0.0' );
+    wp_enqueue_style( 'spp-header', get_stylesheet_directory_uri() . '/css/spp-header.css', ['spp-tokens'], '1.0.0' );
 
     // FAQ System (CSS + JS - only on FAQ page)
     if (is_page('faq')) {

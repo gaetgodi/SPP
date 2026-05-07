@@ -1,0 +1,83 @@
+/* =========================================================
+   SPP Header — wide page header template
+   Menu module class: header-menu-row
+   ========================================================= */
+
+/* ---------------------------------------------------------
+   Force flat list — never hamburger
+   --------------------------------------------------------- */
+.header-menu-row .et_mobile_nav_menu {
+    display: none !important;
+}
+
+.header-menu-row .et_pb_menu__wrap {
+    display: flex !important;
+    justify-content: flex-start !important;
+    flex-wrap: wrap !important;
+}
+
+.header-menu-row .et_pb_menu__menu {
+    display: block !important;
+}
+
+.header-menu-row .et_pb_menu,
+.header-menu-row nav,
+.header-menu-row .et_pb_menu__menu nav,
+.header-menu-row ul,
+.header-menu-row .et_pb_menu__menu ul {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    justify-content: flex-start !important;
+    align-items: center !important;
+    gap: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    list-style: none !important;
+}
+
+.header-menu-row ul li,
+.header-menu-row .et_pb_menu__menu ul li {
+    display: inline-flex !important;
+    align-items: center !important;
+}
+
+.header-menu-row ul li a {
+    color: #ffffff !important;
+    font-size: 0.875rem !important;
+    font-weight: 500 !important;
+    text-decoration: none !important;
+    padding: 4px 14px !important;
+    white-space: nowrap !important;
+    transition: opacity 0.2s ease !important;
+}
+
+.header-menu-row ul li a:hover {
+    opacity: 0.75 !important;
+}
+
+/* Separators between items */
+.header-menu-row ul li + li::before {
+    content: '|' !important;
+    color: rgba(255,255,255,0.4) !important;
+    font-size: 0.75rem !important;
+}
+
+/* ---------------------------------------------------------
+   Tablet (768px and below)
+   --------------------------------------------------------- */
+@media (max-width: 768px) {
+    .header-menu-row ul li a {
+        font-size: 0.813rem !important;
+        padding: 1px 2px !important;
+    }
+}
+
+/* ---------------------------------------------------------
+   Phone (480px and below)
+   --------------------------------------------------------- */
+@media (max-width: 480px) {
+    .header-menu-row ul li a {
+        font-size: 0.75rem !important;
+        padding: 1px 2px !important;
+    }
+}
