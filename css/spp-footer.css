@@ -8,7 +8,7 @@
    Divi row class: footer-horizontal-menu
    --------------------------------------------------------- */
 .footer-horizontal-menu {
-    background: linear-gradient(135deg, #1a9e8f, #2bb5a0) !important;
+   /* background: linear-gradient(135deg, #1a9e8f, #2bb5a0) !important; */
     border-radius: 30px !important;
     padding: 8px 20px !important;
     display: flex !important;
