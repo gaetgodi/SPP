@@ -3,6 +3,7 @@
 if (!is_admin()) {
     error_reporting(E_ALL & ~E_DEPRECATED & ~E_USER_DEPRECATED);
 }
+
 // Enqueue parent and child theme styles
 function divi_spp_child_enqueue_styles() {
     wp_enqueue_style( 'divi-parent-style', get_template_directory_uri() . '/style.css' );
@@ -11,7 +12,7 @@ function divi_spp_child_enqueue_styles() {
     wp_enqueue_style( 'spp-dashboard',get_stylesheet_directory_uri() . '/css/spp-dashboard.css',['spp-tokens'], '1.0.0' );
     wp_enqueue_script( 'spp-drawers', get_stylesheet_directory_uri() . '/js/spp-drawers.js', [], '1.0.0', true );
     wp_enqueue_style( 'spp-footer',   get_stylesheet_directory_uri() . '/css/spp-footer.css',   ['spp-tokens'], '1.0.0' );
-    wp_enqueue_style( 'spp-header', get_stylesheet_directory_uri() . '/css/spp-header.css', ['spp-tokens'], '1.0.0' );
+    wp_enqueue_style( 'spp-header',   get_stylesheet_directory_uri() . '/css/spp-header.css',   ['spp-tokens'], '1.0.0' );
 
     // FAQ System (CSS + JS - only on FAQ page)
     if (is_page('faq')) {
@@ -44,6 +45,7 @@ add_filter('template_include', function($template) {
     }
     return $template;
 }, 100);
+
 // Restrict category archive pages to published posts only
 add_action('pre_get_posts', function($query) {
     if ($query->is_category() && $query->is_main_query() && !is_admin()) {
@@ -51,15 +53,41 @@ add_action('pre_get_posts', function($query) {
         $query->set('post_status', 'publish');
     }
 });
-// Restrict cmruncode pages to editors and admins only, with exceptions for member-facing pages
+
+/* =========================================================
+   ROLE HELPER
+   Checks actual roles, not capabilities.
+   Use this instead of current_user_can('editor') which
+   returns true for subscribers with edit_posts capability
+   added by spp_sync_blog_author_caps().
+   ========================================================= */
 function spp_is_admin_or_editor() {
     $roles = (array) wp_get_current_user()->roles;
     return in_array('administrator', $roles) || in_array('editor', $roles);
 }
 
+/* =========================================================
+   PAGE ACCESS RESTRICTION
+   Restricts cmruncode pages to editors and admins only,
+   with exceptions for member-facing pages.
+   ========================================================= */
 add_action('template_redirect', function() {
     if (!is_page()) return;
     if (spp_is_admin_or_editor()) return;
+
+    $member_pages = [1517, 20003754, 20003889, 20009040, 20009451, 20005967, 20009765];
+
+    global $post;
+    if ($post && !in_array($post->ID, $member_pages) && has_shortcode($post->post_content, 'cmruncode')) {
+        wp_redirect(home_url());
+        exit;
+    }
+});
+
+/* =========================================================
+   JS ERROR LOGGING
+   Logs frontend JS errors for TEC single event pages.
+   ========================================================= */
 add_action('wp_footer', function() {
     if (!is_singular('tribe_events')) return;
     ?>
@@ -74,6 +102,7 @@ add_action('wp_footer', function() {
     </script>
     <?php
 });
+
 /* =========================================================
    LOGIN RESTRICTION — EXPIRED MEMBERSHIP
    Prevents login for members whose YrEndDt is not current year.
@@ -90,19 +119,21 @@ add_filter('authenticate', function($user, $username, $password) {
             return $user;
         }
     }
+
     $ok_to_login = get_user_meta($user->ID, 'OkToLogin', true);
-if ($ok_to_login === 'Yes') return $user;
+    if ($ok_to_login === 'Yes') return $user;
 
     $yr_end_dt = get_user_meta($user->ID, 'YrEndDt', true);
     $current_year_end = date('Y') . '-12-31';
 
     if (empty($yr_end_dt) || $yr_end_dt < $current_year_end) {
-        return new WP_Error('invalid_membership', 
+        return new WP_Error('invalid_membership',
             'You are not currently registered with Stouffville Pickleball Players. Please renew your membership at <a href="https://www.pickleballcanada.org/club/stouffville-pickleball-players/">Pickleball Canada</a>.');
     }
 
     return $user;
 }, 30, 3);
+
 // Enqueue schedule CSS
 add_action('wp_enqueue_scripts', function() {
     wp_enqueue_style(
