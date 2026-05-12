@@ -104,7 +104,7 @@ Important:
         ],
         'body' => json_encode([
             'model'      => 'claude-opus-4-5',
-            'max_tokens' => 8192,
+            'max_tokens' => 16000,
             'messages'   => [['role' => 'user', 'content' => $content]]
         ])
     ]);
