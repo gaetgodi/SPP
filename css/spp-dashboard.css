@@ -326,3 +326,8 @@ h1.entry-title {
 .css-ngwc6p {
      display: none !important;
 }
+/* Fix row width on rank history page */
+.rkchange_row {
+    width: 100% !important;
+    max-width: 100% !important;
+}
