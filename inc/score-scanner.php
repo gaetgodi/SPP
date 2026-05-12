@@ -1,6 +1,12 @@
 <?php
 // -------------------------------------------------------
 // SCORE SCANNER — AJAX HANDLERS + ENQUEUE
+// Version: 1.1
+// Changes from 1.0:
+// - max_tokens increased to 16000 for larger PDFs
+// - Prompt updated to discard duplicate group entries
+//   where all rounds are null/bye (total = 0)
+// - NP (x) and NS (xx) codes supported in $sv function
 // -------------------------------------------------------
 
 // Enqueue JS and pass PHP vars to it
@@ -9,7 +15,7 @@ add_action('wp_enqueue_scripts', function() {
         'spp-score-scanner',
         get_stylesheet_directory_uri() . '/js/score-scanner.js',
         ['jquery'],
-        '1.0.0',
+        '1.1.0',
         true
     );
     wp_localize_script('spp-score-scanner', 'sppScanner', [
@@ -63,7 +69,9 @@ Important:
 - Some cells may be blank (player did not play that round)
 - Crossed out names mean a substitute played — use the handwritten replacement name and set substitution to true
 - Ranks are integers
-- Scores are integers or "bye" or null'
+- Scores are integers or "bye" or null
+- If the same group appears more than once (e.g. from both a printed sheet and a handwritten sheet), use ONLY the version with actual numeric scores. Discard any duplicate entry where all rounds are null or "bye" and the total is 0 — do not include these blank entries in the output at all.
+- Do not include any player row where every round is null or "bye" and the total score is 0. These are players with no scores recorded and should be omitted entirely.'
     ];
 
     $files      = $_FILES['files'];
