@@ -44,44 +44,28 @@ function sppRenderReview(data) {
         return;
     }
 
-    // ── Duplicate rank detection ──────────────────────────
-    // Count how many times each rank appears across all players.
-    // Ranks shared by multiple players in different groups are fine
-    // (ties in the master ranking). But the same rank appearing in
-    // the same group twice means a scan error or a duplicate entry.
-    var groupRankCount = {};
-    players.forEach(function(p) {
-        var key = p.group + '|' + p.rank;
-        groupRankCount[key] = (groupRankCount[key] || 0) + 1;
-    });
-
+    // ── Duplicate detection ───────────────────────────────
+    // Flag players appearing in more than one group only.
+    // Tied ranks within the same group are legitimate and not flagged.
     var duplicateKeys = {};
     var duplicateWarnings = [];
-    Object.keys(groupRankCount).forEach(function(key) {
-        if (groupRankCount[key] > 1) {
-            duplicateKeys[key] = true;
-            var parts = key.split('|');
-            duplicateWarnings.push('DUPLICATE: Rank ' + parts[1] + ' appears ' + groupRankCount[key] + ' times in ' + parts[0] + ' -- delete the incorrect row before saving.');
+
+    // Build map: rank => list of groups it appears in
+    var rankGroups = {};
+    players.forEach(function(p) {
+        if (!rankGroups[p.rank]) rankGroups[p.rank] = [];
+        if (rankGroups[p.rank].indexOf(p.group) === -1) {
+            rankGroups[p.rank].push(p.group);
         }
     });
 
-    // Also flag same rank appearing in different groups (player listed twice)
-    var rankCount = {};
+    // Flag ranks that appear in more than one group
     players.forEach(function(p) {
-        rankCount[p.rank] = (rankCount[p.rank] || 0) + 1;
-    });
-    players.forEach(function(p) {
-        if (rankCount[p.rank] > 1) {
-            // Check if they are in different groups
-            var inMultipleGroups = players.filter(function(q) {
-                return q.rank === p.rank && q.group !== p.group;
-            }).length > 0;
-            if (inMultipleGroups) {
-                var dupKey = 'crossgroup|' + p.rank;
-                if (!duplicateKeys[dupKey]) {
-                    duplicateKeys[dupKey] = true;
-                    duplicateWarnings.push('DUPLICATE: Rank ' + p.rank + ' (' + p.name + ') appears in multiple groups -- delete the incorrect row before saving.');
-                }
+        if (rankGroups[p.rank].length > 1) {
+            var dupKey = 'crossgroup|' + p.rank;
+            if (!duplicateKeys[dupKey]) {
+                duplicateKeys[dupKey] = true;
+                duplicateWarnings.push('DUPLICATE: Rank ' + p.rank + ' (' + p.name + ') appears in multiple groups (' + rankGroups[p.rank].join(', ') + ') -- delete the incorrect row before saving.');
             }
         }
     });
@@ -107,10 +91,9 @@ function sppRenderReview(data) {
             lastGroup = p.group;
         }
 
-        // Determine if this row is a duplicate
-        var groupKey     = p.group + '|' + p.rank;
+        // Determine if this row is a duplicate (cross-group only)
         var crossKey     = 'crossgroup|' + p.rank;
-        var isDuplicate  = duplicateKeys[groupKey] || duplicateKeys[crossKey];
+        var isDuplicate  = duplicateKeys[crossKey];
 
         var rowClass = isDuplicate ? 'spp-duplicate-row' : (p.substitution ? 'spp-sub-note' : '');
         var note     = isDuplicate ? 'DUPLICATE' : (p.substitution ? 'Sub' : (p.warning ? p.warning : ''));
