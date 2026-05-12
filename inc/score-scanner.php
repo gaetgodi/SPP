@@ -1,11 +1,12 @@
 <?php
 // -------------------------------------------------------
-// SCORE SCANNER — AJAX HANDLERS + ENQUEUE
+// SCORE SCANNER -- AJAX HANDLERS + ENQUEUE
 // Version: 1.1
 // Changes from 1.0:
 // - max_tokens increased to 16000 for larger PDFs
 // - Prompt updated to discard duplicate group entries
 //   where all rounds are null/bye (total = 0)
+// - Prompt updated to handle X (NP) and XX (NS) codes
 // - NP (x) and NS (xx) codes supported in $sv function
 // -------------------------------------------------------
 
@@ -50,8 +51,8 @@ add_action('wp_ajax_spp_scan_scores', function() {
 - court (e.g. "Court 1")
 - time_slot (the time shown at the top of the page e.g. "5:30", "6:40", "7:50")
 - rank (the number in the Rank column)
-- name (the name written on the sheet — use the handwritten name if the printed name is crossed out)
-- rnd1 through rnd5 (the score in each round column — use null if blank, "bye" if it says bye)
+- name (the name written on the sheet -- use the handwritten name if the printed name is crossed out)
+- rnd1 through rnd5 (the score in each round column -- use null if blank, "bye" if it says bye)
 - substitution: true if the printed name was crossed out and replaced with a handwritten name
 - warning: any note if something is unclear
 
@@ -67,14 +68,14 @@ Return ONLY a JSON object with this structure:
 Important:
 - "bye" cells contain no score
 - Some cells may be blank (player did not play that round)
-- Crossed out names mean a substitute played — use the handwritten replacement name and set substitution to true
+- Crossed out names mean a substitute played -- use the handwritten replacement name and set substitution to true
 - Ranks are integers
 - Scores are integers or "bye" or null
-- If the same group appears more than once (e.g. from both a printed sheet and a handwritten sheet), use ONLY the version with actual numeric scores. Discard any duplicate entry where all rounds are null or "bye" and the total is 0 — do not include these blank entries in the output at all.
+- If the same group appears more than once (e.g. from both a printed sheet and a handwritten sheet), use ONLY the version with actual numeric scores. Discard any duplicate entry where all rounds are null or "bye" and the total is 0 -- do not include these blank entries in the output at all.
 - Do not include any player row where every round is null or "bye" and the total score is 0. These are players with no scores recorded and should be omitted entirely.
-- If a player has "X" or "x" written through their score box or next to their name (but not "XX"), set rnd1 to "x" and all other rounds to null. Do not omit these players — they need a penalty applied.
-- If a player has "XX" or "xx" written through their score box or next to their name, set rnd1 to "xx" and all other rounds to null. Do not omit these players — they need a no-show penalty applied.
-- X and XX may appear on the printed schedule sheet next to the player name, or written in the score columns on handwritten sheets.
+- If a player has "X" or "x" written through their score box or next to their name (but not "XX"), set rnd1 to "x" and all other rounds to null. Do not omit these players -- they need a penalty applied.
+- If a player has "XX" or "xx" written through their score box or next to their name, set rnd1 to "xx" and all other rounds to null. Do not omit these players -- they need a no-show penalty applied.
+- X and XX may appear on the printed schedule sheet next to the player name, or written in the score columns on handwritten sheets.'
     ];
 
     $files      = $_FILES['files'];
