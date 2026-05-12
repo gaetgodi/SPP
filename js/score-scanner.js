@@ -46,26 +46,33 @@ function sppRenderReview(data) {
 
     // ── Duplicate detection ───────────────────────────────
     // Flag players appearing in more than one group only.
-    // Tied ranks within the same group are legitimate and not flagged.
+    // Must match on both rank AND last name -- multiple players
+    // can legitimately share the same rank number.
     var duplicateKeys = {};
     var duplicateWarnings = [];
 
-    // Build map: rank => list of groups it appears in
-    var rankGroups = {};
+    // Build map: rank+lastname => list of groups
+    var rankNameGroups = {};
     players.forEach(function(p) {
-        if (!rankGroups[p.rank]) rankGroups[p.rank] = [];
-        if (rankGroups[p.rank].indexOf(p.group) === -1) {
-            rankGroups[p.rank].push(p.group);
+        var nameParts = p.name.replace(/^P-/, '').trim().split(' ');
+        var lastName  = nameParts[nameParts.length - 1].toLowerCase();
+        var key       = p.rank + '|' + lastName;
+        if (!rankNameGroups[key]) rankNameGroups[key] = { groups: [], name: p.name };
+        if (rankNameGroups[key].groups.indexOf(p.group) === -1) {
+            rankNameGroups[key].groups.push(p.group);
         }
     });
 
-    // Flag ranks that appear in more than one group
+    // Flag rank+name combos that appear in more than one group
     players.forEach(function(p) {
-        if (rankGroups[p.rank].length > 1) {
-            var dupKey = 'crossgroup|' + p.rank;
+        var nameParts = p.name.replace(/^P-/, '').trim().split(' ');
+        var lastName  = nameParts[nameParts.length - 1].toLowerCase();
+        var key       = p.rank + '|' + lastName;
+        if (rankNameGroups[key].groups.length > 1) {
+            var dupKey = 'dup|' + key;
             if (!duplicateKeys[dupKey]) {
                 duplicateKeys[dupKey] = true;
-                duplicateWarnings.push('DUPLICATE: Rank ' + p.rank + ' (' + p.name + ') appears in multiple groups (' + rankGroups[p.rank].join(', ') + ') -- delete the incorrect row before saving.');
+                duplicateWarnings.push('DUPLICATE: ' + p.name + ' (rank ' + p.rank + ') appears in multiple groups (' + rankNameGroups[key].groups.join(', ') + ') -- delete the incorrect row before saving.');
             }
         }
     });
@@ -90,11 +97,10 @@ function sppRenderReview(data) {
             html += '<tr class="spp-group-header"><td colspan="12">' + p.group + ' - ' + p.court + '</td></tr>';
             lastGroup = p.group;
         }
-
-        // Determine if this row is a duplicate (cross-group only)
-        var crossKey     = 'crossgroup|' + p.rank;
-        var isDuplicate  = duplicateKeys[crossKey];
-
+        // Determine if this row is a duplicate (cross-group, same name)
+        var nameParts2  = p.name.replace(/^P-/, '').trim().split(' ');
+        var lastName2   = nameParts2[nameParts2.length - 1].toLowerCase();
+        var isDuplicate = duplicateKeys['dup|' + p.rank + '|' + lastName2];
         var rowClass = isDuplicate ? 'spp-duplicate-row' : (p.substitution ? 'spp-sub-note' : '');
         var note     = isDuplicate ? 'DUPLICATE' : (p.substitution ? 'Sub' : (p.warning ? p.warning : ''));
         var total    = [p.rnd1, p.rnd2, p.rnd3, p.rnd4, p.rnd5]
