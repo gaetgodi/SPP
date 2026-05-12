@@ -217,7 +217,12 @@ add_action('wp_ajax_spp_save_scores', function() {
             continue;
         }
 
-        $sv = function($v) { return ($v === 'bye' || $v === null || $v === '') ? null : intval($v); };
+        $sv = function($v) {
+            $v = strtolower(trim((string)$v));
+            if ($v === 'x')  return -1;  // NP: not played, +1.6 penalty
+            if ($v === 'xx') return -2;  // NS: no-show, +2.6 penalty
+            return ($v === 'bye' || $v === '' || $v === 'null') ? null : intval($v);
+        };
 
         $update_data   = [
             'Game1' => $sv($p['rnd1']),
