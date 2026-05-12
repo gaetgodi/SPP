@@ -65,7 +65,18 @@ function spp_is_admin_or_editor() {
     $roles = (array) wp_get_current_user()->roles;
     return in_array('administrator', $roles) || in_array('editor', $roles);
 }
-
+/* =========================================================
+   LADDER ADMIN ROLE HELPER
+   Checks for roles that can access ladder admin features
+   such as rank history for any player.
+   Currently: administrator, editor, ladder-cop
+   ========================================================= */
+function spp_is_ladder_admin() {
+    $roles = (array) wp_get_current_user()->roles;
+    return in_array('administrator', $roles)
+        || in_array('editor', $roles)
+        || in_array('ladder-cop', $roles);
+}
 /* =========================================================
    PAGE ACCESS RESTRICTION
    Restricts cmruncode pages to editors and admins only,
