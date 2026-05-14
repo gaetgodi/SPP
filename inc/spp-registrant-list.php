@@ -12,7 +12,7 @@
  *   - Not logged in : shows nothing
  *   - Logged in     : sees full name, full email, full phone for all registrants
  *
- * Version: 2.2.0
+ * Version: 2.3.0
  */
 
 // ============================================================
@@ -134,7 +134,7 @@ function spp_registrant_list_shortcode( $atts ) {
     if ( ! empty( $oneoff ) ) {
         $out .= '<optgroup label="Single Events">';
         foreach ( $oneoff as $ev ) {
-            $rtec_event_id = $ev->occurrence_id + 30000000;
+            $rtec_event_id = $ev->post_id;
             $label = esc_html( $ev->post_title )
                    . ' - ' . date( 'M j, Y', strtotime( $ev->start_date ) )
                    . ' (' . (int) $ev->reg_count . ' registered)';
