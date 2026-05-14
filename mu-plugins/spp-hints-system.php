@@ -197,7 +197,7 @@ class SPP_Hints_System {
             $output .= '<button class="spp-hint-toggle" aria-expanded="false" aria-controls="' . $item_id . '" style="width:100%;text-align:left;background:none;border:none;padding:0.9em 1.2em;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:1em;box-sizing:border-box;">';
             $output .= '<span style="display:flex;align-items:center;gap:0.5em;flex:1;">';
             if ( ! empty( $cat_names ) ) {
-                $output .= '<span style="font-size:0.75em;color:#fff;background:' . $teal . ';border-radius:3px;padding:2px 7px;white-space:nowrap;flex-shrink:0;">' . implode( ', ', $cat_names ) . '</span>';
+                $output .= '<span style="font-size:0.90em;color:#fff;background:' . $teal . ';border-radius:3px;padding:4px 10px;white-space:nowrap;flex-shrink:0;">' . implode( ', ', $cat_names ) . '</span>';
             }
             $output .= '<span style="font-weight:600;color:#333;font-size:1em;">' . esc_html( $hint->post_title ) . '</span>';
             $output .= '</span>';
