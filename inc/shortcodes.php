@@ -93,6 +93,7 @@ add_action('profile_update', function($user_id, $old_user_data) {
         update_user_meta($user_id, 'user_email', $user->user_email);
     }
 }, 10, 2);
+
 /* =========================================================
    [spp_pending_posts]
    Pending posts list for blog_moderators.
@@ -165,11 +166,13 @@ add_shortcode('spp_events', function($atts) {
     }
     return do_shortcode('[tribe_events view="list"]');
 });
+
 /* =========================================================
    [spp_event_registrations]
    Shows all upcoming events with registration counts.
+   v1.1: Wrapped table in overflow-x:auto for mobile scrolling
    ========================================================= */
-   add_shortcode('spp_event_registrations', function() {
+add_shortcode('spp_event_registrations', function() {
     global $wpdb;
     $p = $wpdb->prefix;
 
@@ -216,7 +219,7 @@ add_shortcode('spp_events', function($atts) {
     }
     ksort($categories);
 
-    $out  = '<div class="spp-event-registrations">';
+    $out = '<div class="spp-event-registrations">';
 
     // Dropdown
     $out .= '<div style="margin-bottom:1rem;">';
@@ -229,6 +232,8 @@ add_shortcode('spp_events', function($atts) {
     $out .= '</select>';
     $out .= '</div>';
 
+    // Scrollable wrapper for mobile
+    $out .= '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">';
     $out .= '<table class="spp-dashboard-table" id="spp-events-table">';
     $out .= '<thead><tr>';
     $out .= '<th>Date</th><th>Event</th>';
@@ -241,7 +246,7 @@ add_shortcode('spp_events', function($atts) {
         foreach ($rows as $row) {
             $date         = date('M j, Y g:i a', strtotime($row->start_date));
             $limit        = ($row->limit_registrations == '1');
-            $capacity     = $limit ? (int)$row->max_registrations : '∞';
+            $capacity     = $limit ? (int)$row->max_registrations : 'n/a';
             $confirmed    = (int)$row->confirmed;
             $waiting      = (int)$row->waiting;
             $pending      = (int)$row->pending;
@@ -261,7 +266,9 @@ add_shortcode('spp_events', function($atts) {
         }
     }
 
-    $out .= '</tbody></table></div>';
+    $out .= '</tbody></table>';
+    $out .= '</div>'; // close overflow wrapper
+    $out .= '</div>'; // close spp-event-registrations
 
     $out .= '<script>
     function sppFilterEvents(cat) {
