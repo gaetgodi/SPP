@@ -152,8 +152,4 @@
     .spp-footer-copyright .spp-footer-credit {
         font-size: 0.65rem !important;
     }
-}.et-l--footer {
-    position: sticky;
-    left: 0;
-    width: 100vw;
 }
