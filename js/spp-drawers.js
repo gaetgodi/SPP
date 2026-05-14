@@ -169,3 +169,10 @@ document.addEventListener("DOMContentLoaded", function () {
     observer.observe(document.body, { childList: true, subtree: true });
 
 })();
+document.addEventListener('DOMContentLoaded', function() {
+    var footer = document.querySelector('.et-l--footer');
+    var pageContainer = document.getElementById('page-container');
+    if (footer && pageContainer) {
+        pageContainer.appendChild(footer);
+    }
+});
