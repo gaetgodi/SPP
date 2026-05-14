@@ -183,6 +183,7 @@ class SPP_Hints_System {
             $cat_names = array();
             if ( $terms && ! is_wp_error( $terms ) ) {
                 foreach ( $terms as $term ) {
+
                     $cat_slugs[] = esc_attr( $term->slug );
                     $cat_names[] = esc_html( $term->name );
                 }
@@ -194,7 +195,7 @@ class SPP_Hints_System {
             $output .= '<li class="spp-hint-item" data-categories="' . $data_cats . '" style="border:1px solid #ddd;border-radius:6px;margin-bottom:0.6em;overflow:hidden;background:#fff;">';
 
             // Toggle button
-            $output .= '<button class="spp-hint-toggle" aria-expanded="false" aria-controls="' . $item_id . '" style="width:100%;text-align:left;background:none;border:none;padding:0.9em 1.2em;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:1em;box-sizing:border-box;">';
+            $output .= '<button class="spp-hint-toggle" aria-expanded="false" aria-controls="' . $item_id . '" style="width:100%;text-align:left;background:none;border:none;padding:0.5em 0.8em;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:1em;box-sizing:border-box;">';
             $output .= '<span style="display:flex;align-items:center;gap:0.5em;flex:1;">';
             if ( ! empty( $cat_names ) ) {
                 $output .= '<span style="font-size:0.90em;color:#fff;background:' . $teal . ';border-radius:3px;padding:4px 10px;white-space:nowrap;flex-shrink:0;">' . implode( ', ', $cat_names ) . '</span>';
