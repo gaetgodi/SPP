@@ -118,3 +118,9 @@
         padding: 1px 2px !important;
     }
 }
+.et-l--header {
+    position: sticky;
+    left: 0;
+    width: 100vw;
+    z-index: 100;
+}
