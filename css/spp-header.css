@@ -118,7 +118,7 @@
         padding: 1px 2px !important;
     }
 }
-@media (max-width: 767px) {
+@media (max-width: 980px) {
     .et-l--header {
         position: fixed;
         top: 0;
