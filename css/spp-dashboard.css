@@ -331,3 +331,9 @@ h1.entry-title {
     max-width: 1280px !important;
     box-sizing: border-box !important;
 }
+@media (max-width: 980px) {
+    #et-main-area {
+        padding-top: 189px;
+        padding-bottom: 120px;
+    }
+}
