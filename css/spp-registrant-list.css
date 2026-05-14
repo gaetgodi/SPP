@@ -114,7 +114,7 @@
 
 .spp-registrant-table thead tr {
     background-color: var(--spp-green, #4a7c59);
-    color: #fff;
+    color: #fff !important;
 }
 
 .spp-registrant-table th {
