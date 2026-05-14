@@ -116,7 +116,9 @@
     background-color: var(--spp-green, #4a7c59);
     color: #fff !important;
 }
-
+.spp-registrant-table thead th {
+    color: #fff !important;
+}
 .spp-registrant-table th {
     padding: 0.5rem 0.75rem;
     text-align: left;
