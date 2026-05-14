@@ -337,3 +337,8 @@ h1.entry-title {
         padding-bottom: 120px;
     }
 }
+/* Fix event registrations row overflow on mobile */
+.et_pb_row.evtstatus_row {
+    width: 100% !important;
+    max-width: 100% !important;
+}
