@@ -12,7 +12,7 @@
  *   - Not logged in : shows nothing
  *   - Logged in     : sees full name, full email, full phone for all registrants
  *
- * Version: 2.0.0
+ * Version: 2.1.0
  */
 
 // ============================================================
@@ -26,7 +26,7 @@ function spp_registrant_list_enqueue() {
         'spp-registrant-list',
         get_stylesheet_directory_uri() . '/js/spp-registrant-list.js',
         array( 'jquery' ),
-        '2.0.0',
+        '2.1.0',
         true
     );
     wp_localize_script(
@@ -58,6 +58,7 @@ function spp_registrant_list_shortcode( $atts ) {
     }
 
     // Fetch active events with confirmed registrants
+    // Uses rtec_entries with latest-entry-per-user subquery (same pattern as spp_event_registrations)
     $events = $wpdb->get_results( "
         SELECT
             o.occurrence_id,
@@ -65,13 +66,20 @@ function spp_registrant_list_shortcode( $atts ) {
             o.start_date,
             o.end_date,
             p.post_title,
-            COUNT(DISTINCT r.id) AS reg_count,
+            COUNT(DISTINCT latest.user_id) AS reg_count,
             occ_counts.total_occs
         FROM {$p}tec_occurrences o
         JOIN {$p}posts p ON o.post_id = p.ID
-        JOIN {$p}rtec_registrations r
-            ON ( o.post_id = r.event_id OR o.occurrence_id + 30000000 = r.event_id )
-            AND r.status = 'confirmed'
+        JOIN (
+            SELECT event_id, user_id, status
+            FROM {$p}rtec_entries e1
+            WHERE id = (
+                SELECT MAX(id) FROM {$p}rtec_entries e2
+                WHERE e2.event_id = e1.event_id
+                AND e2.user_id = e1.user_id
+            )
+        ) latest ON ( o.post_id = latest.event_id OR o.occurrence_id + 30000000 = latest.event_id )
+            AND latest.status = 'confirmed'
         JOIN (
             SELECT post_id, COUNT(*) AS total_occs
             FROM {$p}tec_occurrences
@@ -168,18 +176,25 @@ function spp_get_registrants_ajax() {
     global $wpdb;
     $p = $wpdb->prefix;
 
+    // Get confirmed registrants using latest-entry-per-user pattern
     $registrants = $wpdb->get_results( $wpdb->prepare(
         "SELECT
-            r.registration_date,
+            e1.id,
             u.display_name,
             m.user_email,
-            m.user_phone
-         FROM {$p}rtec_registrations r
-         JOIN {$p}users u ON u.ID = r.user_id
-         JOIN membership m ON m.user_id = r.user_id
-         WHERE r.event_id = %d
-         AND r.status = 'confirmed'
-         ORDER BY r.registration_date ASC",
+            m.user_phone,
+            e1.registration_date
+         FROM {$p}rtec_entries e1
+         JOIN {$p}users u ON u.ID = e1.user_id
+         JOIN membership m ON m.user_id = e1.user_id
+         WHERE e1.event_id = %d
+         AND e1.status = 'confirmed'
+         AND e1.id = (
+             SELECT MAX(id) FROM {$p}rtec_entries e2
+             WHERE e2.event_id = e1.event_id
+             AND e2.user_id = e1.user_id
+         )
+         ORDER BY e1.id ASC",
         $event_id
     ) );
 
