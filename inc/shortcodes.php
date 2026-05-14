@@ -205,7 +205,7 @@ add_shortcode('spp_event_registrations', function() {
                 AND e2.user_id = e1.user_id
             )
         ) latest ON (o.post_id = latest.event_id OR o.occurrence_id + 30000000 = latest.event_id)
-        WHERE o.start_date >= NOW()
+        WHERE o.start_date >= CURDATE()
         AND o.start_date <= DATE_ADD(NOW(), INTERVAL 5 WEEK)
         AND p.post_status = 'publish'
         GROUP BY o.occurrence_id
