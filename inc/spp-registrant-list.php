@@ -12,7 +12,7 @@
  *   - Not logged in : shows nothing
  *   - Logged in     : sees full name, full email, full phone for all registrants
  *
- * Version: 2.1.0
+ * Version: 2.2.0
  */
 
 // ============================================================
@@ -26,7 +26,7 @@ function spp_registrant_list_enqueue() {
         'spp-registrant-list',
         get_stylesheet_directory_uri() . '/js/spp-registrant-list.js',
         array( 'jquery' ),
-        '2.1.0',
+        '2.2.0',
         true
     );
     wp_localize_script(
@@ -194,7 +194,7 @@ function spp_get_registrants_ajax() {
              WHERE e2.event_id = e1.event_id
              AND e2.user_id = e1.user_id
          )
-         ORDER BY e1.id ASC",
+         ORDER BY u.display_name ASC",
         $event_id
     ) );
 
@@ -216,6 +216,7 @@ function spp_get_registrants_ajax() {
     $html .= '<a href="' . esc_attr( $mailto_all ) . '" class="spp-email-all-btn">';
     $html .= '&#9993; Email All ' . count( $registrants ) . ' Registrants (BCC)';
     $html .= '</a>';
+    $html .= ' <button type="button" class="spp-csv-btn" onclick="sppExportCSV()">&#8681; Export to CSV</button>';
     $html .= '</div>';
 
     $html .= '<table class="spp-registrant-table">';

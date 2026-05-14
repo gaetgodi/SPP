@@ -1,7 +1,7 @@
 /**
- * SPP Registrant List - AJAX dropdown handler
+ * SPP Registrant List - AJAX dropdown handler with CSV export
  * File: js/spp-registrant-list.js
- * Version: 2.0.0
+ * Version: 2.2.0
  */
 
 jQuery(document).ready(function ($) {
@@ -42,3 +42,56 @@ jQuery(document).ready(function ($) {
     });
 
 });
+
+// CSV export - builds from rendered table and triggers download
+function sppExportCSV() {
+    var table = document.querySelector('.spp-registrant-table');
+    if ( ! table ) return;
+
+    var title = '';
+    var titleEl = document.querySelector('.spp-registrant-title');
+    var dateEl  = document.querySelector('.spp-registrant-date');
+    if ( titleEl ) title = titleEl.innerText;
+    if ( dateEl )  title += ' - ' + dateEl.innerText;
+
+    var rows = [];
+
+    // Header row
+    rows.push( ['#', 'Name', 'Email', 'Phone'] );
+
+    // Data rows
+    var trs = table.querySelectorAll('tbody tr');
+    trs.forEach(function(tr) {
+        var cells = tr.querySelectorAll('td');
+        if ( cells.length < 4 ) return;
+        rows.push([
+            cells[0].innerText.trim(),
+            cells[1].innerText.trim(),
+            cells[2].innerText.trim(),
+            cells[3].innerText.trim()
+        ]);
+    });
+
+    // Build CSV string
+    var csv = rows.map(function(row) {
+        return row.map(function(cell) {
+            // Wrap in quotes, escape internal quotes
+            return '"' + cell.replace(/"/g, '""') + '"';
+        }).join(',');
+    }).join('\n');
+
+    // Trigger download
+    var filename = title
+        ? title.replace(/[^a-z0-9 _-]/gi, '').replace(/\s+/g, '_') + '.csv'
+        : 'registrants.csv';
+
+    var blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    var url  = URL.createObjectURL(blob);
+    var a    = document.createElement('a');
+    a.href     = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}

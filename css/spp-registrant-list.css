@@ -86,6 +86,24 @@
     text-decoration: none;
 }
 
+.spp-csv-btn {
+    display: inline-block;
+    padding: 0.45rem 1rem;
+    background-color: var(--spp-muted, #666);
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.spp-csv-btn:hover {
+    background-color: #444;
+    color: #fff;
+}
+
 /* Registrant table */
 .spp-registrant-table {
     width: 100%;
