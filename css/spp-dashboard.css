@@ -342,14 +342,3 @@ h1.entry-title {
     width: 100% !important;
     max-width: 100% !important;
 }
-@media (max-width: 980px) {
-    #et-main-area {
-        overflow-x: auto;
-        max-width: 100vw;
-    }
-    
-    body, #page-container, #et-boc {
-        overflow-x: hidden;
-        max-width: 100vw;
-    }
-}
