@@ -1,11 +1,11 @@
 /* =========================================================
    [spp_registrant_list] Shortcode Styles
    Add to spp-dashboard.css or appropriate stylesheet
-   Version: 2.0.0
+   Version: 2.3.0
    ========================================================= */
 
 .spp-registrant-list-wrap {
-    max-width: 800px;
+    max-width: 100%;
     margin: 1.5rem 0;
     font-family: inherit;
 }
@@ -107,18 +107,23 @@
 /* Registrant table */
 .spp-registrant-table {
     width: 100%;
+    max-width: 100%;
     border-collapse: collapse;
     font-size: 0.9rem;
     margin-bottom: 0.75rem;
+    display: block;
+    overflow-x: auto;
 }
 
 .spp-registrant-table thead tr {
     background-color: var(--spp-green, #4a7c59);
     color: #fff !important;
 }
+
 .spp-registrant-table thead th {
     color: #fff !important;
 }
+
 .spp-registrant-table th {
     padding: 0.5rem 0.75rem;
     text-align: left;
