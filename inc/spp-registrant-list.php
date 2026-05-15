@@ -85,7 +85,7 @@ function spp_registrant_list_shortcode( $atts ) {
             FROM {$p}tec_occurrences
             GROUP BY post_id
         ) occ_counts ON occ_counts.post_id = o.post_id
-        WHERE o.end_date >= NOW()
+        WHERE o.end_date >= CURDATE()
         AND p.post_status = 'publish'
         {$filter_sql}
         GROUP BY o.occurrence_id
