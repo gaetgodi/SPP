@@ -346,62 +346,64 @@ h1.entry-title {
    COMPACT MEMBER DIRECTORY
    ===================================================== */
 
-body .um-members-wrapper .um-members.um-members-list .um-member-photo {
-    display: none !important;
-}
-
-body .um-members-wrapper .um-members.um-members-list .um-member-status {
-    display: none !important;
-}
-
+body .um-members-wrapper .um-members.um-members-list .um-member-photo,
+body .um-members-wrapper .um-members.um-members-list .um-member-status,
 body .um-members-wrapper .um-members.um-members-list .um-member-card-footer {
     display: none !important;
 }
 
 body .um-members-wrapper .um-members.um-members-list .um-member {
-    margin-bottom: 1px !important;
+    margin: 0 0 1px 0 !important;
+    padding: 0 !important;
     min-height: 0 !important;
     border-radius: 0 !important;
 }
 
 body .um-members-wrapper .um-members.um-members-list .um-member-card-container {
-    padding: 0 12px !important;
+    padding: 0 !important;
+    margin: 0 !important;
     min-height: 0 !important;
     display: flex !important;
-    align-items: center !important;
+    align-items: stretch !important;
 }
 
-body .um-members-wrapper .um-members.um-members-list .um-member-card {
-    width: 100% !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    box-shadow: none !important;
-}
-
-body .um-members-wrapper .um-members.um-members-list .um-member-card-content {
-    padding: 0 !important;
-    margin: 0 !important;
-}
-
+body .um-members-wrapper .um-members.um-members-list .um-member-card,
+body .um-members-wrapper .um-members.um-members-list .um-member-card-content,
 body .um-members-wrapper .um-members.um-members-list .um-member-card-header {
+    padding: 0 !important;
+    margin: 0 !important;
+    min-height: 0 !important;
+    box-shadow: none !important;
+    width: 100% !important;
+}
+
+body .um-members-wrapper .um-members.um-members-list .um-member-name {
     padding: 0 !important;
     margin: 0 !important;
 }
 
 body .um-members-wrapper .um-members.um-members-list .um-member-name a {
-    font-size: 14px !important;
-    line-height: 1 !important;
-    padding: 6px 0 !important;
     display: block !important;
+    padding: 5px 12px !important;
+    margin: 0 !important;
+    font-size: 14px !important;
+    line-height: 1.4 !important;
     color: var(--spp-dark) !important;
 }
 
 body .um-members-wrapper .um-members.um-members-list .um-member-name a:hover {
     color: var(--spp-primary) !important;
+    background: var(--spp-item-bg) !important;
 }
 
 body .um-members-wrapper .um-members.um-members-list .um-member-card-actions {
     padding: 0 !important;
+    margin: 0 !important;
+    display: flex !important;
+    align-items: center !important;
 }
 
-body .um-members-wrapper .u
+body .um-members-wrapper .um-members.um-members-list .um-member-cog {
+    padding: 5px 12px !important;
+    margin: 0 !important;
+}
