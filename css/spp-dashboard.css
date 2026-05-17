@@ -342,29 +342,66 @@ h1.entry-title {
     width: 100% !important;
     max-width: 100% !important;
 }
-/* Compact member directory - no avatar */
-.um-members.um-members-list .um-member-photo {
+/* =====================================================
+   COMPACT MEMBER DIRECTORY
+   ===================================================== */
+
+body .um-members-wrapper .um-members.um-members-list .um-member-photo {
     display: none !important;
 }
 
-.um-members.um-members-list .um-member {
-    margin-bottom: 2px !important;
+body .um-members-wrapper .um-members.um-members-list .um-member-status {
+    display: none !important;
 }
 
-.um-members.um-members-list .um-member-card-container {
-    padding: 6px 12px !important;
+body .um-members-wrapper .um-members.um-members-list .um-member-card-footer {
+    display: none !important;
+}
+
+body .um-members-wrapper .um-members.um-members-list .um-member {
+    margin-bottom: 1px !important;
     min-height: 0 !important;
+    border-radius: 0 !important;
 }
 
-.um-members.um-members-list .um-member-card {
+body .um-members-wrapper .um-members.um-members-list .um-member-card-container {
+    padding: 0 12px !important;
+    min-height: 0 !important;
+    display: flex !important;
+    align-items: center !important;
+}
+
+body .um-members-wrapper .um-members.um-members-list .um-member-card {
     width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-shadow: none !important;
 }
 
-.um-members.um-members-list .um-member-name a {
-    font-size: 15px !important;
-    line-height: 2 !important;
+body .um-members-wrapper .um-members.um-members-list .um-member-card-content {
+    padding: 0 !important;
+    margin: 0 !important;
 }
 
-.um-members.um-members-list .um-member-status {
-    display: none !important;
+body .um-members-wrapper .um-members.um-members-list .um-member-card-header {
+    padding: 0 !important;
+    margin: 0 !important;
 }
+
+body .um-members-wrapper .um-members.um-members-list .um-member-name a {
+    font-size: 14px !important;
+    line-height: 1 !important;
+    padding: 6px 0 !important;
+    display: block !important;
+    color: var(--spp-dark) !important;
+}
+
+body .um-members-wrapper .um-members.um-members-list .um-member-name a:hover {
+    color: var(--spp-primary) !important;
+}
+
+body .um-members-wrapper .um-members.um-members-list .um-member-card-actions {
+    padding: 0 !important;
+}
+
+body .um-members-wrapper .u
