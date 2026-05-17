@@ -156,3 +156,17 @@ add_action('wp_enqueue_scripts', function() {
         '1.0.0'
     );
 });
+/**
+ * Auto-redirect to edit mode on UM profile pages for admins and editors
+ */
+add_action( 'template_redirect', function() {
+    if ( ! is_user_logged_in() ) return;
+    if ( ! um_is_core_page( 'user' ) ) return;
+    if ( isset( $_GET['um_action'] ) ) return;
+    
+    $current_user = wp_get_current_user();
+    if ( array_intersect( ['administrator', 'editor'], (array) $current_user->roles ) ) {
+        wp_redirect( add_query_arg( 'um_action', 'edit', $_SERVER['REQUEST_URI'] ) );
+        exit;
+    }
+});
