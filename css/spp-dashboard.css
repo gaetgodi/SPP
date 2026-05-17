@@ -352,11 +352,18 @@ body .um-members-wrapper .um-members.um-members-list .um-member-card-footer {
     display: none !important;
 }
 
+body .um-members-wrapper .um-members.um-members-list {
+    gap: 0 !important;
+}
+
 body .um-members-wrapper .um-members.um-members-list .um-member {
-    margin: 0 0 1px 0 !important;
+    margin: 0 !important;
     padding: 0 !important;
     min-height: 0 !important;
     border-radius: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    border-bottom: 1px solid var(--spp-border-color) !important;
 }
 
 body .um-members-wrapper .um-members.um-members-list .um-member-card-container {
@@ -406,4 +413,5 @@ body .um-members-wrapper .um-members.um-members-list .um-member-card-actions {
 body .um-members-wrapper .um-members.um-members-list .um-member-cog {
     padding: 5px 12px !important;
     margin: 0 !important;
+}
 }
