@@ -86,8 +86,12 @@ function spp_registrant_list_shortcode( $atts ) {
             GROUP BY post_id
         ) occ_counts ON occ_counts.post_id = o.post_id
         WHERE o.end_date >= CURDATE()
-        AND p.post_status = 'publish'
-        {$filter_sql}
+AND p.post_status = 'publish'
+AND p.ID NOT IN (
+    SELECT post_id FROM {$p}postmeta
+    WHERE meta_key = '_RTECcanceled' AND meta_value = '1'
+)
+{$filter_sql}
         GROUP BY o.occurrence_id
         HAVING reg_count > 0
         ORDER BY total_occs DESC, o.start_date ASC
