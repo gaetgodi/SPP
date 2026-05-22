@@ -15,6 +15,7 @@ function divi_spp_child_enqueue_styles() {
     wp_enqueue_style( 'spp-header',   get_stylesheet_directory_uri() . '/css/spp-header.css',   ['spp-tokens'], '1.0.0' );
     wp_enqueue_style( 'spp-registrant-list', get_stylesheet_directory_uri() . '/css/spp-registrant-list.css', array(), '2.0.0' );
 
+
     // FAQ System (CSS + JS - only on FAQ page)
     if (is_page('faq')) {
         wp_enqueue_style(
@@ -40,6 +41,7 @@ require_once get_stylesheet_directory() . '/inc/shortcodes.php';
 require_once get_stylesheet_directory() . '/inc/blog-roles.php';
 require_once get_stylesheet_directory() . '/inc/score-scanner.php';
 require_once get_stylesheet_directory() . '/inc/spp-registrant-list.php';
+require_once get_stylesheet_directory() . '/inc/spp-blog-reminder.php';
 
 add_filter('template_include', function($template) {
     if (is_singular('tribe_events')) {
