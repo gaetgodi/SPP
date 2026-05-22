@@ -286,8 +286,18 @@ function spp_get_registrants_ajax() {
 
     // ── Waiting list ───────────────────────────────────────
     if ( ! empty( $waiting ) ) {
+        $waiting_emails = array_map( function( $r ) { return $r->user_email; }, $waiting );
+        $waiting_bcc    = rawurlencode( implode( ',', $waiting_emails ) );
+        $mailto_waiting = 'mailto:pb@pickleballstouffville.ca?bcc=' . $waiting_bcc . '&subject=' . $subject;
+
         $html .= '<div class="spp-waiting-header" style="margin-top:24px;">';
         $html .= '<h4 class="spp-waiting-title" style="color:#c0392b;margin-bottom:6px;">Waiting List</h4>';
+        $html .= '</div>';
+
+        $html .= '<div class="spp-registrant-actions">';
+        $html .= '<a href="' . esc_attr( $mailto_waiting ) . '" class="spp-email-all-btn" style="background-color:#c0392b;">';
+        $html .= '&#9993; Email All ' . count( $waiting ) . ' Waiting (BCC)';
+        $html .= '</a>';
         $html .= '</div>';
 
         $html .= '<table class="spp-registrant-table spp-waiting-table">';
