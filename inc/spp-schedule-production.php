@@ -1,8 +1,14 @@
 <?php
 /* =========================================================
    Schedule Production
-   Version: 1.8.10
+   Version: 1.8.11
    Date: 2026-05-24
+
+   Changes from 1.8.10:
+   - Phase 3 candidate query now excludes players already in
+     Schedules (prevents duplicates) and players not registered
+     for the event (prevents unregistered players like permanent
+     preferred members from being inserted into the schedule).
 
    Changes from 1.8.9:
    - Fixed missing last_name, user_phone, user_email for Phase 3
@@ -1356,11 +1362,20 @@ if (isset($Event) and $Event <> 0) {
     $phase3_swaps = array();
 
     // Build current preferred_new user list with details
+    // Phase 3 candidates must be:
+    //   1. In preferred_new (pref_temp)
+    //   2. NOT already in Schedules (would duplicate a player)
+    //   3. Registered for this event (confirmed in rtec_entries)
     $pref_candidates = $wpdb->get_results(
         "SELECT p.user_id, m.first_name, m.last_name, m.Rank, m.travel
          FROM $pref_temp p
          JOIN $Master m ON p.user_id = m.user_id
          WHERE m.Rank IS NOT NULL
+         AND p.user_id NOT IN (SELECT user_id FROM $Schedules WHERE group_id != 99)
+         AND p.user_id IN (
+             SELECT user_id FROM {$wpdb->prefix}rtec_entries
+             WHERE event_id = $event AND status = 'confirmed'
+         )
          ORDER BY m.Rank",
         ARRAY_A
     );
@@ -1720,7 +1735,7 @@ if (isset($Event) and $Event <> 0) {
             m.travel,
             e.registration_date,
             e.status,
-            '1.8.10' AS algo_version,
+            '1.8.11' AS algo_version,
             NOW() AS snapshot_date
         FROM {$wpdb->prefix}rtec_entries e
         JOIN $Master m ON e.user_id = m.user_id
