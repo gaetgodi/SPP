@@ -1,6 +1,6 @@
 /* =========================================================
    [spp_registrant_list] Shortcode Styles
-   Version: 2.7.1 — Divi override fixes for width and background
+   Version: 2.7.2 — ID-level Divi override for inputs — Divi override fixes for width and background
    ========================================================= */
 
 .spp-registrant-list-wrap {
@@ -160,23 +160,28 @@
     font-size: 0.82rem;
 }
 
-/* ── Subject, BCC, Message — Divi-proof width + background */
-.spp-compose-inner input[type="text"],
-.spp-compose-inner textarea,
-.spp-compose-inner .spp-compose-message,
-.spp-compose-subject,
-.spp-compose-bcc,
-.spp-compose-message {
+/* ── Subject, BCC, Message — Divi-proof width + background
+   Uses ID selectors and body chain to beat Divi global reset
+   which sets background:transparent and border:0 on all elements */
+body .spp-compose-inner input[type="text"],
+body .spp-compose-inner textarea,
+body .spp-compose-inner div[contenteditable],
+#spp-subject-confirmed, #spp-subject-waiting,
+#spp-subject-group_ladder, #spp-subject-group_members,
+#spp-bcc-confirmed, #spp-bcc-waiting,
+#spp-bcc-group_ladder, #spp-bcc-group_members,
+#spp-message-confirmed, #spp-message-waiting,
+#spp-message-group_ladder, #spp-message-group_members {
     width: 100% !important;
     max-width: 100% !important;
     box-sizing: border-box !important;
     background: #ffffff !important;
     background-color: #ffffff !important;
+    border: 1px solid #ccc !important;
 }
 
 .spp-compose-subject {
     padding: 10px 12px;
-    border: 1px solid #ccc;
     border-radius: 4px;
     font-size: 1rem;
 }
@@ -184,7 +189,6 @@
 .spp-compose-bcc {
     min-height: 100px;
     padding: 10px 12px;
-    border: 1px solid #ccc;
     border-radius: 4px;
     font-size: 0.88rem;
     font-family: monospace;
