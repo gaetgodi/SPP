@@ -1,6 +1,6 @@
 /* =========================================================
    [spp_registrant_list] Shortcode Styles
-   Version: 2.7.0 — consolidated, no duplicates
+   Version: 2.7.1 — Divi override fixes for width and background
    ========================================================= */
 
 .spp-registrant-list-wrap {
@@ -160,24 +160,34 @@
     font-size: 0.82rem;
 }
 
+/* ── Subject, BCC, Message — Divi-proof width + background */
+.spp-compose-inner input[type="text"],
+.spp-compose-inner textarea,
+.spp-compose-inner .spp-compose-message,
+.spp-compose-subject,
+.spp-compose-bcc,
+.spp-compose-message {
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+    background: #ffffff !important;
+    background-color: #ffffff !important;
+}
+
 .spp-compose-subject {
-    width: 100%;
     padding: 10px 12px;
     border: 1px solid #ccc;
     border-radius: 4px;
     font-size: 1rem;
-    box-sizing: border-box;
 }
 
 .spp-compose-bcc {
-    width: 100%;
     min-height: 100px;
     padding: 10px 12px;
     border: 1px solid #ccc;
     border-radius: 4px;
     font-size: 0.88rem;
     font-family: monospace;
-    box-sizing: border-box;
     resize: vertical;
 }
 
@@ -219,7 +229,6 @@
 
 /* ── Message area (contenteditable) ───────────────────── */
 .spp-compose-message {
-    width: 100%;
     min-height: 200px;
     padding: 12px 14px;
     border: 1px solid #ccc;
@@ -227,8 +236,6 @@
     font-size: 0.95rem;
     font-family: Arial, sans-serif;
     line-height: 1.6;
-    box-sizing: border-box;
-    background: #ffffff !important;
     outline: none;
     overflow-y: auto;
 }
