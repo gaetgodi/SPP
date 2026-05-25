@@ -1,16 +1,16 @@
 /* =========================================================
    [spp_registrant_list] Shortcode Styles
-   Add to spp-dashboard.css or appropriate stylesheet
-   Version: 2.3.0
+   Version: 2.7.0 — consolidated, no duplicates
    ========================================================= */
 
 .spp-registrant-list-wrap {
     max-width: 100%;
     margin: 1.5rem 0;
     font-family: inherit;
+    box-sizing: border-box;
 }
 
-/* Dropdown */
+/* ── Dropdown ─────────────────────────────────────────── */
 .spp-registrant-dropdown-wrap {
     margin-bottom: 1.5rem;
     display: flex;
@@ -34,7 +34,7 @@
     background: #fff;
 }
 
-/* Results area */
+/* ── Results area ─────────────────────────────────────── */
 .spp-registrant-results {
     margin-top: 0.5rem;
 }
@@ -44,7 +44,24 @@
     color: var(--spp-muted, #666);
 }
 
-/* Header */
+/* ── Section headings ─────────────────────────────────── */
+.spp-section-heading {
+    font-size: 1.1rem;
+    font-weight: bold;
+    color: var(--spp-primary, #00897B);
+    border-bottom: 2px solid var(--spp-primary, #00897B);
+    padding-bottom: 6px;
+    margin: 24px 0 14px;
+}
+
+/* ── Send to Group section ────────────────────────────── */
+.spp-group-section {
+    margin-top: 40px;
+    padding-top: 10px;
+    border-top: 2px solid #eee;
+}
+
+/* ── Registrant header ────────────────────────────────── */
 .spp-registrant-header {
     margin-bottom: 1rem;
     padding-bottom: 0.5rem;
@@ -63,7 +80,7 @@
     color: var(--spp-muted, #666);
 }
 
-/* Email All button */
+/* ── Action buttons row ───────────────────────────────── */
 .spp-registrant-actions {
     margin-bottom: 1rem;
 }
@@ -74,9 +91,11 @@
     background-color: var(--spp-green, #4a7c59);
     color: #fff;
     text-decoration: none;
+    border: none;
     border-radius: 4px;
     font-size: 0.9rem;
     font-weight: 600;
+    cursor: pointer;
     transition: background-color 0.2s;
 }
 
@@ -104,7 +123,173 @@
     color: #fff;
 }
 
-/* Registrant table */
+/* ── Compose form ─────────────────────────────────────── */
+.spp-compose-form {
+    margin: 12px 0 16px;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.spp-compose-inner {
+    background: #f9f9f9;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 18px 20px;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+}
+
+.spp-compose-title {
+    margin: 0 0 14px;
+    font-size: 1rem;
+    color: var(--spp-accent, #004D40);
+}
+
+.spp-compose-label {
+    display: block;
+    font-weight: bold;
+    font-size: 0.88rem;
+    color: #555;
+    margin: 12px 0 4px;
+}
+
+.spp-compose-hint {
+    font-weight: normal;
+    color: #999;
+    font-size: 0.82rem;
+}
+
+.spp-compose-subject {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 1rem;
+    box-sizing: border-box;
+}
+
+.spp-compose-bcc {
+    width: 100%;
+    min-height: 100px;
+    padding: 10px 12px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 0.88rem;
+    font-family: monospace;
+    box-sizing: border-box;
+    resize: vertical;
+}
+
+/* ── Rich text editor toolbar ─────────────────────────── */
+.spp-editor-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: #eee;
+    border: 1px solid #ccc;
+    border-bottom: none;
+    border-radius: 4px 4px 0 0;
+    padding: 5px 8px;
+    flex-wrap: wrap;
+}
+
+.spp-editor-toolbar button {
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    padding: 3px 8px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    line-height: 1.4;
+}
+
+.spp-editor-toolbar button:hover {
+    background: var(--spp-primary, #00897B);
+    color: #fff;
+    border-color: var(--spp-primary, #00897B);
+}
+
+.spp-toolbar-sep {
+    width: 1px;
+    height: 20px;
+    background: #ccc;
+    margin: 0 4px;
+}
+
+/* ── Message area (contenteditable) ───────────────────── */
+.spp-compose-message {
+    width: 100%;
+    min-height: 200px;
+    padding: 12px 14px;
+    border: 1px solid #ccc;
+    border-radius: 0 0 4px 4px;
+    font-size: 0.95rem;
+    font-family: Arial, sans-serif;
+    line-height: 1.6;
+    box-sizing: border-box;
+    background: #ffffff !important;
+    outline: none;
+    overflow-y: auto;
+}
+
+.spp-compose-message:focus {
+    border-color: var(--spp-primary, #00897B);
+    box-shadow: 0 0 0 2px rgba(0,137,123,0.15);
+}
+
+.spp-compose-message.spp-placeholder {
+    color: #aaa;
+}
+
+/* ── Compose action buttons ───────────────────────────── */
+.spp-compose-actions {
+    margin-top: 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.spp-send-btn {
+    background: var(--spp-primary, #00897B);
+    color: #fff;
+    border: none;
+    border-radius: 5px;
+    padding: 9px 20px;
+    font-size: 0.95rem;
+    cursor: pointer;
+}
+
+.spp-send-btn:hover {
+    background: var(--spp-accent, #004D40);
+}
+
+.spp-send-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.spp-cancel-btn {
+    background: none;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    padding: 9px 16px;
+    font-size: 0.95rem;
+    cursor: pointer;
+    color: #666;
+}
+
+.spp-cancel-btn:hover {
+    background: #f0f0f0;
+}
+
+.spp-send-status {
+    margin-top: 10px;
+    font-size: 0.9rem;
+    min-height: 20px;
+}
+
+/* ── Registrant table ─────────────────────────────────── */
 .spp-registrant-table {
     width: 100%;
     max-width: 100%;
@@ -137,13 +322,8 @@
     border-bottom: 1px solid var(--spp-border, #e0e0e0);
 }
 
-.spp-row-even {
-    background-color: #fff;
-}
-
-.spp-row-odd {
-    background-color: var(--spp-light, #f7f7f7);
-}
+.spp-row-even { background-color: #fff; }
+.spp-row-odd  { background-color: var(--spp-light, #f7f7f7); }
 
 .spp-col-num {
     width: 2rem;
@@ -162,7 +342,12 @@
     word-break: break-all;
 }
 
-/* Contact links */
+.spp-col-rating {
+    text-align: center;
+    width: 60px;
+}
+
+/* ── Contact links ────────────────────────────────────── */
 .spp-contact-link {
     text-decoration: none;
     color: var(--spp-green, #4a7c59);
@@ -173,7 +358,7 @@
     color: var(--spp-dark-green, #3a6347);
 }
 
-/* Footer count */
+/* ── Footer count ─────────────────────────────────────── */
 .spp-registrant-count {
     font-size: 0.82rem;
     color: var(--spp-muted, #888);
@@ -181,7 +366,7 @@
     margin: 0.25rem 0 0 0;
 }
 
-/* Messages */
+/* ── Messages ─────────────────────────────────────────── */
 .spp-registrant-none,
 .spp-registrant-error {
     font-style: italic;
@@ -189,400 +374,7 @@
     margin: 0.5rem 0;
 }
 
-/* Mobile */
-@media (max-width: 600px) {
-    .spp-registrant-table thead {
-        display: none;
-    }
-    .spp-registrant-table tr {
-        display: block;
-        margin-bottom: 0.75rem;
-        border: 1px solid var(--spp-border, #ddd);
-        border-radius: 4px;
-        padding: 0.5rem;
-    }
-    .spp-registrant-table td {
-        display: block;
-        border-bottom: none;
-        padding: 0.2rem 0.5rem;
-    }
-    .spp-col-num {
-        display: none;
-    }
-}
-/* =========================================================
-   SPP Registrant List — v2.6.0 CSS additions
-   Add these to spp-registrant-list.css
-   ========================================================= */
-
-/* Section headings */
-.spp-section-heading {
-    font-size: 1.1rem;
-    font-weight: bold;
-    color: var(--spp-primary, #00897B);
-    border-bottom: 2px solid var(--spp-primary, #00897B);
-    padding-bottom: 6px;
-    margin: 24px 0 14px;
-}
-
-/* Send to Group section */
-.spp-group-section {
-    margin-top: 40px;
-    padding-top: 10px;
-    border-top: 2px solid #eee;
-}
-
-/* Compose form wrapper */
-.spp-compose-form {
-    margin: 12px 0 16px;
-}
-
-.spp-compose-inner {
-    background: #f9f9f9;
-    border: 1px solid #ddd;
-    border-radius: 8px;
-    padding: 18px 20px;
-    max-width: 100%;
-    box-sizing: border-box;
-}
-
-.spp-compose-title {
-    margin: 0 0 14px;
-    font-size: 1rem;
-    color: var(--spp-accent, #004D40);
-}
-
-.spp-compose-label {
-    display: block;
-    font-weight: bold;
-    font-size: 0.88rem;
-    color: #555;
-    margin: 12px 0 4px;
-}
-
-.spp-compose-hint {
-    font-weight: normal;
-    color: #999;
-    font-size: 0.82rem;
-}
-
-.spp-compose-subject {
-    width: 100%;
-    padding: 8px 10px;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-    font-size: 0.95rem;
-    box-sizing: border-box;
-}
-
-.spp-compose-bcc {
-    width: 100%;
-    min-height: 100px;  /* was 70px */
-    padding: 8px 10px;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-    font-size: 0.85rem;
-    font-family: monospace;
-    box-sizing: border-box;
-    resize: vertical;
-}
-
-/* Rich text editor toolbar */
-.spp-editor-toolbar {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    background: #eee;
-    border: 1px solid #ccc;
-    border-bottom: none;
-    border-radius: 4px 4px 0 0;
-    padding: 5px 8px;
-    flex-wrap: wrap;
-}
-
-.spp-editor-toolbar button {
-    background: #fff;
-    border: 1px solid #ccc;
-    border-radius: 3px;
-    padding: 3px 8px;
-    font-size: 0.85rem;
-    cursor: pointer;
-    line-height: 1.4;
-}
-
-.spp-editor-toolbar button:hover {
-    background: var(--spp-primary, #00897B);
-    color: #fff;
-    border-color: var(--spp-primary, #00897B);
-}
-
-.spp-toolbar-sep {
-    width: 1px;
-    height: 20px;
-    background: #ccc;
-    margin: 0 4px;
-}
-
-/* Contenteditable message area */
-.spp-compose-message {
-    width: 100%;
-    min-height: 160px;
-    padding: 10px 12px;
-    border: 1px solid #ccc;
-    border-radius: 0 0 4px 4px;
-    font-size: 0.95rem;
-    font-family: Arial, sans-serif;
-    line-height: 1.6;
-    box-sizing: border-box;
-    background: #ffffff !important;  /* force white */
-    outline: none;
-    overflow-y: auto;
-}
-
-.spp-compose-message:focus {
-    border-color: var(--spp-primary, #00897B);
-    box-shadow: 0 0 0 2px rgba(0,137,123,0.15);
-}
-
-.spp-compose-message.spp-placeholder {
-    color: #aaa;
-}
-
-/* Compose action buttons */
-.spp-compose-actions {
-    margin-top: 14px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-
-.spp-send-btn {
-    background: var(--spp-primary, #00897B);
-    color: #fff;
-    border: none;
-    border-radius: 5px;
-    padding: 9px 20px;
-    font-size: 0.95rem;
-    cursor: pointer;
-}
-
-.spp-send-btn:hover {
-    background: var(--spp-accent, #004D40);
-}
-
-.spp-send-btn:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-}
-
-.spp-cancel-btn {
-    background: none;
-    border: 1px solid #ccc;
-    border-radius: 5px;
-    padding: 9px 16px;
-    font-size: 0.95rem;
-    cursor: pointer;
-    color: #666;
-}
-
-.spp-cancel-btn:hover {
-    background: #f0f0f0;
-}
-
-/* Send status message */
-.spp-send-status {
-    margin-top: 10px;
-    font-size: 0.9rem;
-    min-height: 20px;
-}
-/* =========================================================
-   SPP Registrant List — v2.6.0 CSS additions
-   Add these to spp-registrant-list.css
-   ========================================================= */
-
-/* Section headings */
-.spp-section-heading {
-    font-size: 1.1rem;
-    font-weight: bold;
-    color: var(--spp-primary, #00897B);
-    border-bottom: 2px solid var(--spp-primary, #00897B);
-    padding-bottom: 6px;
-    margin: 24px 0 14px;
-}
-
-/* Send to Group section */
-.spp-group-section {
-    margin-top: 40px;
-    padding-top: 10px;
-    border-top: 2px solid #eee;
-}
-
-/* Compose form wrapper */
-.spp-compose-form {
-    margin: 12px 0 16px;
-}
-
-.spp-compose-inner {
-    background: #f9f9f9;
-    border: 1px solid #ddd;
-    border-radius: 8px;
-    padding: 18px 20px;
-}
-
-.spp-compose-title {
-    margin: 0 0 14px;
-    font-size: 1rem;
-    color: var(--spp-accent, #004D40);
-}
-
-.spp-compose-label {
-    display: block;
-    font-weight: bold;
-    font-size: 0.88rem;
-    color: #555;
-    margin: 12px 0 4px;
-}
-
-.spp-compose-hint {
-    font-weight: normal;
-    color: #999;
-    font-size: 0.82rem;
-}
-
-.spp-compose-subject {
-    width: 100%;
-    padding: 8px 10px;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-    font-size: 0.95rem;
-    box-sizing: border-box;
-}
-
-.spp-compose-bcc {
-    width: 100%;
-    padding: 8px 10px;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-    font-size: 0.85rem;
-    font-family: monospace;
-    box-sizing: border-box;
-    resize: vertical;
-    min-height: 70px;
-}
-
-/* Rich text editor toolbar */
-.spp-editor-toolbar {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    background: #eee;
-    border: 1px solid #ccc;
-    border-bottom: none;
-    border-radius: 4px 4px 0 0;
-    padding: 5px 8px;
-    flex-wrap: wrap;
-}
-
-.spp-editor-toolbar button {
-    background: #fff;
-    border: 1px solid #ccc;
-    border-radius: 3px;
-    padding: 3px 8px;
-    font-size: 0.85rem;
-    cursor: pointer;
-    line-height: 1.4;
-}
-
-.spp-editor-toolbar button:hover {
-    background: var(--spp-primary, #00897B);
-    color: #fff;
-    border-color: var(--spp-primary, #00897B);
-}
-
-.spp-toolbar-sep {
-    width: 1px;
-    height: 20px;
-    background: #ccc;
-    margin: 0 4px;
-}
-
-/* Contenteditable message area */
-.spp-compose-message {
-    width: 100%;
-    min-height: 160px;
-    padding: 10px 12px;
-    border: 1px solid #ccc;
-    border-radius: 0 0 4px 4px;
-    font-size: 0.95rem;
-    font-family: Arial, sans-serif;
-    line-height: 1.6;
-    box-sizing: border-box;
-    background: #fff;
-    outline: none;
-    overflow-y: auto;
-}
-
-.spp-compose-message:focus {
-    border-color: var(--spp-primary, #00897B);
-    box-shadow: 0 0 0 2px rgba(0,137,123,0.15);
-}
-
-.spp-compose-message.spp-placeholder {
-    color: #aaa;
-}
-
-/* Compose action buttons */
-.spp-compose-actions {
-    margin-top: 14px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-
-.spp-send-btn {
-    background: var(--spp-primary, #00897B);
-    color: #fff;
-    border: none;
-    border-radius: 5px;
-    padding: 9px 20px;
-    font-size: 0.95rem;
-    cursor: pointer;
-}
-
-.spp-send-btn:hover {
-    background: var(--spp-accent, #004D40);
-}
-
-.spp-send-btn:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-}
-
-.spp-cancel-btn {
-    background: none;
-    border: 1px solid #ccc;
-    border-radius: 5px;
-    padding: 9px 16px;
-    font-size: 0.95rem;
-    cursor: pointer;
-    color: #666;
-}
-
-.spp-cancel-btn:hover {
-    background: #f0f0f0;
-}
-
-/* Send status message */
-.spp-send-status {
-    margin-top: 10px;
-    font-size: 0.9rem;
-    min-height: 20px;
-}
-
-/* =========================================================
-   v2.7.0 additions — Group filter panel
-   ========================================================= */
-
+/* ── Group filter panel ───────────────────────────────── */
 .spp-group-filters {
     background: #f0f7f6;
     border: 1px solid #b2dfdb;
@@ -653,7 +445,27 @@
     background: #f0f0f0;
 }
 
-.spp-col-rating {
-    text-align: center;
-    width: 60px;
+/* ── Mobile ───────────────────────────────────────────── */
+@media (max-width: 600px) {
+    .spp-registrant-table thead {
+        display: none;
+    }
+    .spp-registrant-table tr {
+        display: block;
+        margin-bottom: 0.75rem;
+        border: 1px solid var(--spp-border, #ddd);
+        border-radius: 4px;
+        padding: 0.5rem;
+    }
+    .spp-registrant-table td {
+        display: block;
+        border-bottom: none;
+        padding: 0.2rem 0.5rem;
+    }
+    .spp-col-num {
+        display: none;
+    }
+    .spp-compose-inner {
+        padding: 12px;
+    }
 }
