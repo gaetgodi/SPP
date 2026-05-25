@@ -25,6 +25,13 @@ add_action( 'wp_enqueue_scripts', 'spp_registrant_list_enqueue' );
 function spp_registrant_list_enqueue() {
     if ( ! is_user_logged_in() ) return;
 
+    wp_enqueue_style(
+        'spp-registrant-list',
+        get_stylesheet_directory_uri() . '/css/spp-registrant-list.css',
+        array(),
+        '2.7.2'
+    );
+
     wp_enqueue_script(
         'spp-registrant-list',
         get_stylesheet_directory_uri() . '/js/spp-registrant-list.js',
