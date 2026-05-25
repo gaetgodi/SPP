@@ -149,6 +149,8 @@ $prefix = $wpdb->prefix;
 if (!isset($Event)) { return 0; }
 
 $schedules_prev = "SchedulesPrev$Event";
+// Need to run this to refresh travel fields
+echo do_shortcode("[cmruncode name='Create membership table']");
 
 // -------------------------------------------------------
 // ASSIGN RANKS
