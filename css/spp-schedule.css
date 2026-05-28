@@ -102,7 +102,7 @@ tr:nth-child(odd) {
 .GameC53-0,.GameC53-3,.GameC43-0,.GameC43-3,
 .GameD54-0,.GameD54-4,.GameE55-1,.GameE55-2 {
     background: rgb(175, 216, 230);
-    color: rgb(175, 216, 230);
+
     border: 3px solid blue;
 }
 
@@ -112,7 +112,7 @@ tr:nth-child(odd) {
 .GameC53-2,.GameC53-4,.GameC43-1,.GameC43-2,
 .GameD54-1,.GameD54-3,.GameE55-3,.GameE55-4 {
     background: lightpink;
-    color: lightpink;
+
     border: 3px solid red;
 }
 
