@@ -155,7 +155,7 @@ echo do_shortcode("[cmruncode name='Create membership table']");
 // -------------------------------------------------------
 // ASSIGN RANKS
 // -------------------------------------------------------
-echo do_shortcode("[cmruncode name='Assign ranks to registered players']");
+echo do_shortcode("[cmruncode name='GL Assign ranks to registered players']");
 
 $settings = get_option('Pkldr_settings');
 list('Pkldr_Project' => $Pkldr_Project, 'Pkldr_PageLdr' => $Pkldr_PageLdr) = $settings;
