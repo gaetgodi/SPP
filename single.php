@@ -2,8 +2,11 @@
 /**
  * Single Blog Post Template
  * File: single.php
- * Version: 1.1.0
+ * Version: 1.2.1
  * Date: 2026-05-27
+ *
+ * Changes from 1.1.0:
+ * - Expiry date shown in post meta for moderators/admins
  *
  * Changes from 1.0.0:
  * - Category sections styled as prominent pill/tag links
@@ -20,6 +23,12 @@ get_header();
                 <h1 class="entry-title"><?php the_title(); ?></h1>
                 <p class="spp-post-meta">
                     by <?php the_author(); ?> | <?php echo get_the_date(); ?>
+                    <?php
+                    $expiry = get_post_meta( get_the_ID(), 'spp_blog_expiry', true );
+                    if ( $expiry && is_user_logged_in() ):
+                    ?>
+                    | <span class="spp-post-expiry">Expires: <?php echo date( 'F j, Y', strtotime( $expiry ) ); ?></span>
+                    <?php endif; ?>
                 </p>
                 <div class="entry-content">
                     <?php the_content(); ?>
@@ -97,6 +106,13 @@ get_header();
 </div>
 
 <style>
+/* ── Expiry indicator ────────────────────────────────── */
+.spp-post-expiry {
+    color: #c0392b;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
 /* ── Filed under / Browse categories ─────────────────── */
 .spp-filed-under,
 .spp-browse-cats {

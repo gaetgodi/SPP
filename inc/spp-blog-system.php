@@ -2,8 +2,13 @@
 /**
  * SPP Blog System
  * File: inc/spp-blog-system.php
- * Version: 1.0.0
+ * Version: 1.1.0
  * Date: 2026-05-31
+ *
+ * Changes from 1.0.0:
+ * - Category select now supports multiple selections
+ * - Category and expiry auto-save via AJAX when changed
+ * - AJAX handler updated to accept array of category IDs
  *
  * Shortcodes:
  *   [spp_blog_submit]    — frontend blog post submission form for all logged-in users
@@ -306,10 +311,10 @@ function spp_pending_posts_shortcode() {
             <div class="spp-pending-fields">
                 <div class="spp-pending-field">
                     <label class="spp-pending-label">Category</label>
-                    <select class="spp-pending-cat spp-pending-input" data-post-id="<?php echo $post->ID; ?>">
+                    <select class="spp-pending-cat spp-pending-input" data-post-id="<?php echo $post->ID; ?>" multiple size="4">
                         <?php
                         foreach ( $all_cats as $cat ) {
-                            $selected = ( $current_cat === (int)$cat->term_id ) ? ' selected' : '';
+                            $selected = in_array( (int)$cat->term_id, $cats ) ? ' selected' : '';
                             echo '<option value="' . $cat->term_id . '"' . $selected . '>'
                                . esc_html( $cat->name ) . '</option>';
                         }
@@ -339,6 +344,9 @@ function spp_pending_posts_shortcode() {
                 <a href="<?php echo esc_url( get_permalink( $post->ID ) ); ?>"
                    target="_blank"
                    class="spp-pending-preview-link">Preview &rarr;</a>
+                <span id="spp-save-indicator-<?php echo $post->ID; ?>"
+                      class="spp-save-indicator"
+                      style="display:none;font-size:0.85rem;margin-left:8px;"></span>
             </div>
         </div>
         <?php endforeach; ?>
@@ -474,6 +482,11 @@ function spp_pending_posts_shortcode() {
         margin-left: 6px;
     }
     .spp-pending-preview-link:hover { text-decoration: underline; }
+    .spp-save-indicator {
+        font-size: 0.85rem;
+        margin-left: 8px;
+        font-style: italic;
+    }
     @media (max-width: 600px) {
         .spp-pending-header { flex-direction: column; }
         .spp-pending-fields { flex-direction: column; }
@@ -481,26 +494,85 @@ function spp_pending_posts_shortcode() {
     </style>
 
     <script>
+    // Auto-save category and expiry when changed
+    jQuery(document).ready(function($) {
+        // Auto-save on category change
+        $(document).on('change', '.spp-pending-cat', function() {
+            var postId = $(this).data('post-id');
+            sppAutoSave(postId);
+        });
+
+        // Auto-save on expiry change
+        $(document).on('change', '.spp-pending-expiry', function() {
+            var postId = $(this).data('post-id');
+            sppAutoSave(postId);
+        });
+    });
+
+    function sppGetCats(postId) {
+        var cats = [];
+        jQuery('.spp-pending-cat[data-post-id="' + postId + '"] option:selected').each(function() {
+            cats.push(jQuery(this).val());
+        });
+        return cats;
+    }
+
+    function sppAutoSave(postId) {
+        var cats   = sppGetCats(postId);
+        var expiry = jQuery('.spp-pending-expiry[data-post-id="' + postId + '"]').val();
+        var indicator = jQuery('#spp-save-indicator-' + postId);
+
+        indicator.text('Saving...').css('color', '#888').show();
+
+        jQuery.post('<?php echo admin_url("admin-ajax.php"); ?>', {
+            action:  'spp_save_pending_post',
+            post_id: postId,
+            cats:    cats,
+            expiry:  expiry,
+            nonce:   '<?php echo wp_create_nonce("spp_pending_action"); ?>'
+        }, function(response) {
+            if (response.success) {
+                indicator.text('Saved').css('color', 'green');
+                setTimeout(function() { indicator.fadeOut(); }, 2000);
+            } else {
+                indicator.text('Save failed').css('color', '#c0392b');
+            }
+        });
+    }
+
     function sppPublishPost(postId) {
-        var cat    = document.querySelector('.spp-pending-cat[data-post-id="' + postId + '"]').value;
-        var expiry = document.querySelector('.spp-pending-expiry[data-post-id="' + postId + '"]').value;
-        sppPostAction(postId, 'spp_publish_post', cat, expiry);
+        var cats   = sppGetCats(postId);
+        var expiry = jQuery('.spp-pending-expiry[data-post-id="' + postId + '"]').val();
+        var msg    = document.getElementById('spp-pending-message');
+
+        jQuery.post('<?php echo admin_url("admin-ajax.php"); ?>', {
+            action:  'spp_publish_post',
+            post_id: postId,
+            cats:    cats,
+            expiry:  expiry,
+            nonce:   '<?php echo wp_create_nonce("spp_pending_action"); ?>'
+        }, function(response) {
+            if (response.success) {
+                document.getElementById('spp-post-' + postId).style.display = 'none';
+                msg.className = 'spp-pending-message success';
+                msg.textContent = response.data.message;
+                msg.style.display = 'block';
+                setTimeout(function() { msg.style.display = 'none'; }, 4000);
+            } else {
+                msg.className = 'spp-pending-message error';
+                msg.textContent = 'Error: ' + (response.data || 'Action failed.');
+                msg.style.display = 'block';
+            }
+        });
     }
 
     function sppRejectPost(postId) {
         if (!confirm('Reject and delete this post?')) return;
-        sppPostAction(postId, 'spp_reject_post', '', '');
-    }
-
-    function sppPostAction(postId, action, cat, expiry) {
-        var btn = document.querySelector('[data-post-id="' + postId + '"].spp-pending-publish-btn, [data-post-id="' + postId + '"].spp-pending-reject-btn');
         var msg = document.getElementById('spp-pending-message');
 
         jQuery.post('<?php echo admin_url("admin-ajax.php"); ?>', {
-            action:  action,
+            action:  'spp_reject_post',
             post_id: postId,
-            cat:     cat,
-            expiry:  expiry,
             nonce:   '<?php echo wp_create_nonce("spp_pending_action"); ?>'
         }, function(response) {
             if (response.success) {
@@ -534,12 +606,12 @@ function spp_ajax_publish_post() {
     }
 
     $post_id = (int)$_POST['post_id'];
-    $cat_id  = (int)($_POST['cat'] ?? 0);
+    $cats    = isset( $_POST['cats'] ) ? array_map( 'intval', (array)$_POST['cats'] ) : array();
     $expiry  = sanitize_text_field( $_POST['expiry'] ?? '' );
 
-    // Update category if set
-    if ( $cat_id ) {
-        wp_set_post_categories( $post_id, array( $cat_id ) );
+    // Update categories if set
+    if ( ! empty( $cats ) ) {
+        wp_set_post_categories( $post_id, $cats );
     }
 
     // Update expiry meta
@@ -560,6 +632,35 @@ function spp_ajax_publish_post() {
     } else {
         wp_send_json_error( 'Failed to publish post.' );
     }
+}
+
+// ============================================================
+// AJAX — auto-save category and expiry (no publish)
+// ============================================================
+add_action( 'wp_ajax_spp_save_pending_post', 'spp_ajax_save_pending_post' );
+function spp_ajax_save_pending_post() {
+    if ( ! wp_verify_nonce( $_POST['nonce'], 'spp_pending_action' ) ) {
+        wp_send_json_error( 'Invalid nonce' );
+    }
+    if ( ! current_user_can( 'publish_posts' ) ) {
+        wp_send_json_error( 'Permission denied' );
+    }
+
+    $post_id = (int)$_POST['post_id'];
+    $cats    = isset( $_POST['cats'] ) ? array_map( 'intval', (array)$_POST['cats'] ) : array();
+    $expiry  = sanitize_text_field( $_POST['expiry'] ?? '' );
+
+    if ( ! empty( $cats ) ) {
+        wp_set_post_categories( $post_id, $cats );
+    }
+
+    if ( ! empty( $expiry ) ) {
+        update_post_meta( $post_id, 'spp_blog_expiry', $expiry );
+    } else {
+        delete_post_meta( $post_id, 'spp_blog_expiry' );
+    }
+
+    wp_send_json_success( array( 'message' => 'Saved.' ) );
 }
 
 // ============================================================
