@@ -6,31 +6,50 @@
  *
  * Shortcode: [spp_blog_reminder]
  *
- * Shows a dismissible modal on the home page on first login of the day.
- * Displays the 3 most recent blog posts with links, plus a link to /blog/.
- * Uses a cookie (spp_blog_seen) set to today's date to prevent repeat shows.
+ * Shows a dismissible modal on the home page on first login of the day,
+ * OR when a new post has been published since the last time the modal was seen.
+ * Uses a cookie (spp_blog_seen) storing date|latest_post_id.
  *
- * Usage: Add [spp_blog_reminder] to a Divi Code module on the home page.
+ * Version: 1.1.0
+ * Date: 2026-05-27
  *
- * Version: 1.0.0
- * Date: 2026-05-22
+ * Changes from 1.0.0:
+ * - Cookie now stores date|latest_post_id so modal re-shows when a new
+ *   post is published, even if already seen today.
  */
 
 add_shortcode( 'spp_blog_reminder', 'spp_blog_reminder_shortcode' );
 function spp_blog_reminder_shortcode() {
     if ( ! is_user_logged_in() ) return '';
 
-    // Get 3 most recent published posts
+    // Get 3 most recent published non-expired posts
+    $today_date = date( 'Y-m-d' );
     $posts = get_posts( array(
         'numberposts' => 3,
         'post_status' => 'publish',
         'post_type'   => 'post',
+        'meta_query'  => array(
+            'relation' => 'OR',
+            array(
+                'key'     => 'spp_blog_expiry',
+                'compare' => 'NOT EXISTS',
+            ),
+            array(
+                'key'     => 'spp_blog_expiry',
+                'value'   => $today_date,
+                'compare' => '>=',
+                'type'    => 'DATE',
+            ),
+        ),
     ) );
 
     if ( empty( $posts ) ) return '';
 
+    $latest_id     = $posts[0]->ID;
     $all_blogs_url = home_url( '/blog/' );
     $today         = date( 'Y-m-d' );
+    // Cookie value format: "YYYY-MM-DD|post_id"
+    $cookie_value  = $today . '|' . $latest_id;
 
     ob_start();
     ?>
@@ -176,34 +195,34 @@ function spp_blog_reminder_shortcode() {
 
     <script>
     (function() {
-        var TODAY       = '<?php echo $today; ?>';
-        var COOKIE_NAME = 'spp_blog_seen';
+        var COOKIE_VALUE = '<?php echo esc_js( $cookie_value ); ?>';
+        var COOKIE_NAME  = 'spp_blog_seen';
 
         function getCookie(name) {
             var match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
-            return match ? match[2] : null;
+            return match ? decodeURIComponent(match[2]) : null;
         }
 
         function setCookie(name, value, days) {
             var expires = new Date();
             expires.setTime(expires.getTime() + days * 24 * 60 * 60 * 1000);
-            document.cookie = name + '=' + value + ';expires=' + expires.toUTCString() + ';path=/';
+            document.cookie = name + '=' + encodeURIComponent(value) + ';expires=' + expires.toUTCString() + ';path=/';
         }
 
         function dismiss() {
             document.getElementById('spp-blog-modal-overlay').classList.add('spp-hidden');
-            setCookie(COOKIE_NAME, TODAY, 1);
+            setCookie(COOKIE_NAME, COOKIE_VALUE, 1);
         }
 
-        // Check cookie before showing — hide immediately if already seen today
-        if (getCookie(COOKIE_NAME) === TODAY) {
+        // Show if cookie doesn't match current date|latest_post_id
+        // This means: re-show if a new post was published since last seen
+        if (getCookie(COOKIE_NAME) === COOKIE_VALUE) {
             document.getElementById('spp-blog-modal-overlay').classList.add('spp-hidden');
         }
 
         document.getElementById('spp-blog-dismiss').addEventListener('click', dismiss);
         document.getElementById('spp-blog-dismiss-btn').addEventListener('click', dismiss);
 
-        // Dismiss on overlay click (outside modal)
         document.getElementById('spp-blog-modal-overlay').addEventListener('click', function(e) {
             if (e.target === this) dismiss();
         });
@@ -211,4 +230,85 @@ function spp_blog_reminder_shortcode() {
     </script>
     <?php
     return ob_get_clean();
+}
+
+// -------------------------------------------------------
+// Blog expiry — daily cron to auto-draft expired posts
+// -------------------------------------------------------
+if ( ! wp_next_scheduled( 'spp_blog_expiry_check' ) ) {
+    wp_schedule_event( time(), 'daily', 'spp_blog_expiry_check' );
+}
+
+add_action( 'spp_blog_expiry_check', 'spp_blog_expire_posts' );
+function spp_blog_expire_posts() {
+    $today = date( 'Y-m-d' );
+    $expired = get_posts( array(
+        'post_type'   => 'post',
+        'post_status' => 'publish',
+        'numberposts' => -1,
+        'meta_query'  => array(
+            array(
+                'key'     => 'spp_blog_expiry',
+                'value'   => $today,
+                'compare' => '<',
+                'type'    => 'DATE',
+            ),
+        ),
+    ) );
+
+    foreach ( $expired as $post ) {
+        wp_update_post( array(
+            'ID'          => $post->ID,
+            'post_status' => 'draft',
+        ) );
+    }
+}
+
+// -------------------------------------------------------
+// Blog expiry meta field — shown in post editor
+// -------------------------------------------------------
+add_action( 'add_meta_boxes', 'spp_blog_expiry_meta_box' );
+function spp_blog_expiry_meta_box() {
+    add_meta_box(
+        'spp_blog_expiry',
+        'Blog Post Expiry Date',
+        'spp_blog_expiry_meta_box_html',
+        'post',
+        'side',
+        'default'
+    );
+}
+
+function spp_blog_expiry_meta_box_html( $post ) {
+    $expiry = get_post_meta( $post->ID, 'spp_blog_expiry', true );
+    wp_nonce_field( 'spp_blog_expiry_nonce', 'spp_blog_expiry_nonce' );
+    ?>
+    <p style="margin:0 0 6px;font-size:12px;color:#666;">
+        Leave blank for no expiry. Post will be auto-drafted on this date.
+    </p>
+    <input type="date"
+           id="spp_blog_expiry"
+           name="spp_blog_expiry"
+           value="<?php echo esc_attr( $expiry ); ?>"
+           style="width:100%;">
+    <?php if ( $expiry ): ?>
+    <p style="margin:6px 0 0;font-size:12px;color:#c0392b;">
+        Expires: <?php echo date( 'F j, Y', strtotime( $expiry ) ); ?>
+    </p>
+    <?php endif; ?>
+    <?php
+}
+
+add_action( 'save_post', 'spp_blog_expiry_save_meta' );
+function spp_blog_expiry_save_meta( $post_id ) {
+    if ( ! isset( $_POST['spp_blog_expiry_nonce'] ) ) return;
+    if ( ! wp_verify_nonce( $_POST['spp_blog_expiry_nonce'], 'spp_blog_expiry_nonce' ) ) return;
+    if ( defined( 'DOING_AUTOSAVE' ) && DOING_AUTOSAVE ) return;
+    if ( ! current_user_can( 'edit_post', $post_id ) ) return;
+
+    if ( isset( $_POST['spp_blog_expiry'] ) && ! empty( $_POST['spp_blog_expiry'] ) ) {
+        update_post_meta( $post_id, 'spp_blog_expiry', sanitize_text_field( $_POST['spp_blog_expiry'] ) );
+    } else {
+        delete_post_meta( $post_id, 'spp_blog_expiry' );
+    }
 }
