@@ -2,8 +2,11 @@
 /**
  * SPP Blog System
  * File: inc/spp-blog-system.php
- * Version: 1.1.0
+ * Version: 1.1.1
  * Date: 2026-05-31
+ *
+ * Changes from 1.1.0:
+ * - Added spp_delete_post AJAX handler for published post deletion
  *
  * Changes from 1.0.0:
  * - Category select now supports multiple selections
@@ -664,7 +667,7 @@ function spp_ajax_save_pending_post() {
 }
 
 // ============================================================
-// AJAX — reject (delete) post
+// AJAX — reject (delete) pending post
 // ============================================================
 add_action( 'wp_ajax_spp_reject_post', 'spp_ajax_reject_post' );
 function spp_ajax_reject_post() {
@@ -680,6 +683,28 @@ function spp_ajax_reject_post() {
 
     if ( $result ) {
         wp_send_json_success( array( 'message' => 'Post rejected and deleted.' ) );
+    } else {
+        wp_send_json_error( 'Failed to delete post.' );
+    }
+}
+
+// ============================================================
+// AJAX — delete published post (from single.php)
+// ============================================================
+add_action( 'wp_ajax_spp_delete_post', 'spp_ajax_delete_post' );
+function spp_ajax_delete_post() {
+    if ( ! wp_verify_nonce( $_POST['nonce'], 'spp_delete_post' ) ) {
+        wp_send_json_error( 'Invalid nonce' );
+    }
+    if ( ! current_user_can( 'publish_posts' ) ) {
+        wp_send_json_error( 'Permission denied' );
+    }
+
+    $post_id = (int)$_POST['post_id'];
+    $result  = wp_delete_post( $post_id, true );
+
+    if ( $result ) {
+        wp_send_json_success( array( 'message' => 'Post deleted.' ) );
     } else {
         wp_send_json_error( 'Failed to delete post.' );
     }
