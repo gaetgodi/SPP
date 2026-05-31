@@ -2,8 +2,12 @@
 /**
  * SPP Blog System
  * File: inc/spp-blog-system.php
- * Version: 1.1.1
+ * Version: 1.2.0
  * Date: 2026-05-31
+ *
+ * Changes from 1.1.1:
+ * - Added [spp_blog_edit] shortcode for frontend post editing
+ *   Moderators/admins only, pre-populated form, redirects to /blog/ on save
  *
  * Changes from 1.1.0:
  * - Added spp_delete_post AJAX handler for published post deletion
@@ -218,6 +222,162 @@ function spp_blog_submit_shortcode() {
     .spp-blog-submit-btn:hover {
         background: var(--spp-accent, #004D40);
     }
+    </style>
+    <?php
+    return ob_get_clean();
+}
+
+// ============================================================
+// [spp_blog_edit] — frontend edit form for moderators/admins
+// Usage: place [spp_blog_edit] on /edit-post/ page
+// Reads ?post_id= from URL
+// ============================================================
+add_shortcode( 'spp_blog_edit', 'spp_blog_edit_shortcode' );
+function spp_blog_edit_shortcode() {
+    if ( ! is_user_logged_in() ) {
+        return '<p>Please <a href="/login/">login</a> to edit posts.</p>';
+    }
+    if ( ! current_user_can( 'publish_posts' ) ) {
+        return '<p>You do not have permission to edit posts.</p>';
+    }
+
+    $post_id = isset( $_GET['post_id'] ) ? (int)$_GET['post_id'] : 0;
+    if ( ! $post_id ) {
+        return '<p>No post specified.</p>';
+    }
+
+    $post = get_post( $post_id );
+    if ( ! $post || $post->post_type !== 'post' ) {
+        return '<p>Post not found.</p>';
+    }
+
+    // Handle form submission
+    if ( isset( $_POST['spp_blog_edit_nonce'] ) &&
+         wp_verify_nonce( $_POST['spp_blog_edit_nonce'], 'spp_blog_edit_' . $post_id ) ) {
+
+        $title   = sanitize_text_field( $_POST['spp_post_title'] ?? '' );
+        $content = wp_kses_post( $_POST['spp_post_content'] ?? '' );
+        $cats    = isset( $_POST['spp_post_category'] ) ? array_map( 'intval', (array)$_POST['spp_post_category'] ) : array();
+        $expiry  = sanitize_text_field( $_POST['spp_post_expiry'] ?? '' );
+
+        if ( empty( $title ) || empty( $content ) ) {
+            $error = 'Please enter a title and content.';
+        } else {
+            $result = wp_update_post( array(
+                'ID'           => $post_id,
+                'post_title'   => $title,
+                'post_content' => $content,
+            ) );
+
+            if ( $result && ! is_wp_error( $result ) ) {
+                if ( ! empty( $cats ) ) {
+                    wp_set_post_categories( $post_id, $cats );
+                }
+                if ( ! empty( $expiry ) ) {
+                    update_post_meta( $post_id, 'spp_blog_expiry', $expiry );
+                } else {
+                    delete_post_meta( $post_id, 'spp_blog_expiry' );
+                }
+                wp_redirect( home_url( '/blog/' ) );
+                exit;
+            } else {
+                $error = 'There was a problem saving the post. Please try again.';
+            }
+        }
+    }
+
+    // Get current post data
+    $current_cats  = wp_get_post_categories( $post_id );
+    $current_expiry = get_post_meta( $post_id, 'spp_blog_expiry', true );
+    $all_cats      = get_categories( array( 'hide_empty' => false ) );
+    $today         = date( 'Y-m-d' );
+
+    ob_start();
+    ?>
+    <?php if ( isset( $error ) ): ?>
+    <div class="spp-blog-error"><?php echo esc_html( $error ); ?></div>
+    <?php endif; ?>
+
+    <div class="spp-blog-submit-wrap">
+        <p class="spp-blog-edit-meta">
+            Editing: <strong><?php echo esc_html( $post->post_title ); ?></strong>
+            &mdash; by <?php echo esc_html( get_userdata( $post->post_author )->display_name ); ?>
+            | <?php echo get_the_date( 'M j, Y', $post ); ?>
+        </p>
+        <form method="post" class="spp-blog-submit-form">
+            <?php wp_nonce_field( 'spp_blog_edit_' . $post_id, 'spp_blog_edit_nonce' ); ?>
+
+            <div class="spp-blog-field">
+                <label class="spp-blog-label" for="spp_post_title">Post Title <span class="spp-required">*</span></label>
+                <input type="text"
+                       id="spp_post_title"
+                       name="spp_post_title"
+                       class="spp-blog-input"
+                       value="<?php echo esc_attr( $_POST['spp_post_title'] ?? $post->post_title ); ?>"
+                       required>
+            </div>
+
+            <div class="spp-blog-field">
+                <label class="spp-blog-label" for="spp_post_content">Content <span class="spp-required">*</span></label>
+                <?php
+                wp_editor(
+                    wp_kses_post( $_POST['spp_post_content'] ?? $post->post_content ),
+                    'spp_post_content',
+                    array(
+                        'textarea_name' => 'spp_post_content',
+                        'media_buttons' => true,
+                        'textarea_rows' => 12,
+                        'teeny'         => false,
+                        'tinymce'       => true,
+                    )
+                );
+                ?>
+            </div>
+
+            <div class="spp-blog-field">
+                <label class="spp-blog-label" for="spp_post_category">Categories <span class="spp-blog-hint">(hold Ctrl/Cmd to select multiple)</span></label>
+                <select id="spp_post_category" name="spp_post_category[]" class="spp-blog-select" multiple size="5">
+                    <?php foreach ( $all_cats as $cat ):
+                        $selected = in_array( $cat->term_id, $current_cats ) ? ' selected' : '';
+                    ?>
+                    <option value="<?php echo $cat->term_id; ?>"<?php echo $selected; ?>><?php echo esc_html( $cat->name ); ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+
+            <div class="spp-blog-field">
+                <label class="spp-blog-label" for="spp_post_expiry">Expiry Date <span class="spp-blog-hint">(optional — post will be auto-drafted on this date)</span></label>
+                <input type="date"
+                       id="spp_post_expiry"
+                       name="spp_post_expiry"
+                       class="spp-blog-date"
+                       value="<?php echo esc_attr( $_POST['spp_post_expiry'] ?? $current_expiry ); ?>">
+            </div>
+
+            <div class="spp-blog-actions">
+                <button type="submit" class="spp-blog-submit-btn">Save Changes</button>
+                <a href="<?php echo esc_url( home_url( '/blog/' ) ); ?>" class="spp-blog-cancel-link">Cancel</a>
+            </div>
+        </form>
+    </div>
+
+    <style>
+    .spp-blog-edit-meta {
+        color: #666;
+        font-size: 0.9rem;
+        margin-bottom: 20px;
+        padding: 10px 14px;
+        background: #f9f9f9;
+        border-left: 3px solid var(--spp-primary, #00897B);
+        border-radius: 0 4px 4px 0;
+    }
+    .spp-blog-cancel-link {
+        margin-left: 12px;
+        color: #888;
+        font-size: 0.95rem;
+        text-decoration: none;
+    }
+    .spp-blog-cancel-link:hover { text-decoration: underline; }
     </style>
     <?php
     return ob_get_clean();

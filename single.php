@@ -2,8 +2,11 @@
 /**
  * Single Blog Post Template
  * File: single.php
- * Version: 1.3.0
+ * Version: 1.3.1
  * Date: 2026-05-27
+ *
+ * Changes from 1.3.0:
+ * - Edit link points to /edit-post/?post_id=X instead of wp-admin
  *
  * Changes from 1.2.1:
  * - Delete button added for moderators/admins on published posts
@@ -35,7 +38,7 @@ get_header();
                 </p>
                 <?php if ( current_user_can( 'publish_posts' ) ): ?>
                 <div class="spp-post-admin-actions">
-                    <a href="<?php echo esc_url( get_edit_post_link() ); ?>" class="spp-post-edit-link">&#9998; Edit</a>
+                    <a href="<?php echo esc_url( home_url( '/edit-post/?post_id=' . get_the_ID() ) ); ?>" class="spp-post-edit-link">&#9998; Edit</a>
                     <a href="#"
                        class="spp-post-delete-link"
                        onclick="return sppConfirmDelete(<?php echo get_the_ID(); ?>)">&#10007; Delete Post</a>
