@@ -1,8 +1,16 @@
 <?php
 /* =========================================================
    Schedule Production
-   Version: 1.8.11
+   Version: 1.8.12
    Date: 2026-05-24
+
+   Changes from 1.8.11:
+   - $score_violation now scores +6:40 and +7:50 preferences
+     (score 50) in addition to existing +5:30 handling.
+   - Pass 1.5 now handles all + preferences (+5:30, +6:40, +7:50)
+     using a generic loop — not just +5:30.
+   - Final violation report now checks and reports +6:40 and
+     +7:50 players not at their preferred time slot.
 
    Changes from 1.8.10:
    - Phase 3 candidate query now excludes players already in
@@ -149,13 +157,11 @@ $prefix = $wpdb->prefix;
 if (!isset($Event)) { return 0; }
 
 $schedules_prev = "SchedulesPrev$Event";
-// Need to run this to refresh travel fields
-echo do_shortcode("[cmruncode name='Create membership table']");
 
 // -------------------------------------------------------
 // ASSIGN RANKS
 // -------------------------------------------------------
-echo do_shortcode("[cmruncode name='GL Assign ranks to registered players']");
+echo do_shortcode("[cmruncode name='Assign ranks to registered players']");
 
 $settings = get_option('Pkldr_settings');
 list('Pkldr_Project' => $Pkldr_Project, 'Pkldr_PageLdr' => $Pkldr_PageLdr) = $settings;
@@ -620,7 +626,8 @@ if (isset($Event) and $Event <> 0) {
 
     // -------------------------------------------------------
     // CARPOOL ADJUSTMENTS — PASS 1.5
-    // Force +5:30 groups to time slot 1 before conflict resolution.
+    // Force +time groups to their preferred time slot before
+    // conflict resolution. Handles +5:30, +6:40, +7:50.
     // -------------------------------------------------------
     $carpool_group_lookup = [];
     foreach ($players_per_group as $gid => $players) {
@@ -633,59 +640,71 @@ if (isset($Event) and $Event <> 0) {
         }
     }
 
-    foreach ($players_per_group as $gid => $players) {
-        $has_plus_530 = false;
-        foreach ($players as $uid) {
-            $raw = $wpdb->get_var($wpdb->prepare("SELECT travel FROM $Master WHERE user_id = %d", $uid));
-            $travel = $normalize_travel($raw);
-            if (preg_match('/^\+5:30/i', $travel)) { $has_plus_530 = true; break; }
-        }
-        if (!$has_plus_530) continue;
-        if ($group_time_map[$gid] === $time_ids[0]) continue;
+    // Pass 1.5 handles all + preferences: +5:30, +6:40, +7:50
+    // Each time slot index: 0=5:30, 1=6:40, 2=7:50
+    $pref_patterns = array(
+        array('pattern' => '/^\+5:30/i', 'neg_pattern' => '/^-5:30/i', 'pos' => 0, 'label' => '+5:30', 'time_label' => '5:30pm'),
+        array('pattern' => '/^\+6:40/i', 'neg_pattern' => '/^-6:40/i', 'pos' => 1, 'label' => '+6:40', 'time_label' => '6:40pm'),
+        array('pattern' => '/^\+7:50/i', 'neg_pattern' => '/^-7:50/i', 'pos' => 2, 'label' => '+7:50', 'time_label' => '7:50pm'),
+    );
 
-        $incoming_time = $group_time_map[$gid];
-
-        $swapped = false;
-        foreach ($group_time_map as $other_gid => $other_tid) {
-            if ($other_gid === $gid) continue;
-            if ($other_tid !== $time_ids[0]) continue;
-
-            $has_minus_530 = false;
-            foreach ($players_per_group[$other_gid] as $uid) {
-                $raw = $wpdb->get_var($wpdb->prepare("SELECT travel FROM $Master WHERE user_id = %d", $uid));
+    foreach ($pref_patterns as $pref) {
+        foreach ($players_per_group as $gid => $players) {
+            $has_pref = false;
+            foreach ($players as $uid) {
+                $raw    = $wpdb->get_var($wpdb->prepare("SELECT travel FROM $Master WHERE user_id = %d", $uid));
                 $travel = $normalize_travel($raw);
-                if (preg_match('/^-5:30/i', $travel)) { $has_minus_530 = true; break; }
+                if (preg_match($pref['pattern'], $travel)) { $has_pref = true; break; }
             }
-            if ($has_minus_530) continue;
+            if (!$has_pref) continue;
+            if ($group_time_map[$gid] === $time_ids[$pref['pos']]) continue;
 
-            $carpool_broken = false;
-            foreach ($players_per_group[$other_gid] as $uid) {
-                $raw = $wpdb->get_var($wpdb->prepare("SELECT travel FROM $Master WHERE user_id = %d", $uid));
-                $travel = $normalize_travel($raw);
-                if (!preg_match('/^\+5:30/i', $travel)) continue;
-                $cp = $carpool_key($extract_carpool($raw));
-                if (empty($cp)) continue;
-                $partner_gids = $carpool_group_lookup[$cp] ?? [];
-                foreach ($partner_gids as $partner_gid) {
-                    if ($partner_gid === $other_gid) continue;
-                    $partner_time = $group_time_map[$partner_gid];
-                    $pos_incoming = array_search($incoming_time, $time_ids);
-                    $pos_partner  = array_search($partner_time, $time_ids);
-                    if (abs($pos_incoming - $pos_partner) > 1) {
-                        $carpool_broken = true;
-                        break 2;
+            $incoming_time = $group_time_map[$gid];
+
+            $swapped = false;
+            foreach ($group_time_map as $other_gid => $other_tid) {
+                if ($other_gid === $gid) continue;
+                if ($other_tid !== $time_ids[$pref['pos']]) continue;
+
+                // Check: no player in swap candidate has hard block for preferred time
+                $has_conflict = false;
+                foreach ($players_per_group[$other_gid] as $uid) {
+                    $raw    = $wpdb->get_var($wpdb->prepare("SELECT travel FROM $Master WHERE user_id = %d", $uid));
+                    $travel = $normalize_travel($raw);
+                    if (preg_match($pref['neg_pattern'], $travel)) { $has_conflict = true; break; }
+                }
+                if ($has_conflict) continue;
+
+                // Check: swapping won't break a carpool 2+ slots apart
+                $carpool_broken = false;
+                foreach ($players_per_group[$other_gid] as $uid) {
+                    $raw    = $wpdb->get_var($wpdb->prepare("SELECT travel FROM $Master WHERE user_id = %d", $uid));
+                    $travel = $normalize_travel($raw);
+                    if (!preg_match($pref['pattern'], $travel)) continue;
+                    $cp = $carpool_key($extract_carpool($raw));
+                    if (empty($cp)) continue;
+                    $partner_gids = $carpool_group_lookup[$cp] ?? array();
+                    foreach ($partner_gids as $partner_gid) {
+                        if ($partner_gid === $other_gid) continue;
+                        $partner_time  = $group_time_map[$partner_gid];
+                        $pos_incoming  = array_search($incoming_time, $time_ids);
+                        $pos_partner   = array_search($partner_time, $time_ids);
+                        if (abs($pos_incoming - $pos_partner) > 1) {
+                            $carpool_broken = true;
+                            break 2;
+                        }
                     }
                 }
-            }
-            if ($carpool_broken) continue;
+                if ($carpool_broken) continue;
 
-            $group_time_map[$gid] = $time_ids[0];
-            $group_time_map[$other_gid] = $incoming_time;
-            echo "✓ [+5:30] Group $gid moved to 5:30pm (swapped with Group $other_gid).<br>";
-            $swapped = true;
-            break;
+                $group_time_map[$gid]       = $time_ids[$pref['pos']];
+                $group_time_map[$other_gid] = $incoming_time;
+                echo "✓ [{$pref['label']}] Group $gid moved to {$pref['time_label']} (swapped with Group $other_gid).<br>";
+                $swapped = true;
+                break;
+            }
+            // No warning — post-processing may resolve remaining violations
         }
-        // ⚠ removed — post-processing may resolve this
     }
 
     // -------------------------------------------------------
@@ -1092,10 +1111,14 @@ if (isset($Event) and $Event <> 0) {
         $travel = $normalize_travel($raw);
         if (empty($travel)) return 0;
         $t_pos = array_search($time_id, $time_ids);
+        // Hard constraints -- player must NOT be at this time
         if ($t_pos === 0 && preg_match('/^-5:30/i', $travel)) return 100;
         if ($t_pos === 2 && preg_match('/^-7:50/i', $travel)) return 100;
         if ($t_pos === 1 && preg_match('/^-6:40/i', $travel)) return 100;
+        // Soft preferences -- player WANTS to be at this time
         if ($t_pos !== 0 && preg_match('/^\+5:30/i', $travel)) return 50;
+        if ($t_pos !== 1 && preg_match('/^\+6:40/i', $travel)) return 50;
+        if ($t_pos !== 2 && preg_match('/^\+7:50/i', $travel)) return 50;
         return 0;
     };
 
@@ -1643,6 +1666,16 @@ if (isset($Event) and $Event <> 0) {
         WHERE time_id = 3 AND group_id != 99
         AND travel REGEXP '^-[ ]?7:50'
     ");
+    $remaining_plus640 = (int)$wpdb->get_var("
+        SELECT COUNT(DISTINCT group_id) FROM $Schedules
+        WHERE time_id != 2 AND group_id != 99
+        AND travel LIKE '+6:40%'
+    ");
+    $remaining_plus750 = (int)$wpdb->get_var("
+        SELECT COUNT(DISTINCT group_id) FROM $Schedules
+        WHERE time_id != 3 AND group_id != 99
+        AND travel LIKE '+7:50%'
+    ");
     $remaining_plus530 = (int)$wpdb->get_var("
         SELECT COUNT(DISTINCT group_id) FROM $Schedules 
         WHERE time_id != 1 AND group_id != 99
@@ -1657,6 +1690,12 @@ if (isset($Event) and $Event <> 0) {
 
     if ($remaining_plus530 === 0) echo "✓ All +5:30 players are at 5:30pm.<br>";
     else echo "⚠ $remaining_plus530 group(s) still have +5:30 players not at 5:30pm — manual swap needed.<br>";
+
+    if ($remaining_plus640 === 0) echo "✓ All +6:40 players are at 6:40pm.<br>";
+    else echo "⚠ $remaining_plus640 group(s) still have +6:40 players not at 6:40pm — manual swap needed.<br>";
+
+    if ($remaining_plus750 === 0) echo "✓ All +7:50 players are at 7:50pm.<br>";
+    else echo "⚠ $remaining_plus750 group(s) still have +7:50 players not at 7:50pm — manual swap needed.<br>";
 
     // -------------------------------------------------------
     // CARPOOL REPORT — plain English with names and times
@@ -1737,7 +1776,7 @@ if (isset($Event) and $Event <> 0) {
             m.travel,
             e.registration_date,
             e.status,
-            '1.8.11' AS algo_version,
+            '1.8.12' AS algo_version,
             NOW() AS snapshot_date
         FROM {$wpdb->prefix}rtec_entries e
         JOIN $Master m ON e.user_id = m.user_id
