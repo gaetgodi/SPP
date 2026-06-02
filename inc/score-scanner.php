@@ -1,7 +1,18 @@
 <?php
 // -------------------------------------------------------
 // SCORE SCANNER -- AJAX HANDLERS + ENQUEUE
-// Version: 1.1
+// Version: 1.3
+// Changes from 1.2:
+// - Prompt updated to handle Total column on handwritten
+//   sheets regardless of capitalization (Total, TOTAL, Tot)
+// - Added orphan score validation: any score in a round
+//   that does not match another score is likely misread
+// Changes from 1.2:
+// - Prompt updated to explicitly identify and skip the
+//   Total column (different background color from rounds)
+// - Score validation rule added: each round in a 4-player
+//   group produces exactly 2 score values (winners same,
+//   losers same) -- used to detect column misidentification
 // Changes from 1.0:
 // - max_tokens increased to 16000 for larger PDFs
 // - Prompt updated to discard duplicate group entries
@@ -16,7 +27,7 @@ add_action('wp_enqueue_scripts', function() {
         'spp-score-scanner',
         get_stylesheet_directory_uri() . '/js/score-scanner.js',
         ['jquery'],
-        '1.1.0',
+        '1.3.0',
         true
     );
     wp_localize_script('spp-score-scanner', 'sppScanner', [
@@ -64,6 +75,25 @@ Return ONLY a JSON object with this structure:
   ],
   "warnings": []
 }
+
+CRITICAL COLUMN IDENTIFICATION:
+- The score sheet columns are: Group, Court, Rank, Name, TOTAL, Rnd1, Rnd2, Rnd3, Rnd4, Rnd5, Phone
+- The TOTAL column appears immediately after the Name column and has a DIFFERENT background color from the round columns
+- You MUST skip the TOTAL column entirely -- never use its value as a round score
+- The round columns (Rnd1-Rnd5) come AFTER the Total column
+- If the Total column is empty (not filled in by players), the first numeric value after the name is still Rnd1, not Total
+- The column header row clearly labels each column -- use the headers to identify columns, do not rely on position alone
+- On HANDWRITTEN score sheets, the first column after the player name may be labeled "Total", "TOTAL", "Tot", "total" or any capitalization or abbreviation -- skip it regardless of how it is written
+- On handwritten sheets, the round columns will be labeled "Round 1", "Rnd 1", "R1", "Rd1" or similar -- these are the only columns to extract
+
+SCORE VALIDATION:
+- Each group has 4 or 5 players playing round-robin
+- In each round, 2 players play against 2 players -- so each round produces exactly 2 score values (winners get the same score, losers get the same score) plus "bye" entries
+- If you see more than 2 distinct numeric scores in a single round column for a group, you have likely misidentified a column -- recheck
+- A group of 4 players plays 3 rounds (each player gets 1 bye). A group of 5 players plays 5 rounds (each player gets 1 bye)
+- Use this to validate your column identification -- if round scores do not follow this pattern, you likely included the Total column by mistake
+- ORPHAN SCORE CHECK: after extracting all scores for a group, check each round column -- if any score value appears only once (not matched by another player in the same round), it is likely a misread. Add a warning for any orphan score so it can be reviewed manually.
+- Example: if round 2 scores for a group are 20, 18, 20, bye -- the 18 is an orphan (appears only once). It may be a misread of 20, 12, or another value. Flag it with a warning.
 
 Important:
 - "bye" cells contain no score
