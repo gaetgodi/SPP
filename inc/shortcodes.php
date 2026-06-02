@@ -1,7 +1,7 @@
 <?php
 /* =========================================================
    SPP CUSTOM SHORTCODES
-   Site: pickleballstouffville.ca (staging)
+   Site: pickleballstouffville.ca
    
    Shortcodes:
    - [spp_dashboard]  — home page dashboard widget
@@ -93,6 +93,56 @@ add_action('profile_update', function($user_id, $old_user_data) {
         update_user_meta($user_id, 'user_email', $user->user_email);
     }
 }, 10, 2);
+
+/* =========================================================
+   [spp_pending_posts]
+   Pending posts list for blog_moderators.
+   Shows pending posts with edit/publish/delete links.
+   ========================================================= */
+function spp_pending_posts_shortcode() {
+    if ( ! is_user_logged_in() ) {
+        return '<p>Please <a href="/login/">login</a> to access this page.</p>';
+    }
+
+    if ( ! current_user_can( 'publish_posts' ) ) {
+        return '<p>You do not have permission to view this page.</p>';
+    }
+
+    $posts = get_posts( [
+        'post_status'    => 'pending',
+        'post_type'      => 'post',
+        'posts_per_page' => -1,
+        'orderby'        => 'date',
+        'order'          => 'DESC',
+    ] );
+
+    if ( empty( $posts ) ) {
+        return '<div class="spp-pending-posts"><p>No posts pending review.</p></div>';
+    }
+
+    $output = '<div class="spp-pending-posts">';
+    $output .= '<h3>Posts Pending Review</h3>';
+    $output .= '<table class="spp-dashboard-table">';
+    $output .= '<tr><th>Title</th><th>Author</th><th>Date</th><th>Actions</th></tr>';
+
+    foreach ( $posts as $post ) {
+        $author   = get_userdata( $post->post_author );
+        $edit_url = admin_url( 'post.php?post=' . $post->ID . '&action=edit' );
+        $output  .= '<tr>';
+        $output  .= '<td>' . esc_html( $post->post_title ) . '</td>';
+        $output  .= '<td>' . esc_html( $author->display_name ) . '</td>';
+        $output  .= '<td>' . get_the_date( 'M j, Y', $post ) . '</td>';
+        $output  .= '<td><a href="' . esc_url( $edit_url ) . '">Review</a></td>';
+        $output  .= '</tr>';
+    }
+
+    $output .= '</table>';
+    $output .= '</div>';
+
+    return $output;
+}
+
+add_shortcode( 'spp_pending_posts', 'spp_pending_posts_shortcode' );
 
 add_shortcode('spp_events', function($atts) {
     $atts = shortcode_atts(['category' => ''], $atts);
