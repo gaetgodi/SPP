@@ -3,8 +3,13 @@
 spp-drawers.css
 Mobile right-side drawer navigation
 Site: pickleballstouffville.ca
-Version: 2.2
+Version: 2.3
 Date: 2026-06-04
+
+Changes from 2.2:
+- Removed margin-left/padding-left overrides from
+  bullet removal rule — was fighting submenu indent.
+- Added margin-top to parent items with children.
 
 Changes from 2.1:
 - Removed bullet points from all menu list items.
@@ -14,8 +19,6 @@ Changes from 2.1:
 
 Changes from 2.0:
 - Fixed submenu item width and indentation.
-  Children now properly indented under parent
-  with teal left border and lighter background.
 
 Changes from 1.0:
 - Removed duplicate submenu CSS block at bottom.
@@ -234,15 +237,13 @@ All tokens defined in spp-tokens.css
     opacity: 0.85;
 }
 
-/* Remove bullets from all menu lists */
+/* Remove bullets — no margin/padding overrides here */
 .spp-mm-list,
 .spp-mm-list li,
 .spp-mm-list ul,
 .spp-mm-list ul li {
     list-style: none !important;
     list-style-type: none !important;
-    margin-left: 0 !important;
-    padding-left: 0 !important;
 }
 
 .spp-mm-list {
@@ -275,11 +276,21 @@ All tokens defined in spp-tokens.css
 }
 
 /* ── Submenu styling ────────────────────────────────── */
+
+/* Parent item with children — top margin and bold */
+.spp-mm-list .menu-item-has-children {
+    margin-top: 8px;
+}
+
+.spp-mm-list .menu-item-has-children > a {
+    font-weight: 600;
+}
+
 .spp-mm-list ul.sub-menu {
-    margin-top: 6px !important;
-    margin-left: 1rem !important;
-    margin-bottom: 2px !important;
-    padding-left: 0 !important;
+    margin-top: 3px;
+    margin-left: 1rem;
+    margin-bottom: 2px;
+    padding-left: 0;
     border-left: 2px solid var(--spp-secondary);
     list-style: none !important;
 }
@@ -301,11 +312,6 @@ All tokens defined in spp-tokens.css
 .spp-mm-list ul.sub-menu .spp-mm-item a:hover {
     background: rgba(0, 137, 123, 0.15) !important;
     color: var(--spp-primary) !important;
-}
-
-/* Parent item with children indicator */
-.spp-mm-list .menu-item-has-children > a {
-    font-weight: 600;
 }
 
 .spp-mm-section--direct .spp-mm-list {
