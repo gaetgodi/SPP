@@ -3,8 +3,14 @@
 spp-drawers.css
 Mobile right-side drawer navigation
 Site: pickleballstouffville.ca
-Version: 2.1
+Version: 2.2
 Date: 2026-06-04
+
+Changes from 2.1:
+- Removed bullet points from all menu list items.
+- Sub-menu items now full width (consistent with parent).
+- Sub-menu top margin added (6px).
+- Border width reduced from 3px to 2px on items.
 
 Changes from 2.0:
 - Fixed submenu item width and indentation.
@@ -228,14 +234,24 @@ All tokens defined in spp-tokens.css
     opacity: 0.85;
 }
 
+/* Remove bullets from all menu lists */
+.spp-mm-list,
+.spp-mm-list li,
+.spp-mm-list ul,
+.spp-mm-list ul li {
+    list-style: none !important;
+    list-style-type: none !important;
+    margin-left: 0 !important;
+    padding-left: 0 !important;
+}
+
 .spp-mm-list {
-    list-style: none;
     padding: 0;
     margin: 0;
 }
 
 .spp-mm-item {
-    margin-bottom: 3px;
+    margin-bottom: 2px;
 }
 
 .spp-mm-item a {
@@ -247,7 +263,7 @@ All tokens defined in spp-tokens.css
     font-size: 0.75rem;
     line-height: var(--spp-line-height);
     border-radius: var(--spp-radius);
-    border-left: 3px solid transparent;
+    border-left: 2px solid transparent;
     transition: background 0.15s ease, color 0.15s ease, border-left-color 0.15s ease;
 }
 
@@ -260,26 +276,26 @@ All tokens defined in spp-tokens.css
 
 /* ── Submenu styling ────────────────────────────────── */
 .spp-mm-list ul.sub-menu {
-    margin-left: 1rem;
-    padding-left: 0;
+    margin-top: 6px !important;
+    margin-left: 1rem !important;
+    margin-bottom: 2px !important;
+    padding-left: 0 !important;
     border-left: 2px solid var(--spp-secondary);
-    margin-top: 3px;
-    margin-bottom: 3px;
-    list-style: none;
-    width: auto;
+    list-style: none !important;
 }
 
 .spp-mm-list ul.sub-menu .spp-mm-item {
     margin-bottom: 2px;
-    margin-right: 0;
 }
 
 .spp-mm-list ul.sub-menu .spp-mm-item a {
     font-size: 0.7rem;
-    padding: 6px 10px 6px 10px;
+    padding: 6px 10px;
     background: var(--spp-item-bg-sub) !important;
     border-left: none;
     border-radius: 0 var(--spp-radius) var(--spp-radius) 0;
+    white-space: normal;
+    word-wrap: break-word;
 }
 
 .spp-mm-list ul.sub-menu .spp-mm-item a:hover {
