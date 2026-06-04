@@ -3,24 +3,28 @@
 spp-drawers.css
 Mobile right-side drawer navigation
 Site: pickleballstouffville.ca
-Version: 2.4
+Version: 2.5
 Date: 2026-06-04
+
+Changes from 2.4:
+- Added overflow:hidden to nav wrappers and sub-menu
+  to prevent children stretching beyond container.
+- Added max-width to sub-menu ul.
 
 Changes from 2.3:
 - Moved teal border from sub-menu ul to each li
   so it stops at last child item.
 - Removed bottom margin from last child item.
 - Sub-menu bottom margin reduced to 2px.
-- Fixed sub-menu width — no longer stretches full width.
+- Fixed sub-menu width.
 
 Changes from 2.2:
 - Removed margin-left/padding-left overrides from
-  bullet removal rule — was fighting submenu indent.
+  bullet removal rule.
 - Added margin-top to parent items with children.
 
 Changes from 2.1:
 - Removed bullet points from all menu list items.
-- Sub-menu items now full width consistent with parent.
 - Border width reduced from 3px to 2px on items.
 
 Changes from 2.0:
@@ -212,6 +216,12 @@ All tokens defined in spp-tokens.css
    (desktop side nav + mobile drawer)
    ===================================================== */
 
+/* Nav wrappers — contain children, prevent overflow */
+.spp-side-nav,
+.spp-mobile-menu-wrapper {
+    overflow: hidden;
+}
+
 .spp-mm-section {
     margin-bottom: 0.8rem;
 }
@@ -272,6 +282,7 @@ All tokens defined in spp-tokens.css
     border-radius: var(--spp-radius);
     border-left: 2px solid transparent;
     transition: background 0.15s ease, color 0.15s ease, border-left-color 0.15s ease;
+    box-sizing: border-box;
 }
 
 .spp-mm-item a:hover,
@@ -292,7 +303,7 @@ All tokens defined in spp-tokens.css
     font-weight: 600;
 }
 
-/* Sub-menu container — indented, no border on ul itself */
+/* Sub-menu container */
 .spp-mm-list ul.sub-menu {
     display: block;
     margin-top: 3px;
@@ -302,7 +313,9 @@ All tokens defined in spp-tokens.css
     border: none;
     list-style: none !important;
     width: calc(100% - 1rem);
+    max-width: calc(100% - 1rem);
     box-sizing: border-box;
+    overflow: hidden;
 }
 
 /* Each child li carries the teal left border */
@@ -311,7 +324,7 @@ All tokens defined in spp-tokens.css
     border-left: 2px solid var(--spp-secondary);
 }
 
-/* Last child — no bottom margin, border stops here */
+/* Last child — no bottom margin */
 .spp-mm-list ul.sub-menu .spp-mm-item:last-child {
     margin-bottom: 0;
 }
@@ -325,6 +338,8 @@ All tokens defined in spp-tokens.css
     white-space: normal;
     word-wrap: break-word;
     display: block;
+    width: 100%;
+    box-sizing: border-box;
 }
 
 .spp-mm-list ul.sub-menu .spp-mm-item a:hover {
