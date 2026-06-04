@@ -1,40 +1,81 @@
+/*
+=================================================
+spp-drawers.js
+Mobile drawer navigation
+Site: pickleballstouffville.ca
+Version: 2.0
+Date: 2026-06-04
+
+Changes from 1.0:
+- Added footer/tools drawer open/close handling
+  (#spp-footer-mm-open, #spp-footer-mm-close,
+  body.spp-footer-mm-open class).
+- closeAll() now closes both drawers.
+- Escape key closes both drawers.
+=================================================
+*/
 document.addEventListener("DOMContentLoaded", function () {
 
     // =====================================================
-    // SINGLE DRAWER SYSTEM
+    // DUAL DRAWER SYSTEM
+    // Club menu drawer: #spp-mm-bottom-sheet
+    // Tools drawer:     #spp-footer-mm-bottom-sheet
     // =====================================================
-    const body    = document.body;
-    const html    = document.documentElement;
-    const overlay = document.getElementById("spp-mm-overlay");
-    const openBtn = document.getElementById("spp-mm-open");
-    const closeBtn = document.getElementById("spp-mm-close");
+    const body             = document.body;
+    const html             = document.documentElement;
+    const overlay          = document.getElementById("spp-mm-overlay");
+    const openBtn          = document.getElementById("spp-mm-open");
+    const closeBtn         = document.getElementById("spp-mm-close");
+    const footerOpenBtn    = document.getElementById("spp-footer-mm-open");
+    const footerCloseBtn   = document.getElementById("spp-footer-mm-close");
 
     if (!overlay) return;
 
     function closeAll() {
         body.classList.remove("spp-mm-open");
+        body.classList.remove("spp-footer-mm-open");
         html.classList.remove("spp-mm-open");
+        html.classList.remove("spp-footer-mm-open");
     }
 
-    function toggleDrawer() {
+    function toggleClubDrawer() {
         if (body.classList.contains("spp-mm-open")) {
             closeAll();
         } else {
+            closeAll();
             body.classList.add("spp-mm-open");
             html.classList.add("spp-mm-open");
         }
     }
 
-    openBtn?.addEventListener("click", toggleDrawer);
+    function toggleToolsDrawer() {
+        if (body.classList.contains("spp-footer-mm-open")) {
+            closeAll();
+        } else {
+            closeAll();
+            body.classList.add("spp-footer-mm-open");
+            html.classList.add("spp-footer-mm-open");
+        }
+    }
+
+    openBtn?.addEventListener("click", toggleClubDrawer);
     closeBtn?.addEventListener("click", closeAll);
+    footerOpenBtn?.addEventListener("click", toggleToolsDrawer);
+    footerCloseBtn?.addEventListener("click", closeAll);
     overlay.addEventListener("click", closeAll);
 
     document.addEventListener("click", function(e) {
-        if (!body.classList.contains("spp-mm-open")) return;
+        const clubOpen   = body.classList.contains("spp-mm-open");
+        const toolsOpen  = body.classList.contains("spp-footer-mm-open");
+        if (!clubOpen && !toolsOpen) return;
         const el = e.target;
-        if (!el.closest('#spp-mm-bottom-sheet') &&
+        if (
+            !el.closest('#spp-mm-bottom-sheet') &&
+            !el.closest('#spp-footer-mm-bottom-sheet') &&
             !el.closest('#spp-mm-open') &&
-            el.id !== 'spp-mm-overlay') {
+            !el.closest('#spp-footer-mm-open') &&
+            el.id !== 'spp-mm-overlay'
+        ) {
             closeAll();
         }
     });
@@ -138,7 +179,7 @@ document.addEventListener("DOMContentLoaded", function () {
     function manageBottomScroll(container) {
         if (container.dataset.bottomScrollManaged) return;
         container.dataset.bottomScrollManaged = '1';
-    
+
         var resizeTimer;
         function check() {
             var table = container.querySelector('table');
@@ -152,7 +193,7 @@ document.addEventListener("DOMContentLoaded", function () {
         check();
         setTimeout(check, 500);
         setTimeout(check, 1500);
-    
+
         window.addEventListener('resize', function() {
             clearTimeout(resizeTimer);
             resizeTimer = setTimeout(check, 150);

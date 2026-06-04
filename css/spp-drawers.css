@@ -3,20 +3,24 @@
 spp-drawers.css
 Mobile right-side drawer navigation
 Site: pickleballstouffville.ca
-Version: 2.5
+Version: 2.6
 Date: 2026-06-04
 
+Changes from 2.5:
+- Added CSS rules for #spp-footer-mm-bottom-sheet
+  (tools drawer) — was never defined, causing title
+  to leak into page content.
+- Added footer open button and close button rules.
+- Added JS body class spp-footer-mm-open support.
+
 Changes from 2.4:
-- Added overflow:hidden to nav wrappers and sub-menu
-  to prevent children stretching beyond container.
+- Added overflow:hidden to nav wrappers and sub-menu.
 - Added max-width to sub-menu ul.
 
 Changes from 2.3:
-- Moved teal border from sub-menu ul to each li
-  so it stops at last child item.
+- Moved teal border from sub-menu ul to each li.
 - Removed bottom margin from last child item.
 - Sub-menu bottom margin reduced to 2px.
-- Fixed sub-menu width.
 
 Changes from 2.2:
 - Removed margin-left/padding-left overrides from
@@ -44,7 +48,9 @@ All tokens defined in spp-tokens.css
    ===================================================== */
 @media (min-width: 981px) {
     #spp-mm-open,
+    #spp-footer-mm-open,
     #spp-mm-bottom-sheet,
+    #spp-footer-mm-bottom-sheet,
     #spp-mm-overlay {
         display: none !important;
     }
@@ -63,7 +69,8 @@ All tokens defined in spp-tokens.css
     display: none !important;
 }
 
-#spp-mm-bottom-sheet .spp-mm-sheet-body .spp-mobile-menu-wrapper {
+#spp-mm-bottom-sheet .spp-mm-sheet-body .spp-mobile-menu-wrapper,
+#spp-footer-mm-bottom-sheet .spp-mm-sheet-body .spp-mobile-menu-wrapper {
     display: flex !important;
     flex-direction: column !important;
     gap: 0.6rem;
@@ -131,12 +138,13 @@ All tokens defined in spp-tokens.css
         pointer-events: auto;
     }
 
-    body.spp-mm-open #spp-mm-overlay {
+    body.spp-mm-open #spp-mm-overlay,
+    body.spp-footer-mm-open #spp-mm-overlay {
         display: block;
     }
 
     /* ---------------------------------------------------
-       RIGHT-SIDE DRAWER
+       CLUB MENU DRAWER
        --------------------------------------------------- */
     #spp-mm-bottom-sheet {
         position: fixed !important;
@@ -163,6 +171,33 @@ All tokens defined in spp-tokens.css
     }
 
     /* ---------------------------------------------------
+       TOOLS DRAWER
+       --------------------------------------------------- */
+    #spp-footer-mm-bottom-sheet {
+        position: fixed !important;
+        top: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
+        left: auto !important;
+        width: 80vw !important;
+        max-width: 320px !important;
+        height: 100% !important;
+        max-height: 100% !important;
+        overflow-y: auto !important;
+        background: var(--spp-drawer-bg) !important;
+        border-left: 2px solid var(--spp-primary) !important;
+        transform: translateX(100%);
+        transition: transform .25s ease-out;
+        display: flex !important;
+        flex-direction: column;
+        z-index: 999999 !important;
+    }
+
+    body.spp-footer-mm-open #spp-footer-mm-bottom-sheet {
+        transform: translateX(0) !important;
+    }
+
+    /* ---------------------------------------------------
        DRAWER HEADER
        --------------------------------------------------- */
     .spp-mm-sheet-header {
@@ -182,14 +217,16 @@ All tokens defined in spp-tokens.css
         color: var(--spp-text-light) !important;
     }
 
-    #spp-mm-close {
+    #spp-mm-close,
+    #spp-footer-mm-close {
         background: transparent;
         border: none;
         cursor: pointer;
         padding: 4px;
     }
 
-    #spp-mm-close-icon::before {
+    #spp-mm-close-icon::before,
+    .spp-mm-close-icon::before {
         content: "\4d";
         font-family: "ETmodules";
         font-size: 22px;
@@ -381,16 +418,19 @@ All tokens defined in spp-tokens.css
 }
 
 /* Mobile drawer collapsible */
-#spp-mm-bottom-sheet .spp-side-nav--collapsible .spp-mm-section .spp-mm-list {
+#spp-mm-bottom-sheet .spp-side-nav--collapsible .spp-mm-section .spp-mm-list,
+#spp-footer-mm-bottom-sheet .spp-side-nav--collapsible .spp-mm-section .spp-mm-list {
     display: none;
 }
 
-#spp-mm-bottom-sheet .spp-side-nav--collapsible .spp-mm-section.spp-open .spp-mm-list {
+#spp-mm-bottom-sheet .spp-side-nav--collapsible .spp-mm-section.spp-open .spp-mm-list,
+#spp-footer-mm-bottom-sheet .spp-side-nav--collapsible .spp-mm-section.spp-open .spp-mm-list {
     display: block !important;
 }
 
 /* Sub-menus always visible in mobile drawer when open */
-#spp-mm-bottom-sheet .spp-side-nav--collapsible .spp-mm-section.spp-open .spp-mm-list .sub-menu {
+#spp-mm-bottom-sheet .spp-side-nav--collapsible .spp-mm-section.spp-open .spp-mm-list .sub-menu,
+#spp-footer-mm-bottom-sheet .spp-side-nav--collapsible .spp-mm-section.spp-open .spp-mm-list .sub-menu {
     display: block !important;
 }
 
