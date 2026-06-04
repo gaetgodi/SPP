@@ -3,8 +3,15 @@
 spp-drawers.css
 Mobile right-side drawer navigation
 Site: pickleballstouffville.ca
-Version: 2.3
+Version: 2.4
 Date: 2026-06-04
+
+Changes from 2.3:
+- Moved teal border from sub-menu ul to each li
+  so it stops at last child item.
+- Removed bottom margin from last child item.
+- Sub-menu bottom margin reduced to 2px.
+- Fixed sub-menu width — no longer stretches full width.
 
 Changes from 2.2:
 - Removed margin-left/padding-left overrides from
@@ -13,8 +20,7 @@ Changes from 2.2:
 
 Changes from 2.1:
 - Removed bullet points from all menu list items.
-- Sub-menu items now full width (consistent with parent).
-- Sub-menu top margin added (6px).
+- Sub-menu items now full width consistent with parent.
 - Border width reduced from 3px to 2px on items.
 
 Changes from 2.0:
@@ -23,7 +29,7 @@ Changes from 2.0:
 Changes from 1.0:
 - Removed duplicate submenu CSS block at bottom.
 - Added sub-menu always-visible rule when parent
-  section is open (fixes submenu not showing).
+  section is open.
 =================================================
 All tokens defined in spp-tokens.css
 =================================================
@@ -237,7 +243,7 @@ All tokens defined in spp-tokens.css
     opacity: 0.85;
 }
 
-/* Remove bullets — no margin/padding overrides here */
+/* Remove bullets — no margin/padding overrides */
 .spp-mm-list,
 .spp-mm-list li,
 .spp-mm-list ul,
@@ -286,17 +292,28 @@ All tokens defined in spp-tokens.css
     font-weight: 600;
 }
 
+/* Sub-menu container — indented, no border on ul itself */
 .spp-mm-list ul.sub-menu {
+    display: block;
     margin-top: 3px;
     margin-left: 1rem;
     margin-bottom: 2px;
-    padding-left: 0;
-    border-left: 2px solid var(--spp-secondary);
+    padding: 0;
+    border: none;
     list-style: none !important;
+    width: calc(100% - 1rem);
+    box-sizing: border-box;
 }
 
+/* Each child li carries the teal left border */
 .spp-mm-list ul.sub-menu .spp-mm-item {
     margin-bottom: 2px;
+    border-left: 2px solid var(--spp-secondary);
+}
+
+/* Last child — no bottom margin, border stops here */
+.spp-mm-list ul.sub-menu .spp-mm-item:last-child {
+    margin-bottom: 0;
 }
 
 .spp-mm-list ul.sub-menu .spp-mm-item a {
@@ -307,6 +324,7 @@ All tokens defined in spp-tokens.css
     border-radius: 0 var(--spp-radius) var(--spp-radius) 0;
     white-space: normal;
     word-wrap: break-word;
+    display: block;
 }
 
 .spp-mm-list ul.sub-menu .spp-mm-item a:hover {
