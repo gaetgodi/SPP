@@ -1,9 +1,13 @@
 <?php
 /* =========================================================
    SPP UNIFIED MENU LOGIC
-   Reads directly from the Main menu structure.
-   Single mobile drawer with all navigation + account links.
-   Desktop side nav unchanged.
+   Version: 2.0
+   Date: 2026-06-04
+
+   Changes from 1.0:
+   - Removed duplicate spp_side_nav_shortcode declaration.
+   - Kept version with Recent Blog Posts section.
+   - Sub-menu CSS support noted (see spp-drawers.css).
    ========================================================= */
 
 /* ---------------------------------------------------------
@@ -99,6 +103,7 @@ function spp_render_section($items, $section_title) {
         $output .= spp_render_heading($section_title, $parent_item->url);
         $output .= '<ul class="spp-mm-list">' . $children . '</ul>';
     } else if ($parent_item) {
+        // Direct link with no children — always visible
         $output .= '<div class="spp-mm-section--direct">';
         $output .= '<ul class="spp-mm-list">';
         $output .= '<li class="spp-mm-item"><a href="' . esc_url($parent_item->url) . '">' . esc_html($parent_item->title) . '</a></li>';
@@ -112,7 +117,7 @@ function spp_render_section($items, $section_title) {
 
 /* ---------------------------------------------------------
    Render all top-level items dynamically
-   First item (Home) always open
+   First item gets spp-open + spp-always-open (stays open)
    --------------------------------------------------------- */
 function spp_render_all_sections($items, $nav_classes) {
     $output   = '<nav class="' . esc_attr($nav_classes) . '">';
@@ -121,6 +126,7 @@ function spp_render_all_sections($items, $nav_classes) {
     foreach ($items as $item) {
         if ((int) $item->menu_item_parent !== 0) continue;
 
+        // First top-level item is always open
         $extra_classes = $is_first ? ' spp-open spp-always-open' : '';
         $is_first      = false;
 
@@ -131,6 +137,7 @@ function spp_render_all_sections($items, $nav_classes) {
             $output .= spp_render_heading($item->title, $item->url);
             $output .= '<ul class="spp-mm-list">' . $children . '</ul>';
         } else {
+            // Direct link — always visible
             $output .= '<div class="spp-mm-section--direct">';
             $output .= '<ul class="spp-mm-list">';
             $output .= '<li class="spp-mm-item"><a href="' . esc_url($item->url) . '">' . esc_html($item->title) . '</a></li>';
@@ -146,16 +153,24 @@ function spp_render_all_sections($items, $nav_classes) {
 }
 
 /* =========================================================
-   MOBILE DRAWER — SINGLE COMBINED NAVIGATION
-   All menu items + account/logout based on role
+   LEFT DRAWER — CLUB NAVIGATION (ALL USERS)
    ========================================================= */
 function spp_mobile_menu_shortcode() {
     $items = spp_get_main_menu_items();
     if (!$items) return '<p>Menu not found.</p>';
+    return spp_render_all_sections($items, 'spp-mobile-menu-wrapper spp-side-nav--collapsible');
+}
+add_shortcode('spp_mobile_menu', 'spp_mobile_menu_shortcode');
 
-    $output = '<nav class="spp-mobile-menu-wrapper spp-side-nav--collapsible">';
+/* =========================================================
+   RIGHT DRAWER — MY TOOLS (ROLE-BASED)
+   ========================================================= */
+function spp_tools_menu_shortcode() {
+    $items = spp_get_main_menu_items();
 
-    // Account section — always at top, always visible
+    $output = '<nav class="spp-mobile-menu-wrapper spp-tools-mm spp-side-nav--collapsible">';
+
+    // Account — all users, always visible
     $output .= '<div class="spp-mm-section spp-mm-section--direct">';
     $output .= '<ul class="spp-mm-list">';
 
@@ -171,58 +186,52 @@ function spp_mobile_menu_shortcode() {
     $output .= '</ul>';
     $output .= '</div>';
 
-    // All main menu sections — first item (Home) always open
-    $is_first = true;
-    foreach ($items as $item) {
-        if ((int) $item->menu_item_parent !== 0) continue;
+    // Moderator — ladder role and administrators
+    if (current_user_can('administrator') || current_user_can('ladder')) {
+        $mod = spp_render_section($items, 'Moderator');
+        if ($mod) $output .= $mod;
+    }
 
-        // Skip Moderator for non-admins/non-ladder
-        if (strtolower($item->title) === 'moderator' && !current_user_can('administrator') && !current_user_can('ladder')) continue;
-        // Skip Management for non-admins
-        if (strtolower($item->title) === 'management' && !current_user_can('administrator')) continue;
-
-        $extra_classes = $is_first ? ' spp-open spp-always-open' : '';
-        $is_first      = false;
-
-        $children = spp_render_menu_tree($items, $item->ID);
-        $output  .= '<div class="spp-mm-section' . $extra_classes . '">';
-
-        if ($children) {
-            $output .= spp_render_heading($item->title, $item->url);
-            $output .= '<ul class="spp-mm-list">' . $children . '</ul>';
-        } else {
-            $output .= '<div class="spp-mm-section--direct">';
-            $output .= '<ul class="spp-mm-list">';
-            $output .= '<li class="spp-mm-item"><a href="' . esc_url($item->url) . '">' . esc_html($item->title) . '</a></li>';
-            $output .= '</ul>';
-            $output .= '</div>';
-        }
-
-        $output .= '</div>';
+    // Management — administrators only
+    if (current_user_can('administrator')) {
+        $mgmt = spp_render_section($items, 'Management');
+        if ($mgmt) $output .= $mgmt;
     }
 
     $output .= '</nav>';
     return $output;
 }
-add_shortcode('spp_mobile_menu', 'spp_mobile_menu_shortcode');
+add_shortcode('spp_tools_menu', 'spp_tools_menu_shortcode');
 
 /* =========================================================
-   MOBILE DRAWER — OUTPUT TO FOOTER
-   Single drawer only
+   MOBILE DRAWERS — OUTPUT TO FOOTER
    ========================================================= */
 add_action('wp_footer', function() {
     if (function_exists('et_fb_is_enabled') && et_fb_is_enabled()) return;
 
+    $tools_label = 'Login';
+    if (is_user_logged_in()) {
+        $first = wp_get_current_user()->first_name;
+        $tools_label = $first ? $first . '\'s Tools' : 'My Tools';
+    }
+
     echo '
-    <div id="spp-mm-open">
-        <span class="spp-mm-open-icon"></span>
+    <div id="spp-mm-drawer">
+        <button id="spp-mm-open">
+            <span class="spp-mm-open-icon"></span>
+            <span class="spp-mm-open-label">Club Menu</span>
+        </button>
+        <button id="spp-footer-mm-open" class="spp-mm-secondary-btn">
+            <span class="spp-mm-open-icon"></span>
+            <span class="spp-mm-open-label">' . esc_html($tools_label) . '</span>
+        </button>
     </div>
 
     <div id="spp-mm-overlay"></div>
 
     <div id="spp-mm-bottom-sheet">
         <div class="spp-mm-sheet-header">
-            <span class="spp-mm-sheet-title">Menu</span>
+            <span class="spp-mm-sheet-title">Club Menu</span>
             <button id="spp-mm-close">
                 <span id="spp-mm-close-icon"></span>
             </button>
@@ -230,37 +239,47 @@ add_action('wp_footer', function() {
         <div class="spp-mm-sheet-body">
             ' . do_shortcode('[spp_mobile_menu]') . '
         </div>
+    </div>
+
+    <div id="spp-footer-mm-bottom-sheet">
+        <div class="spp-mm-sheet-header">
+            <span class="spp-mm-sheet-title">' . esc_html($tools_label) . '</span>
+            <button id="spp-footer-mm-close">
+                <span class="spp-mm-close-icon"></span>
+            </button>
+        </div>
+        <div class="spp-mm-sheet-body">
+            ' . do_shortcode('[spp_tools_menu]') . '
+        </div>
     </div>';
 });
 
 /* =========================================================
    DESKTOP SIDE NAV — SHORTCODE
    ========================================================= */
-   function spp_side_nav_shortcode() {
+function spp_side_nav_shortcode() {
     $items = spp_get_main_menu_items();
     if (!$items) return '';
-    
+
     $output = spp_render_all_sections($items, 'spp-side-nav spp-side-nav--collapsible');
 
-    // Recent Blog Posts — logged in users only
-    if (is_user_logged_in()) {
-        $recent_posts = get_posts([
-            'numberposts' => 3,
-            'post_status' => 'publish',
-            'post_type'   => 'post',
-        ]);
+    // Recent Blog Posts
+    $recent_posts = get_posts([
+        'numberposts' => 3,
+        'post_status' => 'publish',
+        'post_type'   => 'post',
+    ]);
 
-        if ($recent_posts) {
-            $output .= '<div class="spp-recent-posts">';
-            $output .= '<h4 class="spp-recent-posts-title">Recent Blog Posts</h4>';
-            foreach ($recent_posts as $post) {
-                $output .= '<div class="spp-recent-post-item">';
-                $output .= '<a href="' . get_permalink($post->ID) . '">' . esc_html($post->post_title) . '</a>';
-                $output .= '<span class="spp-recent-post-date">' . get_the_date('M j, Y', $post->ID) . '</span>';
-                $output .= '</div>';
-            }
+    if ($recent_posts) {
+        $output .= '<div class="spp-recent-posts">';
+        $output .= '<h4 class="spp-recent-posts-title">Recent Blog Posts</h4>';
+        foreach ($recent_posts as $post) {
+            $output .= '<div class="spp-recent-post-item">';
+            $output .= '<a href="' . get_permalink($post->ID) . '">' . esc_html($post->post_title) . '</a>';
+            $output .= '<span class="spp-recent-post-date">' . get_the_date('M j, Y', $post->ID) . '</span>';
             $output .= '</div>';
         }
+        $output .= '</div>';
     }
 
     return $output;

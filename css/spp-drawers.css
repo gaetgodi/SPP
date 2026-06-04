@@ -321,3 +321,19 @@ All tokens defined in spp-tokens.css
         font-size: 0.75rem;
     }
 }
+/* ── Submenu items ───────────────────────────── */
+.spp-mm-list .sub-menu {
+    display: block;
+    padding-left: 16px;
+    margin: 0;
+    list-style: none;
+}
+.spp-mm-list .sub-menu .spp-mm-item a {
+    font-size: 0.9em;
+    opacity: 0.85;
+    padding: 4px 0;
+    display: block;
+}
+.spp-mm-list .sub-menu .spp-mm-item a:hover {
+    opacity: 1;
+}
