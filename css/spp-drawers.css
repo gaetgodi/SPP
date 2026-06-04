@@ -2,7 +2,14 @@
 =================================================
 spp-drawers.css
 Mobile right-side drawer navigation
-Site: pickleballstouffville.ca (staging)
+Site: pickleballstouffville.ca
+Version: 2.0
+Date: 2026-06-04
+
+Changes from 1.0:
+- Removed duplicate submenu CSS block at bottom.
+- Added sub-menu always-visible rule when parent
+  section is open (fixes submenu not showing).
 =================================================
 All tokens defined in spp-tokens.css
 =================================================
@@ -246,6 +253,7 @@ All tokens defined in spp-tokens.css
     border-left-color: var(--spp-primary) !important;
 }
 
+/* ── Submenu styling ────────────────────────────────── */
 .spp-mm-list ul.sub-menu {
     margin-left: 0.5rem;
     padding-left: 0.5rem;
@@ -258,6 +266,11 @@ All tokens defined in spp-tokens.css
     font-size: 0.7rem;
     padding-left: 12px;
     background: var(--spp-item-bg-sub) !important;
+}
+
+/* Parent item with children indicator */
+.spp-mm-list .menu-item-has-children > a {
+    font-weight: 600;
 }
 
 .spp-mm-section--direct .spp-mm-list {
@@ -278,6 +291,11 @@ All tokens defined in spp-tokens.css
     display: block;
 }
 
+/* Sub-menus always visible when parent section is open */
+.spp-side-nav--collapsible .spp-mm-section.spp-open .spp-mm-list .sub-menu {
+    display: block !important;
+}
+
 /* Arrow handled by JS toggle button */
 .spp-side-nav--collapsible .spp-mm-heading::after {
     content: none;
@@ -294,6 +312,11 @@ All tokens defined in spp-tokens.css
 }
 
 #spp-mm-bottom-sheet .spp-side-nav--collapsible .spp-mm-section.spp-open .spp-mm-list {
+    display: block !important;
+}
+
+/* Sub-menus always visible in mobile drawer when open */
+#spp-mm-bottom-sheet .spp-side-nav--collapsible .spp-mm-section.spp-open .spp-mm-list .sub-menu {
     display: block !important;
 }
 
@@ -320,20 +343,4 @@ All tokens defined in spp-tokens.css
     .spp-side-nav .spp-mm-item a {
         font-size: 0.75rem;
     }
-}
-/* ── Submenu items ───────────────────────────── */
-.spp-mm-list .sub-menu {
-    display: block;
-    padding-left: 16px;
-    margin: 0;
-    list-style: none;
-}
-.spp-mm-list .sub-menu .spp-mm-item a {
-    font-size: 0.9em;
-    opacity: 0.85;
-    padding: 4px 0;
-    display: block;
-}
-.spp-mm-list .sub-menu .spp-mm-item a:hover {
-    opacity: 1;
 }
