@@ -3,8 +3,13 @@
 spp-drawers.css
 Mobile right-side drawer navigation
 Site: pickleballstouffville.ca
-Version: 2.0
+Version: 2.1
 Date: 2026-06-04
+
+Changes from 2.0:
+- Fixed submenu item width and indentation.
+  Children now properly indented under parent
+  with teal left border and lighter background.
 
 Changes from 1.0:
 - Removed duplicate submenu CSS block at bottom.
@@ -255,17 +260,31 @@ All tokens defined in spp-tokens.css
 
 /* ── Submenu styling ────────────────────────────────── */
 .spp-mm-list ul.sub-menu {
-    margin-left: 0.5rem;
-    padding-left: 0.5rem;
+    margin-left: 1rem;
+    padding-left: 0;
     border-left: 2px solid var(--spp-secondary);
     margin-top: 3px;
+    margin-bottom: 3px;
     list-style: none;
+    width: auto;
+}
+
+.spp-mm-list ul.sub-menu .spp-mm-item {
+    margin-bottom: 2px;
+    margin-right: 0;
 }
 
 .spp-mm-list ul.sub-menu .spp-mm-item a {
     font-size: 0.7rem;
-    padding-left: 12px;
+    padding: 6px 10px 6px 10px;
     background: var(--spp-item-bg-sub) !important;
+    border-left: none;
+    border-radius: 0 var(--spp-radius) var(--spp-radius) 0;
+}
+
+.spp-mm-list ul.sub-menu .spp-mm-item a:hover {
+    background: rgba(0, 137, 123, 0.15) !important;
+    color: var(--spp-primary) !important;
 }
 
 /* Parent item with children indicator */
