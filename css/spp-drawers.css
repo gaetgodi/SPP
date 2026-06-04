@@ -3,7 +3,7 @@
 spp-drawers.css
 Mobile right-side drawer navigation
 Site: pickleballstouffville.ca
-Version: 2.7
+Version: 2.8
 Date: 2026-06-04
 
 Changes from 2.5:
@@ -247,11 +247,6 @@ All tokens defined in spp-tokens.css
     .et_pb_section_0_tb_footer {
         padding-bottom: 20px !important;
 
-    /* Hide label text on hamburger buttons — icon only */
-    #spp-mm-open .spp-mm-open-label,
-    #spp-footer-mm-open .spp-mm-open-label {
-        display: none !important;
-    }
     }
 }
 
@@ -264,6 +259,12 @@ All tokens defined in spp-tokens.css
 .spp-side-nav,
 .spp-mobile-menu-wrapper {
     overflow: hidden;
+}
+
+/* Hide label text on hamburger buttons — icon only at all widths */
+#spp-mm-open .spp-mm-open-label,
+#spp-footer-mm-open .spp-mm-open-label {
+    display: none !important;
 }
 
 .spp-mm-section {
