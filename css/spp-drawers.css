@@ -3,10 +3,11 @@
 spp-drawers.css
 Mobile right-side drawer navigation
 Site: pickleballstouffville.ca
-Version: 2.6
+Version: 2.7
 Date: 2026-06-04
 
 Changes from 2.5:
+- Hidden label text on hamburger buttons (icon only).
 - Added CSS rules for #spp-footer-mm-bottom-sheet
   (tools drawer) — was never defined, causing title
   to leak into page content.
@@ -245,6 +246,12 @@ All tokens defined in spp-tokens.css
     /* Footer bottom padding no longer needed */
     .et_pb_section_0_tb_footer {
         padding-bottom: 20px !important;
+
+    /* Hide label text on hamburger buttons — icon only */
+    #spp-mm-open .spp-mm-open-label,
+    #spp-footer-mm-open .spp-mm-open-label {
+        display: none !important;
+    }
     }
 }
 
