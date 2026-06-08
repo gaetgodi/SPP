@@ -53,7 +53,7 @@ if (!isset($Event) || !$Event) { echo '<p class="gl-error">No event selected. Pl
 
 $schedules_prev = "SchedulesPrev$Event";
 // Need to run this to refresh travel fields
-echo do_shortcode("[cmruncode name='Create membership table']");
+//echo do_shortcode("[cmruncode name='Create membership table']");
 
 // -------------------------------------------------------
 // ASSIGN RANKS
