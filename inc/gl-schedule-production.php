@@ -1,11 +1,15 @@
 <?php
 /* =========================================================
    GL Schedule Production
-   Version: 1.0.00
-   Date: 2026-05-28
-   Based on: Schedule Production 1.8.11
+   Version: 1.1.0
+   Date: 2026-06-08
 
-   Changes from 1.8.11:
+   Changes from 1.0.0:
+   - Wrapped in [spp_create_schedule] shortcode so it can be
+     called directly from a page without Code Manager.
+   - Output buffered via ob_start()/ob_get_clean().
+
+   Changes from 1.0.0:
    - Reads registrants from lX9c1_gl_registrations instead of
      lX9c1_rtec_entries. No +30000000 hack.
    - $Event is now the actual gl_event_occurrences.id value.
@@ -14,6 +18,18 @@
    - All other logic — Master, Groups, Courts, Times, Schedules,
      preferred tables, carpool, post-processing — unchanged.
    ========================================================= */
+
+defined( 'ABSPATH' ) || exit;
+
+add_shortcode( 'spp_create_schedule', 'spp_create_schedule_shortcode' );
+
+function spp_create_schedule_shortcode() {
+    ob_start();
+    spp_run_schedule_production();
+    return ob_get_clean();
+}
+
+function spp_run_schedule_production() {
 
 if (!session_status() == PHP_SESSION_ACTIVE) {
 session_start();
@@ -29,7 +45,7 @@ global $carpool_rank_tolerance;
 $Schedules = "Schedules";
 $ctoffdt = "2050-12-31";
 $prefix = $wpdb->prefix;
-if (!isset($Event)) { return 0; }
+if (!isset($Event) || !$Event) { echo '<p class="gl-error">No event selected. Please select a ladder event first.</p>'; return; }
 
 $schedules_prev = "SchedulesPrev$Event";
 // Need to run this to refresh travel fields
@@ -38,7 +54,7 @@ echo do_shortcode("[cmruncode name='Create membership table']");
 // -------------------------------------------------------
 // ASSIGN RANKS
 // -------------------------------------------------------
-echo do_shortcode("[cmruncode name='GL Assign ranks to registered players']");
+echo do_shortcode("[cmruncode name='Assign ranks to registered players']");
 
 $settings = get_option('Pkldr_settings');
 list('Pkldr_Project' => $Pkldr_Project, 'Pkldr_PageLdr' => $Pkldr_PageLdr) = $settings;
@@ -1603,4 +1619,4 @@ if (isset($Event) and $Event <> 0) {
 } else {
     echo "<br />No event set for calculations";
 }
-?>
+}
