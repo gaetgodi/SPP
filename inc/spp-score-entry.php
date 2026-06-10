@@ -14,8 +14,14 @@
  * - Available only while spp_schedule_published = 1.
  * - Paper score sheets + Score Scanner remain the verification layer.
  *
- * Version: 1.0.0
+ * Version: 1.1.0
  * Date:    2026-06-10
+ *
+ * Changes from 1.0.0:
+ *   - Group selector at top: greyed out (their own group) for players,
+ *     active dropdown for editors/admins to enter/correct any group.
+ *   - Match status block: per-player running totals and rounds-entered
+ *     count, refreshed automatically after each save.
  */
 
 defined( 'ABSPATH' ) || exit;
@@ -46,6 +52,48 @@ function spp_se_pairings( int $count ) : array {
     );
 }
 
+// ── Status helper: per-player totals + rounds entered ────────────────────────
+
+function spp_se_group_status( int $group_id ) : array {
+    global $wpdb;
+
+    $players = $wpdb->get_results( $wpdb->prepare(
+        "SELECT user_id, first_name, Game1, Game2, Game3, Game4, Game5
+         FROM Schedules WHERE group_id = %d ORDER BY Rank",
+        $group_id
+    ), ARRAY_A );
+
+    $count    = count( $players );
+    $pairings = spp_se_pairings( $count );
+
+    $totals = array();
+    foreach ( $players as $p ) {
+        $tot = 0;
+        for ( $g = 1; $g <= 5; $g++ ) {
+            $v = $p[ 'Game' . $g ];
+            if ( $v !== null && $v !== '' && (int) $v >= 0 ) $tot += (int) $v;
+        }
+        $totals[] = array( 'name' => $p['first_name'], 'total' => $tot );
+    }
+
+    // Count rounds entered: round N is entered if the first blue player has a non-null Game{N}
+    $entered = 0;
+    foreach ( $pairings as $i => $r ) {
+        $g    = 'Game' . ( $i + 1 );
+        $pos  = $r['blue'][0];
+        if ( isset( $players[ $pos ] ) ) {
+            $v = $players[ $pos ][ $g ];
+            if ( $v !== null && $v !== '' ) $entered++;
+        }
+    }
+
+    return array(
+        'totals'  => $totals,
+        'entered' => $entered,
+        'rounds'  => count( $pairings ),
+    );
+}
+
 // ── Shortcode ────────────────────────────────────────────────────────────────
 
 add_shortcode( 'spp_score_entry', 'spp_score_entry_shortcode' );
@@ -61,19 +109,39 @@ function spp_score_entry_shortcode() {
         return '<p>Score entry is not open — no schedule is currently published.</p>';
     }
 
-    $user_id = get_current_user_id();
+    $user_id  = get_current_user_id();
+    $is_admin = current_user_can( 'edit_posts' );
 
-    // Find the player's group
+    // All active groups (for admin dropdown)
+    $all_groups = $wpdb->get_results(
+        "SELECT s.group_id, g.GP_name, c.Crt_name, t.T_desc, COUNT(*) as players
+         FROM Schedules s
+         JOIN Groups g ON s.group_id = g.GP_ID
+         JOIN Courts c ON s.Crt_ID = c.Crt_ID
+         JOIN Times t  ON s.time_id = t.T_ID
+         WHERE s.group_id != 99
+         GROUP BY s.group_id, g.GP_name, c.Crt_name, t.T_desc
+         ORDER BY s.group_id",
+        ARRAY_A
+    );
+
+    // Player's own group
     $me = $wpdb->get_row( $wpdb->prepare(
         "SELECT group_id FROM Schedules WHERE user_id = %d AND group_id != 99",
         $user_id
     ), ARRAY_A );
+    $own_group = $me ? (int) $me['group_id'] : 0;
 
-    if ( ! $me ) {
+    // Resolve which group to display
+    if ( $is_admin && isset( $_GET['se_group'] ) && intval( $_GET['se_group'] ) > 0 ) {
+        $group_id = intval( $_GET['se_group'] );
+    } elseif ( $own_group ) {
+        $group_id = $own_group;
+    } elseif ( $is_admin && ! empty( $all_groups ) ) {
+        $group_id = (int) $all_groups[0]['group_id'];
+    } else {
         return '<p>You are not in tonight\'s schedule, so there are no scores for you to enter.</p>';
     }
-
-    $group_id = (int) $me['group_id'];
 
     // Load the group, ordered by Rank (same order as pairings everywhere else)
     $players = $wpdb->get_results( $wpdb->prepare(
@@ -90,20 +158,30 @@ function spp_score_entry_shortcode() {
     ), ARRAY_A );
 
     if ( empty( $players ) ) {
-        return '<p>Could not load your group.</p>';
+        return '<p>Could not load the group.</p>';
     }
 
     $count     = count( $players );
     $pairings  = spp_se_pairings( $count );
     $win_score = ( $count >= 5 ) ? 15 : 20;
     $p0        = $players[0];
+    $status    = spp_se_group_status( $group_id );
 
     ob_start();
     ?>
     <style>
         .se-wrap { max-width:560px; margin:10px auto; font-family:Arial,sans-serif; font-size:15px; }
+        .se-group-select { margin-bottom:10px; text-align:center; }
+        .se-group-select select { padding:8px 12px; font-size:15px; border:1px solid #bbb; border-radius:6px; max-width:100%; }
+        .se-group-select select:disabled { background:#eee; color:#555; }
         .se-header { background:#2c3e50; color:#fff; padding:10px 14px; border-radius:6px; font-weight:bold; text-align:center; margin-bottom:6px; }
-        .se-sub { text-align:center; color:#666; font-size:13px; margin-bottom:14px; }
+        .se-sub { text-align:center; color:#666; font-size:13px; margin-bottom:10px; }
+        .se-status { background:#f0f7ff; border:1px solid #3766AB; border-radius:8px; padding:10px 12px; margin-bottom:14px; }
+        .se-status-title { font-weight:bold; color:#3766AB; font-size:14px; margin-bottom:6px; }
+        .se-status-progress { font-size:13px; color:#555; margin-bottom:6px; }
+        .se-status table { width:100%; border-collapse:collapse; font-size:14px; }
+        .se-status td { padding:3px 6px; border-bottom:1px solid #dde7f3; }
+        .se-status td:last-child { text-align:right; font-weight:bold; }
         .se-round { background:#fff; border:1px solid #ddd; border-radius:8px; margin-bottom:14px; padding:12px; }
         .se-round-title { font-weight:bold; font-size:16px; margin-bottom:8px; color:#2c3e50; }
         .se-teams { display:flex; gap:8px; margin-bottom:10px; }
@@ -129,6 +207,17 @@ function spp_score_entry_shortcode() {
     </style>
 
     <div class="se-wrap">
+
+        <div class="se-group-select">
+            <select id="se_group_select" <?php echo $is_admin ? '' : 'disabled'; ?>>
+                <?php foreach ( $all_groups as $g ) : ?>
+                    <option value="<?php echo esc_attr( $g['group_id'] ); ?>" <?php selected( (int) $g['group_id'], $group_id ); ?>>
+                        <?php echo esc_html( $g['GP_name'] . ' — ' . $g['Crt_name'] . ' — ' . $g['T_desc'] ); ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+
         <div class="se-header">
             <?php echo esc_html( $p0['GP_name'] . ' — ' . $p0['Crt_name'] . ' — ' . $p0['T_desc'] ); ?>
         </div>
@@ -136,6 +225,19 @@ function spp_score_entry_shortcode() {
             Tap the winning team, enter the losing team&rsquo;s score, then Save.
             Winners are recorded as <?php echo $win_score; ?>.
         </div>
+
+        <div class="se-status" id="se_status">
+            <div class="se-status-title">Match Status</div>
+            <div class="se-status-progress" id="se_status_progress">
+                Rounds entered: <?php echo $status['entered']; ?> of <?php echo $status['rounds']; ?>
+            </div>
+            <table id="se_status_table">
+                <?php foreach ( $status['totals'] as $t ) : ?>
+                    <tr><td><?php echo esc_html( $t['name'] ); ?></td><td><?php echo esc_html( $t['total'] ); ?></td></tr>
+                <?php endforeach; ?>
+            </table>
+        </div>
+
         <div class="se-msg" id="se_msg"></div>
 
         <?php foreach ( $pairings as $rnd_idx => $round ) :
@@ -146,7 +248,6 @@ function spp_score_entry_shortcode() {
             foreach ( $round['red']  as $i ) { if ( isset( $players[ $i ] ) ) $red_names[]  = $players[ $i ]['first_name']; }
             $bye_name = ( $round['bye'] >= 0 && isset( $players[ $round['bye'] ] ) ) ? $players[ $round['bye'] ]['first_name'] : '';
 
-            // Current saved state for this round (read first blue player's Game value + first red's)
             $game_col   = 'Game' . $rnd_no;
             $blue_score = isset( $players[ $round['blue'][0] ] ) ? $players[ $round['blue'][0] ][ $game_col ] : null;
             $red_score  = isset( $players[ $round['red'][0] ] )  ? $players[ $round['red'][0] ][ $game_col ]  : null;
@@ -186,15 +287,40 @@ function spp_score_entry_shortcode() {
 
     <script>
     document.addEventListener('DOMContentLoaded', function() {
-        var ajaxurl = '<?php echo esc_js( admin_url( 'admin-ajax.php' ) ); ?>';
-        var nonce   = '<?php echo esc_js( wp_create_nonce( 'spp_score_entry' ) ); ?>';
-        var msg     = document.getElementById('se_msg');
+        var ajaxurl  = '<?php echo esc_js( admin_url( 'admin-ajax.php' ) ); ?>';
+        var nonce    = '<?php echo esc_js( wp_create_nonce( 'spp_score_entry' ) ); ?>';
+        var groupId  = <?php echo (int) $group_id; ?>;
+        var msg      = document.getElementById('se_msg');
+        var groupSel = document.getElementById('se_group_select');
+
+        if ( groupSel && ! groupSel.disabled ) {
+            groupSel.addEventListener('change', function() {
+                var url = new URL(window.location.href);
+                url.searchParams.set('se_group', this.value);
+                window.location.href = url.toString();
+            });
+        }
 
         function showMsg(text, ok) {
             msg.textContent = text;
             msg.className = 'se-msg ' + (ok ? 'se-msg-ok' : 'se-msg-err');
             msg.style.display = 'block';
             setTimeout(function(){ msg.style.display = 'none'; }, 4000);
+        }
+
+        function updateStatus(status) {
+            if (!status) return;
+            document.getElementById('se_status_progress').textContent =
+                'Rounds entered: ' + status.entered + ' of ' + status.rounds;
+            var table = document.getElementById('se_status_table');
+            table.innerHTML = '';
+            status.totals.forEach(function(t) {
+                var tr = document.createElement('tr');
+                tr.innerHTML = '<td></td><td></td>';
+                tr.children[0].textContent = t.name;
+                tr.children[1].textContent = t.total;
+                table.appendChild(tr);
+            });
         }
 
         document.querySelectorAll('.se-round').forEach(function(roundEl) {
@@ -229,6 +355,7 @@ function spp_score_entry_shortcode() {
                 data.append('round', roundEl.dataset.round);
                 data.append('winner', winner);
                 data.append('loser_score', input.value);
+                data.append('group_id', groupId);
 
                 fetch(ajaxurl, { method: 'POST', body: data, credentials: 'same-origin' })
                     .then(function(r){ return r.json(); })
@@ -245,6 +372,7 @@ function spp_score_entry_shortcode() {
                                 roundEl.appendChild(cur);
                             }
                             cur.textContent = 'Current: Blue ' + res.data.blue + ' — Red ' + res.data.red;
+                            updateStatus(res.data.status);
                         } else {
                             showMsg(res.data || 'Save failed', false);
                         }
@@ -278,35 +406,47 @@ add_action( 'wp_ajax_spp_player_score_entry', function() {
     }
 
     $user_id     = get_current_user_id();
+    $is_admin    = current_user_can( 'edit_posts' );
     $round       = intval( $_POST['round'] ?? 0 );
     $winner      = sanitize_text_field( $_POST['winner'] ?? '' );
     $loser_score = intval( $_POST['loser_score'] ?? -1 );
+    $req_group   = intval( $_POST['group_id'] ?? 0 );
 
     if ( $round < 1 || $round > 5 || ! in_array( $winner, array( 'blue', 'red' ), true ) || $loser_score < 0 ) {
         wp_send_json_error( 'Invalid input.' );
     }
 
-    // Server-side: derive the player's group and pairings — never trust the client
+    // Resolve the group server-side. Players are always locked to their own
+    // group; editors/admins may target any group via group_id.
     $me = $wpdb->get_row( $wpdb->prepare(
         "SELECT group_id FROM Schedules WHERE user_id = %d AND group_id != 99",
         $user_id
     ), ARRAY_A );
-    if ( ! $me ) {
+    $own_group = $me ? (int) $me['group_id'] : 0;
+
+    if ( $is_admin && $req_group > 0 ) {
+        $group_id = $req_group;
+    } elseif ( $own_group ) {
+        $group_id = $own_group;
+    } else {
         wp_send_json_error( 'You are not in the schedule.' );
     }
 
-    $group_id = (int) $me['group_id'];
-    $players  = $wpdb->get_results( $wpdb->prepare(
+    $players = $wpdb->get_results( $wpdb->prepare(
         "SELECT user_id FROM Schedules WHERE group_id = %d ORDER BY Rank",
         $group_id
     ), ARRAY_A );
+
+    if ( empty( $players ) ) {
+        wp_send_json_error( 'Group not found.' );
+    }
 
     $count     = count( $players );
     $pairings  = spp_se_pairings( $count );
     $win_score = ( $count >= 5 ) ? 15 : 20;
 
     if ( $round > count( $pairings ) ) {
-        wp_send_json_error( 'Invalid round for your group.' );
+        wp_send_json_error( 'Invalid round for this group.' );
     }
     if ( $loser_score >= $win_score ) {
         wp_send_json_error( "Loser score must be less than {$win_score}." );
@@ -344,5 +484,6 @@ add_action( 'wp_ajax_spp_player_score_entry', function() {
         'message' => "Round {$round} saved: Blue {$blue_score} — Red {$red_score}.",
         'blue'    => $blue_score,
         'red'     => $red_score,
+        'status'  => spp_se_group_status( $group_id ),
     ) );
 });
