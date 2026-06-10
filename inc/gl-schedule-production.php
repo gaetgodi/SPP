@@ -1,8 +1,11 @@
 <?php
 /* =========================================================
    GL Schedule Production
-   Version: 1.3.0
-   Date: 2026-06-08
+   Version: 1.4.0
+   Date: 2026-06-10
+
+   Changes from 1.3.0:
+   - Clear spp_modified_groups option when new schedule is created.
 
    Changes from 1.1.0:
    - Pass 1.5 now handles +6:40 and +7:50 preferences in addition
@@ -53,7 +56,7 @@ if (!isset($Event) || !$Event) { echo '<p class="gl-error">No event selected. Pl
 
 $schedules_prev = "SchedulesPrev$Event";
 // Need to run this to refresh travel fields
-//echo do_shortcode("[cmruncode name='Create membership table']");
+echo do_shortcode("[cmruncode name='Create membership table']");
 
 // -------------------------------------------------------
 // ASSIGN RANKS
@@ -1647,6 +1650,10 @@ if (isset($Event) and $Event <> 0) {
     echo "✓ Test suite snapshot saved to $test_table.<br>";
 
     echo "<br><strong>Schedule created in draft mode — review and modify before publishing to players.</strong><br>";
+
+    // Clear modified groups from previous event
+    delete_option( 'spp_modified_groups' );
+    echo "✓ Modified groups list cleared for new event.<br>";
 
 } else {
     echo "<br />No event set for calculations";
