@@ -45,6 +45,7 @@ require_once get_stylesheet_directory() . '/inc/spp-blog-reminder.php';
 require_once get_stylesheet_directory() . '/inc/spp-blog-system.php';
 require_once get_stylesheet_directory() . '/inc/gl-schedule-production.php';
 require_once get_stylesheet_directory() . '/inc/spp-schedule-admin.php';
+require_once get_stylesheet_directory() . '/inc/spp-score-entry.php';
 
 add_filter('template_include', function($template) {
     if (is_singular('tribe_events')) {
