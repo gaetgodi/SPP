@@ -10,8 +10,14 @@
  *   - Add a walk-in player to a group
  *   - Re-send personalized group emails to affected players + CC convenor
  *
- * Version: 1.0.0
- * Date:    2026-06-09
+ * Version: 1.1.0
+ * Date:    2026-06-10
+ *
+ * Changes from 1.0.0:
+ *   - Track modified groups in spp_modified_groups option (JSON array).
+ *   - "Print Replacement Score Sheets" button appears when modified groups exist.
+ *   - Replacement score sheets include [REVISED GROUP X] marker for scanner priority.
+ *   - Modified groups cleared when a new schedule is run (via spp_schedule_admin_clear_modified).
  */
 
 defined( 'ABSPATH' ) || exit;
@@ -44,6 +50,7 @@ function spp_schedule_admin_shortcode() {
     // ── Handle actions ────────────────────────────────────────────────────────
     if ( isset( $_POST['spp_sa_nonce'] ) && wp_verify_nonce( $_POST['spp_sa_nonce'], 'spp_schedule_admin' ) ) {
         $action = sanitize_text_field( $_POST['spp_sa_action'] ?? '' );
+        $modified_groups = array();
 
         switch ( $action ) {
 
@@ -81,6 +88,9 @@ function spp_schedule_admin_shortcode() {
                         ) );
                         $label = ( $penalty === 'ns' ) ? 'NS (no-show)' : 'NP (not playing)';
                         $message = "Player {$pname} marked as {$label} and removed from Group {$group_id}.";
+
+                        // Record modified group
+                        $modified_groups[] = $group_id;
 
                         // Re-send email to remaining group
                         $send_result = spp_sa_send_group_email( $group_id, $convenor_email, $event_date, $occ );
@@ -127,6 +137,10 @@ function spp_schedule_admin_shortcode() {
                             $from_user_id
                         ) );
                         $message = "Moved {$pname} from Group {$from_group_id} to Group {$to_group_id}.";
+
+                        // Record both modified groups
+                        $modified_groups[] = $to_group_id;
+                        $modified_groups[] = $from_group_id;
 
                         // Re-send emails to both groups
                         spp_sa_send_group_email( $to_group_id,   $convenor_email, $event_date, $occ );
@@ -216,6 +230,9 @@ function spp_schedule_admin_shortcode() {
                     $pname = trim( $member['first_name'] . ' ' . $member['last_name'] );
                     $message = "Walk-in {$pname} added to Group {$walkin_group} with rank {$walkin_rank}.";
 
+                    // Record modified group
+                    $modified_groups[] = $walkin_group;
+
                     // Re-send group email
                     spp_sa_send_group_email( $walkin_group, $convenor_email, $event_date, $occ );
                     $message .= " Group email re-sent.";
@@ -224,7 +241,35 @@ function spp_schedule_admin_shortcode() {
         }
     }
 
-    // ── Load current schedule ─────────────────────────────────────────────────
+    // ── Record modified groups ───────────────────────────────────────────────
+    if ( ! empty( $modified_groups ) ) {
+        $stored = json_decode( get_option( 'spp_modified_groups', '[]' ), true );
+        if ( ! is_array( $stored ) ) $stored = array();
+        foreach ( $modified_groups as $mgid ) {
+            if ( ! in_array( $mgid, $stored ) ) {
+                $stored[] = $mgid;
+            }
+        }
+        update_option( 'spp_modified_groups', json_encode( $stored ) );
+    }
+
+    // Handle print replacement sheets action
+    if ( isset( $_POST['spp_sa_nonce2'] ) && wp_verify_nonce( $_POST['spp_sa_nonce2'], 'spp_print_sheets' ) ) {
+        $action2 = sanitize_text_field( $_POST['spp_sa_action2'] ?? '' );
+        if ( $action2 === 'clear_modified' ) {
+            delete_option( 'spp_modified_groups' );
+            $message = 'Modified groups list cleared.';
+        }
+        if ( $action2 === 'print_sheets' ) {
+            $stored_mods = json_decode( get_option( 'spp_modified_groups', '[]' ), true );
+            if ( ! empty( $stored_mods ) ) {
+                spp_sa_print_replacement_sheets( $stored_mods, $event_date );
+                exit;
+            }
+        }
+    }
+
+    // ── Load current schedule ─────────────────────────────────────────────────────
     $groups_data = $wpdb->get_results(
         "SELECT s.user_id, s.first_name, s.last_name, s.Rank, s.group_id,
                 s.Crt_ID, s.time_id, g.GP_name, c.Crt_name, t.T_desc
@@ -299,6 +344,38 @@ function spp_schedule_admin_shortcode() {
         <?php endif; ?>
         <?php if ( $error ) : ?>
             <div class="sa-notice sa-notice-error"><?php echo esc_html( $error ); ?></div>
+        <?php endif; ?>
+
+        <?php
+        // ── Modified groups banner ────────────────────────────────────────
+        $stored_modified = json_decode( get_option( 'spp_modified_groups', '[]' ), true );
+        if ( ! is_array( $stored_modified ) ) $stored_modified = array();
+        if ( ! empty( $stored_modified ) ) :
+            sort( $stored_modified );
+        ?>
+            <div class="sa-notice sa-notice-warning">
+                <strong>Modified groups this session:</strong>
+                Group<?php echo count($stored_modified) > 1 ? 's' : ''; ?>
+                <?php echo esc_html( implode( ', ', $stored_modified ) ); ?>
+                — replacement score sheets should be printed for these groups.
+            </div>
+            <div style="margin-bottom:16px;display:flex;gap:12px;align-items:center;">
+                <form method="post" target="_blank">
+                    <?php wp_nonce_field( 'spp_print_sheets', 'spp_sa_nonce2' ); ?>
+                    <input type="hidden" name="spp_sa_action2" value="print_sheets">
+                    <button type="submit" class="sa-submit" style="background:#27ae60;">
+                        Print Replacement Score Sheets
+                    </button>
+                </form>
+                <form method="post">
+                    <?php wp_nonce_field( 'spp_print_sheets', 'spp_sa_nonce2' ); ?>
+                    <input type="hidden" name="spp_sa_action2" value="clear_modified">
+                    <button type="submit" class="sa-submit" style="background:#888;"
+                            onclick="return confirm('Clear the modified groups list?')">
+                        Clear List
+                    </button>
+                </form>
+            </div>
         <?php endif; ?>
 
         <?php // ── Suggested replacement ─────────────────────────────────── ?>
@@ -634,4 +711,125 @@ function spp_sa_send_group_email( int $group_id, string $convenor_email, string 
     }
 
     return $sent > 0;
+}
+
+// ── Helper: print replacement score sheets ───────────────────────────────────
+
+function spp_sa_print_replacement_sheets( array $group_ids, string $event_date ) {
+    global $wpdb;
+
+    $pairings_5 = array(
+        array('name'=>'Round 1','blue'=>array(0,1),'red'=>array(2,3),'bye'=>4),
+        array('name'=>'Round 2','blue'=>array(0,2),'red'=>array(1,4),'bye'=>3),
+        array('name'=>'Round 3','blue'=>array(0,3),'red'=>array(2,4),'bye'=>1),
+        array('name'=>'Round 4','blue'=>array(0,4),'red'=>array(1,3),'bye'=>2),
+        array('name'=>'Round 5','blue'=>array(1,2),'red'=>array(3,4),'bye'=>0),
+    );
+    $pairings_4 = array(
+        array('name'=>'Round 1','blue'=>array(0,1),'red'=>array(2,3),'bye'=>-1),
+        array('name'=>'Round 2','blue'=>array(0,2),'red'=>array(1,3),'bye'=>-1),
+        array('name'=>'Round 3','blue'=>array(0,3),'red'=>array(1,2),'bye'=>-1),
+    );
+    $pairings_3 = array(
+        array('name'=>'Round 1','blue'=>array(0),'red'=>array(1),'bye'=>2),
+        array('name'=>'Round 2','blue'=>array(0),'red'=>array(2),'bye'=>1),
+        array('name'=>'Round 3','blue'=>array(1),'red'=>array(2),'bye'=>0),
+    );
+
+    echo '<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Replacement Score Sheets — ' . esc_html($event_date) . '</title>
+<style>
+    body { font-family: Arial, sans-serif; font-size: 13px; margin: 0; padding: 0; }
+    .sheet { page-break-after: always; padding: 20px; max-width: 700px; margin: 0 auto; }
+    .sheet:last-child { page-break-after: avoid; }
+    .revised-banner {
+        background: #c0392b; color: #fff; font-size: 18px; font-weight: bold;
+        padding: 10px 16px; border-radius: 4px; margin-bottom: 12px;
+        text-align: center; letter-spacing: 1px;
+    }
+    .group-header {
+        background: #2c3e50; color: #fff; padding: 8px 14px;
+        font-weight: bold; font-size: 15px; border-radius: 4px 4px 0 0;
+    }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+    th { background: #3766AB; color: #fff; padding: 6px 10px; text-align: left; }
+    td { padding: 6px 10px; border-bottom: 1px solid #ddd; }
+    tr:nth-child(even) td { background: #f9f9f9; }
+    .blue-header { background: #5b8dd9; color: #fff; }
+    .red-header  { background: #c0607a; color: #fff; }
+    .score-col { width: 60px; border: 1px solid #999; background: #fff; }
+    .print-btn { margin: 20px; padding: 10px 24px; background: #3766AB; color: #fff;
+                 border: none; border-radius: 4px; font-size: 15px; cursor: pointer; }
+    @media print { .print-btn { display: none; } }
+</style>
+</head>
+<body>';
+
+    echo '<div style="text-align:center;margin:16px 0;">
+        <button class="print-btn" onclick="window.print()">Print All Sheets</button>
+    </div>';
+
+    foreach ( $group_ids as $group_id ) {
+        $group_id = (int) $group_id;
+
+        $players = $wpdb->get_results( $wpdb->prepare(
+            "SELECT s.user_id, s.first_name, s.last_name, s.Rank, s.user_phone,
+                    g.GP_name, c.Crt_name, t.T_desc
+             FROM Schedules s
+             JOIN Groups g ON s.group_id = g.GP_ID
+             JOIN Courts c ON s.Crt_ID = c.Crt_ID
+             JOIN Times t  ON s.time_id = t.T_ID
+             WHERE s.group_id = %d
+             ORDER BY s.Rank",
+            $group_id
+        ), ARRAY_A );
+
+        if ( empty( $players ) ) continue;
+
+        $count    = count( $players );
+        $p0       = $players[0];
+        $pairings = $count >= 5 ? $pairings_5 : ( $count >= 4 ? $pairings_4 : $pairings_3 );
+
+        echo '<div class="sheet">';
+        echo '<div class="revised-banner">[REVISED GROUP ' . $group_id . '] — ' . esc_html($event_date) . '</div>';
+        echo '<div class="group-header">' . esc_html($p0['GP_name']) . ' &mdash; ' . esc_html($p0['Crt_name']) . ' &mdash; ' . esc_html($p0['T_desc']) . '</div>';
+
+        // Player roster
+        echo '<table>';
+        echo '<thead><tr><th>Rank</th><th>Name</th><th>Phone</th></tr></thead><tbody>';
+        foreach ( $players as $p ) {
+            echo '<tr><td>' . esc_html($p['Rank']) . '</td><td>' . esc_html($p['first_name'] . ' ' . $p['last_name']) . '</td><td>' . esc_html($p['user_phone'] ?? '') . '</td></tr>';
+        }
+        echo '</tbody></table>';
+
+        // Pairings + score entry table
+        echo '<table>';
+        echo '<thead><tr>
+            <th>Round</th>
+            <th class="blue-header">Blue Team</th><th class="blue-header">Score</th>
+            <th class="red-header">Red Team</th><th class="red-header">Score</th>
+            <th>Bye</th>
+        </tr></thead><tbody>';
+
+        foreach ( $pairings as $round ) {
+            $blue_names = array_map( function($i) use ($players) { return isset($players[$i]) ? $players[$i]['first_name'] : ''; }, $round['blue'] );
+            $red_names  = array_map( function($i) use ($players) { return isset($players[$i]) ? $players[$i]['first_name'] : ''; }, $round['red'] );
+            $bye_name   = ( $round['bye'] >= 0 && isset($players[$round['bye']]) ) ? $players[$round['bye']]['first_name'] : '-';
+            echo '<tr>
+                <td><strong>' . esc_html($round['name']) . '</strong></td>
+                <td style="background:#daeef5;">' . esc_html(implode(' / ', $blue_names)) . '</td>
+                <td class="score-col">&nbsp;</td>
+                <td style="background:#fce4ec;">' . esc_html(implode(' / ', $red_names)) . '</td>
+                <td class="score-col">&nbsp;</td>
+                <td>' . esc_html($bye_name) . '</td>
+            </tr>';
+        }
+        echo '</tbody></table>';
+        echo '</div>'; // .sheet
+    }
+
+    echo '</body></html>';
 }
