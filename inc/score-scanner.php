@@ -1,7 +1,16 @@
 <?php
 // -------------------------------------------------------
 // SCORE SCANNER -- AJAX HANDLERS + ENQUEUE
-// Version: 1.3
+// Version: 1.4
+// Changes from 1.3:
+// - REVISED GROUP priority: sheets marked [REVISED GROUP X]
+//   are detected and given automatic priority over any other
+//   sheet for that group. Revised group IDs passed from PHP
+//   via sppScanner.modifiedGroups localized variable.
+// - Scan prompt updated to detect [REVISED GROUP X] marker
+//   and set revised:true on all players in that group.
+// - Save handler: if revised=true, clear existing scores for
+//   that group before saving new scores.
 // Changes from 1.2:
 // - Prompt updated to handle Total column on handwritten
 //   sheets regardless of capitalization (Total, TOTAL, Tot)
@@ -27,13 +36,18 @@ add_action('wp_enqueue_scripts', function() {
         'spp-score-scanner',
         get_stylesheet_directory_uri() . '/js/score-scanner.js',
         ['jquery'],
-        '1.3.0',
+        '1.4.0',
         true
     );
+    // Pass modified groups to JS so scanner UI can flag them
+    $modified_groups = json_decode( get_option( 'spp_modified_groups', '[]' ), true );
+    if ( ! is_array( $modified_groups ) ) $modified_groups = [];
+
     wp_localize_script('spp-score-scanner', 'sppScanner', [
-        'ajaxurl' => admin_url('admin-ajax.php'),
-        'nonce'   => wp_create_nonce('spp_score_scan'),
-        'event'   => get_option('spp_current_event')
+        'ajaxurl'        => admin_url('admin-ajax.php'),
+        'nonce'          => wp_create_nonce('spp_score_scan'),
+        'event'          => get_option('spp_current_event'),
+        'modifiedGroups' => $modified_groups,
     ]);
 });
 
@@ -65,16 +79,23 @@ add_action('wp_ajax_spp_scan_scores', function() {
 - name (the name written on the sheet -- use the handwritten name if the printed name is crossed out)
 - rnd1 through rnd5 (the score in each round column -- use null if blank, "bye" if it says bye)
 - substitution: true if the printed name was crossed out and replaced with a handwritten name
+- revised: true if the sheet has a [REVISED GROUP X] banner at the top (where X is the group number)
 - warning: any note if something is unclear
 
 Return ONLY a JSON object with this structure:
 {
   "players": [
-    {"group":"Group 07","court":"Court 1","time_slot":"5:30","rank":47,"name":"Robin Lawrence","rnd1":18,"rnd2":20,"rnd3":20,"rnd4":null,"rnd5":null,"substitution":false,"warning":""},
+    {"group":"Group 07","court":"Court 1","time_slot":"5:30","rank":47,"name":"Robin Lawrence","rnd1":18,"rnd2":20,"rnd3":20,"rnd4":null,"rnd5":null,"substitution":false,"revised":false,"warning":""},
     ...
   ],
   "warnings": []
 }
+
+REVISED SHEET PRIORITY:
+- Some replacement score sheets will have a prominent red banner at the top reading "[REVISED GROUP X]" where X is the group number.
+- If you see this banner on a sheet, set revised:true for ALL players on that sheet.
+- A revised sheet for a group ALWAYS takes priority over any other sheet for that group.
+- If you have both a revised sheet and an original sheet for the same group, use ONLY the revised sheet data. Discard the original entirely.
 
 CRITICAL COLUMN IDENTIFICATION:
 - The score sheet columns are: Group, Court, Rank, Name, TOTAL, Rnd1, Rnd2, Rnd3, Rnd4, Rnd5, Phone
@@ -101,7 +122,7 @@ Important:
 - Crossed out names mean a substitute played -- use the handwritten replacement name and set substitution to true
 - Ranks are integers
 - Scores are integers or "bye" or null
-- If the same group appears more than once (e.g. from both a printed sheet and a handwritten sheet), use ONLY the version with actual numeric scores. Discard any duplicate entry where all rounds are null or "bye" and the total is 0 -- do not include these blank entries in the output at all.
+- If the same group appears more than once (e.g. from both a printed sheet and a handwritten sheet), use ONLY the version with actual numeric scores. Discard any duplicate entry where all rounds are null/bye and the total is 0 -- do not include these blank entries in the output at all.
 - Do not include any player row where every round is null or "bye" and the total score is 0. These are players with no scores recorded and should be omitted entirely.
 - If a player has "X" or "x" written through their score box or next to their name (but not "XX"), set rnd1 to "x" and all other rounds to null. Do not omit these players -- they need a penalty applied.
 - If a player has "XX" or "xx" written through their score box or next to their name, set rnd1 to "xx" and all other rounds to null. Do not omit these players -- they need a no-show penalty applied.
@@ -204,6 +225,25 @@ add_action('wp_ajax_spp_save_scores', function() {
         if ($m) $time_map[$m[0]] = $t['T_ID'];
     }
 
+    // ── REVISED GROUP PRIORITY ────────────────────────────────────────────────
+    // If any player has revised:true, clear all existing scores for that group
+    // before saving, so revised sheet wins over any previously scanned sheet.
+    $revised_groups_cleared = [];
+    foreach ( $players as $p ) {
+        if ( ! empty( $p['revised'] ) && $p['revised'] ) {
+            $group_key = strtolower( trim( $p['group'] ) );
+            if ( isset( $group_map[ $group_key ] ) && ! in_array( $group_map[ $group_key ], $revised_groups_cleared ) ) {
+                $gid = $group_map[ $group_key ];
+                $wpdb->query( $wpdb->prepare(
+                    "UPDATE Schedules SET Game1=NULL, Game2=NULL, Game3=NULL, Game4=NULL, Game5=NULL WHERE group_id = %d",
+                    $gid
+                ) );
+                $revised_groups_cleared[] = $gid;
+            }
+        }
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     $saved  = 0;
     $errors = [];
 
@@ -305,6 +345,11 @@ add_action('wp_ajax_spp_save_scores', function() {
 
         if ($result !== false) $saved++;
         else $errors[] = "DB error for rank {$rank} / {$name}";
+    }
+
+    // Report revised groups that were cleared
+    if ( ! empty( $revised_groups_cleared ) ) {
+        $errors[] = 'INFO: Revised sheet priority applied — cleared scores for group ID(s): ' . implode( ', ', $revised_groups_cleared );
     }
 
     wp_send_json_success(['saved' => $saved, 'errors' => $errors]);
