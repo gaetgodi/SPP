@@ -2,8 +2,12 @@
 /**
  * SPP Blog System
  * File: inc/spp-blog-system.php
- * Version: 1.4.0
+ * Version: 1.4.1
  * Date: 2026-06-13
+ *
+ * Changes from 1.4.0:
+ * - Edit form now returns to /pending-posts/ for pending posts and
+ *   /blog/ for published posts (was always /blog/). Cancel link matches.
  *
  * Changes from 1.3.0:
  * - Blog edit form: replaced wp_editor with spp_rich_editor component
@@ -283,7 +287,10 @@ function spp_blog_edit_shortcode() {
                 } else {
                     delete_post_meta( $post_id, 'spp_blog_expiry' );
                 }
-                wp_redirect( home_url( '/blog/' ) );
+                $redirect = ( get_post_status( $post_id ) === 'pending' )
+                    ? home_url( '/pending-posts/' )
+                    : home_url( '/blog/' );
+                wp_redirect( $redirect );
                 exit;
             } else {
                 $error = 'There was a problem saving the post. Please try again.';
@@ -355,7 +362,7 @@ function spp_blog_edit_shortcode() {
 
             <div class="spp-blog-actions">
                 <button type="submit" class="spp-blog-submit-btn">Save Changes</button>
-                <a href="<?php echo esc_url( home_url( '/blog/' ) ); ?>" class="spp-blog-cancel-link">Cancel</a>
+                <a href="<?php echo esc_url( get_post_status( $post_id ) === 'pending' ? home_url( '/pending-posts/' ) : home_url( '/blog/' ) ); ?>" class="spp-blog-cancel-link">Cancel</a>
             </div>
         </form>
     </div>
