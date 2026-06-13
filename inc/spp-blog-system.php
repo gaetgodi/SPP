@@ -2,11 +2,18 @@
 /**
  * SPP Blog System
  * File: inc/spp-blog-system.php
- * Version: 1.3.0
+ * Version: 1.4.0
  * Date: 2026-06-13
  *
- * Replaced wp_editor with spp_rich_editor component on submit form"
- * 
+ * Changes from 1.3.0:
+ * - Blog edit form: replaced wp_editor with spp_rich_editor component
+ *   (wp_editor fails to render on front-end shortcode context).
+ * - Pending-review cards: added "Edit" link to /edit-post/?post_id=N
+ *   so moderators can jump straight into the full editor.
+ *
+ * Changes from 1.2.0:
+ * - Blog submit form: replaced wp_editor with spp_rich_editor component.
+ *
  * Changes from 1.1.1:
  * - Added [spp_blog_edit] shortcode for frontend post editing
  *   Moderators/admins only, pre-populated form, redirects to /blog/ on save
@@ -21,6 +28,7 @@
  *
  * Shortcodes:
  *   [spp_blog_submit]    — frontend blog post submission form for all logged-in users
+ *   [spp_blog_edit]      — frontend edit form for moderators/admins (reads ?post_id=)
  *   [spp_pending_posts]  — frontend moderator review interface (blog_moderator only)
  *
  * Features:
@@ -28,6 +36,7 @@
  *   - Post created as pending, spp_blog_expiry meta saved
  *   - Moderator reviews entirely on frontend — no wp-admin needed
  *   - Moderator can edit category and expiry before publishing
+ *   - Moderator can edit full content via Edit link
  *   - Publish/Reject via AJAX — no page reload
  *   - Category reset bug eliminated — wp-admin never touched
  *   - Email notification to blog_moderator on new submission
@@ -119,13 +128,13 @@ function spp_blog_submit_shortcode() {
 
             <div class="spp-blog-field">
                 <label class="spp-blog-label" for="spp_post_content">Content <span class="spp-required">*</span></label>
-<?php
-echo spp_rich_editor(
-    'spp_post_content',
-    wp_kses_post( $_POST['spp_post_content'] ?? '' ),
-    array( 'rows' => 12, 'placeholder' => 'Write your post here...' )
-);
-?>
+                <?php
+                echo spp_rich_editor(
+                    'spp_post_content',
+                    wp_kses_post( $_POST['spp_post_content'] ?? '' ),
+                    array( 'rows' => 12, 'placeholder' => 'Write your post here...' )
+                );
+                ?>
             </div>
 
             <div class="spp-blog-field">
@@ -316,16 +325,10 @@ function spp_blog_edit_shortcode() {
             <div class="spp-blog-field">
                 <label class="spp-blog-label" for="spp_post_content">Content <span class="spp-required">*</span></label>
                 <?php
-                wp_editor(
-                    wp_kses_post( $_POST['spp_post_content'] ?? $post->post_content ),
+                echo spp_rich_editor(
                     'spp_post_content',
-                    array(
-                        'textarea_name' => 'spp_post_content',
-                        'media_buttons' => true,
-                        'textarea_rows' => 12,
-                        'teeny'         => false,
-                        'tinymce'       => true,
-                    )
+                    wp_kses_post( $_POST['spp_post_content'] ?? $post->post_content ),
+                    array( 'rows' => 12, 'placeholder' => 'Edit the post content here...' )
                 );
                 ?>
             </div>
@@ -500,6 +503,8 @@ function spp_pending_posts_shortcode() {
                         onclick="sppRejectPost(<?php echo $post->ID; ?>)">
                     &#10007; Reject
                 </button>
+                <a href="<?php echo esc_url( home_url( '/edit-post/?post_id=' . $post->ID ) ); ?>"
+                   class="spp-pending-edit-link">Edit</a>
                 <a href="<?php echo esc_url( get_permalink( $post->ID ) ); ?>"
                    target="_blank"
                    class="spp-pending-preview-link">Preview &rarr;</a>
@@ -634,6 +639,14 @@ function spp_pending_posts_shortcode() {
         cursor: pointer;
     }
     .spp-pending-reject-btn:hover { background: #a93226; }
+    .spp-pending-edit-link {
+        color: #3766AB;
+        font-size: 0.9rem;
+        text-decoration: none;
+        font-weight: 600;
+        margin-left: 6px;
+    }
+    .spp-pending-edit-link:hover { text-decoration: underline; }
     .spp-pending-preview-link {
         color: var(--spp-link, #00897B);
         font-size: 0.9rem;
