@@ -2,9 +2,11 @@
 /**
  * SPP Blog System
  * File: inc/spp-blog-system.php
- * Version: 1.2.0
- * Date: 2026-05-31
+ * Version: 1.3.0
+ * Date: 2026-06-13
  *
+ * Replaced wp_editor with spp_rich_editor component on submit form"
+ * 
  * Changes from 1.1.1:
  * - Added [spp_blog_edit] shortcode for frontend post editing
  *   Moderators/admins only, pre-populated form, redirects to /blog/ on save
@@ -117,19 +119,13 @@ function spp_blog_submit_shortcode() {
 
             <div class="spp-blog-field">
                 <label class="spp-blog-label" for="spp_post_content">Content <span class="spp-required">*</span></label>
-                <?php
-                wp_editor(
-                    wp_kses_post( $_POST['spp_post_content'] ?? '' ),
-                    'spp_post_content',
-                    array(
-                        'textarea_name' => 'spp_post_content',
-                        'media_buttons' => true,
-                        'textarea_rows' => 12,
-                        'teeny'         => false,
-                        'tinymce'       => true,
-                    )
-                );
-                ?>
+<?php
+echo spp_rich_editor(
+    'spp_post_content',
+    wp_kses_post( $_POST['spp_post_content'] ?? '' ),
+    array( 'rows' => 12, 'placeholder' => 'Write your post here...' )
+);
+?>
             </div>
 
             <div class="spp-blog-field">
