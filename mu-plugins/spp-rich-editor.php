@@ -3,8 +3,18 @@
  * SPP Rich Text Editor — reusable front-end editor component
  *
  * File: mu-plugins/spp-rich-editor.php
- * Version: 1.1.0
+ * Version: 1.1.1
  * Date:    2026-06-13
+ *
+ * Changes from 1.1.0:
+ * - Text color now applies via span-wrap (color: inline style) instead
+ *   of execCommand('foreColor'), which is deprecated and unreliable.
+ * - Removed CSS rule ".spp-re-editable * { color:inherit }" which was
+ *   forcing every child to the editor's dark color and overriding any
+ *   intentional color span. This was the real cause of colors not showing.
+ * - Line height now applies to the BLOCK element(s) the selection sits
+ *   in (paragraphs/headings/list items), not an inline span, so the
+ *   spacing change is actually visible.
  *
  * Changes from 1.0.1:
  * - Toolbar buttons now use inline SVG icons instead of HTML entity
@@ -198,7 +208,6 @@ function spp_rich_editor_assets() {
     .spp-re-color { width:22px; height:22px; border:1px solid #999; border-radius:3px; cursor:pointer; padding:0; }
     .spp-re-color:hover { transform:scale(1.15); }
     .spp-re-editable { padding:12px 14px; font-size:0.95rem; line-height:1.6; color:#222 !important; background:#fff !important; outline:none; }
-    .spp-re-editable * { color:inherit; }
     .spp-re-editable:empty:before { content:attr(data-placeholder); color:#999 !important; }
     .spp-re-editable:focus { box-shadow:inset 0 0 0 2px rgba(0,137,123,0.15); }
     .spp-re-editable h2 { font-size:1.4rem; margin:0.4em 0; color:#222; }
@@ -243,6 +252,58 @@ function spp_rich_editor_assets() {
             syncToTextarea( ed );
         }
 
+        // Apply a style to the BLOCK element(s) the selection sits in.
+        // line-height only takes visible effect on a block, not an inline
+        // span, so we walk up to the nearest block and set it there. If the
+        // selection spans multiple blocks, all of them are updated.
+        function applyBlockStyle( ed, prop, value ) {
+            ed.focus();
+            var sel = window.getSelection();
+            if ( !sel || sel.rangeCount === 0 ) return;
+
+            function nearestBlock( node ) {
+                while ( node && node !== ed ) {
+                    if ( node.nodeType === 1 ) {
+                        var d = window.getComputedStyle( node ).display;
+                        if ( d === 'block' || d === 'list-item' ||
+                             /^(P|DIV|H1|H2|H3|H4|H5|H6|LI|UL|OL|BLOCKQUOTE)$/.test( node.tagName ) ) {
+                            return node;
+                        }
+                    }
+                    node = node.parentNode;
+                }
+                return null;
+            }
+
+            var range  = sel.getRangeAt(0);
+            var blocks = [];
+
+            // Collect every block intersecting the selection.
+            var startB = nearestBlock( range.startContainer );
+            var endB   = nearestBlock( range.endContainer );
+
+            if ( startB && startB === endB ) {
+                blocks.push( startB );
+            } else {
+                // Walk all block children of the editor and keep the ones
+                // the range touches.
+                var all = ed.querySelectorAll('p,div,h1,h2,h3,h4,h5,h6,li,ul,ol,blockquote');
+                for ( var i = 0; i < all.length; i++ ) {
+                    if ( range.intersectsNode( all[i] ) ) blocks.push( all[i] );
+                }
+                if ( !blocks.length && startB ) blocks.push( startB );
+            }
+
+            // If there are no block wrappers at all (bare text in the editor),
+            // apply to the editor itself so the user still sees an effect.
+            if ( !blocks.length ) blocks.push( ed );
+
+            for ( var j = 0; j < blocks.length; j++ ) {
+                blocks[j].style[prop] = value;
+            }
+            syncToTextarea( ed );
+        }
+
         function exec( ed, cmd, val ) {
             ed.focus();
             try {
@@ -277,9 +338,9 @@ function spp_rich_editor_assets() {
             e.preventDefault();
 
             if ( btn.classList.contains('spp-re-color') ) {
-                ed.focus();
-                try { document.execCommand( 'foreColor', false, btn.getAttribute('data-color') ); } catch(e2) {}
-                syncToTextarea( ed );
+                // Use span-wrap rather than execCommand('foreColor'), which is
+                // deprecated and unreliable in modern browsers.
+                wrapSelectionStyle( ed, 'color', btn.getAttribute('data-color') );
             } else {
                 exec( ed, btn.getAttribute('data-cmd'), btn.getAttribute('data-val') );
             }
@@ -296,7 +357,7 @@ function spp_rich_editor_assets() {
             if ( sel.classList.contains('spp-re-size') ) {
                 wrapSelectionStyle( ed, 'fontSize', val );
             } else if ( sel.classList.contains('spp-re-lh') ) {
-                wrapSelectionStyle( ed, 'lineHeight', val );
+                applyBlockStyle( ed, 'lineHeight', val );
             }
             sel.selectedIndex = 0; // reset label
         });
