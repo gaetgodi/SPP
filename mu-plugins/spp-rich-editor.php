@@ -3,8 +3,14 @@
  * SPP Rich Text Editor — reusable front-end editor component
  *
  * File: mu-plugins/spp-rich-editor.php
- * Version: 1.1.1
+ * Version: 1.1.2
  * Date:    2026-06-13
+ *
+ * Changes from 1.1.1:
+ * - Base line-height lowered from 1.6 to 1.3 so default spacing is not
+ *   too loose (small text previously floated in oversized line boxes).
+ * - Spacing presets retuned: Tight 1.1 / Normal 1.3 / Relaxed 1.6 /
+ *   Loose 2.0 — unitless so they scale with each element's font size.
  *
  * Changes from 1.1.0:
  * - Text color now applies via span-wrap (color: inline style) instead
@@ -118,8 +124,9 @@ function spp_rich_editor( $field_name, $content = '', $args = array() ) {
             </select>
             <select class="spp-re-select spp-re-lh" title="Line height">
                 <option value="">Spacing</option>
-                <option value="1.2">Tight</option>
-                <option value="1.6">Normal</option>
+                <option value="1.1">Tight</option>
+                <option value="1.3">Normal</option>
+                <option value="1.6">Relaxed</option>
                 <option value="2.0">Loose</option>
             </select>
             <span class="spp-re-sep"></span>
@@ -207,7 +214,7 @@ function spp_rich_editor_assets() {
     .spp-re-colors { display:inline-flex; gap:3px; align-items:center; }
     .spp-re-color { width:22px; height:22px; border:1px solid #999; border-radius:3px; cursor:pointer; padding:0; }
     .spp-re-color:hover { transform:scale(1.15); }
-    .spp-re-editable { padding:12px 14px; font-size:0.95rem; line-height:1.6; color:#222 !important; background:#fff !important; outline:none; }
+    .spp-re-editable { padding:12px 14px; font-size:0.95rem; line-height:1.3; color:#222 !important; background:#fff !important; outline:none; }
     .spp-re-editable:empty:before { content:attr(data-placeholder); color:#999 !important; }
     .spp-re-editable:focus { box-shadow:inset 0 0 0 2px rgba(0,137,123,0.15); }
     .spp-re-editable h2 { font-size:1.4rem; margin:0.4em 0; color:#222; }
