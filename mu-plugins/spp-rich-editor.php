@@ -3,10 +3,17 @@
  * SPP Rich Text Editor — reusable front-end editor component
  *
  * File: mu-plugins/spp-rich-editor.php
- * Version: 1.1.2
+ * Version: 1.1.3
  * Date:    2026-06-13
  *
- * Changes from 1.1.1:
+ * Changes from 1.1.2:
+ * - Inline styling (color, font-size) rewritten to wrap each text node
+ *   in the selection individually, instead of extractContents()/
+ *   insertNode() which restructured the DOM and split blocks/list items
+ *   (caused stray new lines on size change and extra <li> items in lists).
+ *   Block and list structure is now left untouched.
+ *
+ * Changes from 1.1.2:
  * - Base line-height lowered from 1.6 to 1.3 so default spacing is not
  *   too loose (small text previously floated in oversized line boxes).
  * - Spacing presets retuned: Tight 1.1 / Normal 1.3 / Relaxed 1.6 /
@@ -237,25 +244,52 @@ function spp_rich_editor_assets() {
             return wrap ? wrap.querySelector('.spp-re-editable') : null;
         }
 
-        // Wrap the current selection in a span with an inline style.
-        // Used for font-size and line-height (execCommand fontSize only
-        // supports the crude 1-7 scale, so we do it manually).
+        // Apply an inline style (color, font-size) to the selection by
+        // wrapping each TEXT NODE the selection touches in its own styled
+        // span. This does NOT use extractContents()/insertNode(), which
+        // restructure the DOM and split blocks/list items (causing stray
+        // new lines or extra <li> items). Block structure is untouched.
         function wrapSelectionStyle( ed, prop, value ) {
             ed.focus();
             var sel = window.getSelection();
             if ( !sel || sel.rangeCount === 0 || sel.isCollapsed ) return;
             var range = sel.getRangeAt(0);
-            var span = document.createElement('span');
-            span.style[prop] = value;
-            try {
-                span.appendChild( range.extractContents() );
-                range.insertNode( span );
-                // Reselect the wrapped content.
-                sel.removeAllRanges();
-                var nr = document.createRange();
-                nr.selectNodeContents( span );
-                sel.addRange( nr );
-            } catch (e) {}
+
+            // Collect all text nodes that intersect the range.
+            var textNodes = [];
+            var walker = document.createTreeWalker( ed, NodeFilter.SHOW_TEXT, null );
+            var n;
+            while ( ( n = walker.nextNode() ) ) {
+                if ( range.intersectsNode( n ) && n.nodeValue.length ) {
+                    textNodes.push( n );
+                }
+            }
+            if ( !textNodes.length ) return;
+
+            for ( var i = 0; i < textNodes.length; i++ ) {
+                var node = textNodes[i];
+                var start = 0;
+                var end   = node.nodeValue.length;
+
+                // Trim to the selected portion for the first/last node.
+                if ( node === range.startContainer ) start = range.startOffset;
+                if ( node === range.endContainer )   end   = range.endOffset;
+                if ( start >= end ) continue;
+
+                // Split out just the selected substring.
+                var target = node;
+                if ( start > 0 ) target = target.splitText( start );
+                // After splitText, target starts at 0; trim the tail.
+                if ( end - start < target.nodeValue.length ) {
+                    target.splitText( end - start );
+                }
+
+                var span = document.createElement('span');
+                span.style[prop] = value;
+                target.parentNode.insertBefore( span, target );
+                span.appendChild( target );
+            }
+
             syncToTextarea( ed );
         }
 
