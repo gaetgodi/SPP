@@ -3,8 +3,16 @@
  * SPP Rich Text Editor — reusable front-end editor component
  *
  * File: mu-plugins/spp-rich-editor.php
- * Version: 1.1.3
- * Date:    2026-06-13
+ * Version: 1.1.4
+ * Date:    2026-06-14
+ *
+ * Changes from 1.1.3:
+ * - Toolbar controls (selects, buttons, color swatches) hardened with
+ *   explicit width/display/box-sizing + !important so host-page form CSS
+ *   cannot stretch them. On the gl-events series/occurrence admin pages a
+ *   "select { width:100% }" rule was forcing the Size/Spacing dropdowns to
+ *   full width on their own lines. They now stay compact and inline
+ *   everywhere, matching the blog form.
  *
  * Changes from 1.1.2:
  * - Inline styling (color, font-size) rewritten to wrap each text node
@@ -210,16 +218,16 @@ function spp_rich_editor_assets() {
     <style>
     .spp-re-wrap { border:1px solid #ccc; border-radius:6px; overflow:hidden; background:#fff; margin-bottom:4px; }
     .spp-re-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:2px; padding:6px 8px; background:#f3f3f3; border-bottom:1px solid #ddd; }
-    .spp-re-btn { display:inline-flex; align-items:center; justify-content:center; background:#fff; border:1px solid #ccc; border-radius:4px; min-width:32px; height:32px; padding:0 6px; font-size:13px; cursor:pointer; color:#333; line-height:1; }
-    .spp-re-btn:hover { background:#e8f1f0; border-color:#00897B; color:#00695f; }
-    .spp-re-btn:active { background:#d8e8e6; }
+    .spp-re-btn { display:inline-flex !important; align-items:center; justify-content:center; width:auto !important; min-width:32px !important; max-width:none !important; height:32px !important; margin:0 !important; background:#fff !important; border:1px solid #ccc !important; border-radius:4px !important; padding:0 6px !important; font-size:13px; cursor:pointer; color:#333 !important; line-height:1; box-sizing:border-box !important; }
+    .spp-re-btn:hover { background:#e8f1f0 !important; border-color:#00897B !important; color:#00695f !important; }
+    .spp-re-btn:active { background:#d8e8e6 !important; }
     .spp-re-btn-text { font-weight:700; }
     .spp-re-btn svg { display:block; }
     .spp-re-sep { width:1px; align-self:stretch; background:#ddd; margin:2px 4px; }
-    .spp-re-select { height:32px; border:1px solid #ccc; border-radius:4px; background:#fff; color:#333; font-size:13px; padding:0 4px; cursor:pointer; }
-    .spp-re-select:hover { border-color:#00897B; }
+    .spp-re-select { width:auto !important; min-width:84px !important; max-width:140px !important; height:32px !important; display:inline-block !important; border:1px solid #ccc !important; border-radius:4px !important; background:#fff !important; color:#333 !important; font-size:13px !important; padding:0 4px !important; margin:0 !important; cursor:pointer; box-sizing:border-box !important; vertical-align:middle; }
+    .spp-re-select:hover { border-color:#00897B !important; }
     .spp-re-colors { display:inline-flex; gap:3px; align-items:center; }
-    .spp-re-color { width:22px; height:22px; border:1px solid #999; border-radius:3px; cursor:pointer; padding:0; }
+    .spp-re-color { width:22px !important; min-width:22px !important; max-width:22px !important; height:22px !important; margin:0 !important; border:1px solid #999 !important; border-radius:3px !important; cursor:pointer; padding:0 !important; box-sizing:border-box !important; display:inline-block !important; }
     .spp-re-color:hover { transform:scale(1.15); }
     .spp-re-editable { padding:12px 14px; font-size:0.95rem; line-height:1.3; color:#222 !important; background:#fff !important; outline:none; }
     .spp-re-editable:empty:before { content:attr(data-placeholder); color:#999 !important; }
