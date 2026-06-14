@@ -3,8 +3,26 @@
  * SPP Rich Text Editor — reusable front-end editor component
  *
  * File: mu-plugins/spp-rich-editor.php
- * Version: 1.1.6
+ * Version: 1.1.8
  * Date:    2026-06-14
+ *
+ * Changes from 1.1.7:
+ * - Fixed color being stripped on save. The browser serialized
+ *   style.setProperty('color','#c0392b') as color:rgb(192,57,43), and
+ *   WordPress wp_kses_post (safecss_filter_attr) strips rgb()/rgba()
+ *   color values while keeping hex/named ones. Color is now written as
+ *   the literal hex string straight into the style attribute, so it
+ *   survives sanitization. (Confirmed: font-size was kept, only the
+ *   rgb() color was dropped.)
+ *
+ * Changes from 1.1.6:
+ * - Fixed the real cause of color not applying: the text selection was
+ *   being collapsed before the swatch click handler ran, so the styling
+ *   function saw an empty selection and (correctly, per 1.1.6) bailed —
+ *   producing no color span at all. Now the editor continuously remembers
+ *   the last non-collapsed range made inside it (selectionchange) and
+ *   restores it before applying color / size / line height. This is the
+ *   standard saved-range pattern for toolbar editors.
  *
  * Changes from 1.1.5:
  * - Hardened inline styling so a bare, styleless <span> can never be
@@ -269,6 +287,39 @@ function spp_rich_editor_assets() {
             return wrap ? wrap.querySelector('.spp-re-editable') : null;
         }
 
+        // ── Saved selection range ────────────────────────────────────────
+        // Toolbar clicks can collapse the selection before our handler runs
+        // (focus moves, mousedown/blur quirks). We continuously remember the
+        // last non-collapsed range made inside an editor, and restore it
+        // before applying any style. Keyed by the editor element.
+        var savedRange = null;      // the Range object
+        var savedRangeEd = null;    // the editor it belongs to
+
+        function rememberRange() {
+            var sel = window.getSelection();
+            if ( !sel || sel.rangeCount === 0 || sel.isCollapsed ) return;
+            var r = sel.getRangeAt(0);
+            // Only remember ranges that live inside an editable area.
+            var node = r.commonAncestorContainer;
+            var el = ( node.nodeType === 1 ) ? node : node.parentNode;
+            var ed = el && el.closest ? el.closest('.spp-re-editable') : null;
+            if ( ed ) {
+                savedRange   = r.cloneRange();
+                savedRangeEd = ed;
+            }
+        }
+
+        // Track selection changes globally; cheap and reliable.
+        document.addEventListener( 'selectionchange', rememberRange );
+
+        function restoreRangeFor( ed ) {
+            if ( !savedRange || savedRangeEd !== ed ) return false;
+            var sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange( savedRange );
+            return true;
+        }
+
         // Apply an inline style (color, font-size) to the selection by
         // wrapping each TEXT NODE the selection touches in its own styled
         // span. Does NOT use extractContents()/insertNode() (which split
@@ -282,8 +333,20 @@ function spp_rich_editor_assets() {
         function wrapSelectionStyle( ed, prop, value ) {
             // Guard: a missing value would create bare, styleless spans.
             if ( value === null || value === undefined || value === '' ) return;
-            ed.focus();
+            // Restore the last good selection if the live one was collapsed
+            // by the toolbar click. THEN read the selection.
             var sel = window.getSelection();
+            if ( !sel || sel.rangeCount === 0 || sel.isCollapsed ) {
+                restoreRangeFor( ed );
+                sel = window.getSelection();
+            }
+            ed.focus();
+            // Re-restore: focus() can itself collapse the selection in some
+            // browsers, so apply the saved range again after focusing.
+            if ( !sel || sel.rangeCount === 0 || sel.isCollapsed ) {
+                restoreRangeFor( ed );
+                sel = window.getSelection();
+            }
             if ( !sel || sel.rangeCount === 0 || sel.isCollapsed ) return;
             var range = sel.getRangeAt(0);
 
@@ -336,13 +399,27 @@ function spp_rich_editor_assets() {
                     host.appendChild( tgt );
                 }
 
-                host.style.setProperty( cssName, value );
-                // Fallback: guarantee the style attribute is present.
-                if ( ! host.getAttribute('style') ||
-                     host.style.getPropertyValue( cssName ) === '' ) {
-                    var existing = host.getAttribute('style') || '';
-                    if ( existing && existing.charAt( existing.length - 1 ) !== ';' ) existing += ';';
-                    host.setAttribute( 'style', existing + cssName + ':' + value + ';' );
+                // Apply the style. For COLOR we must write the literal hex
+                // string via setAttribute: style.setProperty('color','#c0392b')
+                // makes the browser serialize it as rgb(192,57,43), which
+                // WordPress's wp_kses_post (safecss_filter_attr) then STRIPS.
+                // Hex and named colors survive; rgb()/rgba() do not. Writing
+                // the hex directly into the style attribute keeps it as hex.
+                if ( cssName === 'color' ) {
+                    var cur = host.getAttribute('style') || '';
+                    // Drop any prior color (incl. rgb) so we don't duplicate.
+                    cur = cur.replace( /color\s*:[^;]*;?/gi, '' );
+                    if ( cur && cur.charAt( cur.length - 1 ) !== ';' ) cur += ';';
+                    host.setAttribute( 'style', cur + 'color:' + value + ';' );
+                } else {
+                    host.style.setProperty( cssName, value );
+                    // Fallback: guarantee the style attribute is present.
+                    if ( ! host.getAttribute('style') ||
+                         host.style.getPropertyValue( cssName ) === '' ) {
+                        var existing = host.getAttribute('style') || '';
+                        if ( existing && existing.charAt( existing.length - 1 ) !== ';' ) existing += ';';
+                        host.setAttribute( 'style', existing + cssName + ':' + value + ';' );
+                    }
                 }
             }
 
@@ -366,8 +443,15 @@ function spp_rich_editor_assets() {
         // span, so we walk up to the nearest block and set it there. If the
         // selection spans multiple blocks, all of them are updated.
         function applyBlockStyle( ed, prop, value ) {
-            ed.focus();
             var sel = window.getSelection();
+            if ( !sel || sel.rangeCount === 0 || sel.isCollapsed ) {
+                restoreRangeFor( ed );
+            }
+            ed.focus();
+            if ( !sel || sel.rangeCount === 0 || sel.isCollapsed ) {
+                restoreRangeFor( ed );
+            }
+            sel = window.getSelection();
             if ( !sel || sel.rangeCount === 0 ) return;
 
             function nearestBlock( node ) {
