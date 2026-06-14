@@ -3,8 +3,16 @@
  * SPP Rich Text Editor — reusable front-end editor component
  *
  * File: mu-plugins/spp-rich-editor.php
- * Version: 1.1.4
+ * Version: 1.1.5
  * Date:    2026-06-14
+ *
+ * Changes from 1.1.4:
+ * - Fixed color/size being lost when applied to text that was already
+ *   formatted (e.g. bolded then colored): the span was created but its
+ *   style never stuck, saving as a bare <span>. Now uses a two-pass
+ *   collect-then-style approach, style.setProperty() with the correct
+ *   CSS property name, reuses an existing single-child span instead of
+ *   nesting an empty one, and skips zero-length targets.
  *
  * Changes from 1.1.3:
  * - Toolbar controls (selects, buttons, color swatches) hardened with
@@ -21,7 +29,7 @@
  *   (caused stray new lines on size change and extra <li> items in lists).
  *   Block and list structure is now left untouched.
  *
- * Changes from 1.1.2:
+ * Changes from 1.1.1:
  * - Base line-height lowered from 1.6 to 1.3 so default spacing is not
  *   too loose (small text previously floated in oversized line boxes).
  * - Spacing presets retuned: Tight 1.1 / Normal 1.3 / Relaxed 1.6 /
@@ -254,16 +262,23 @@ function spp_rich_editor_assets() {
 
         // Apply an inline style (color, font-size) to the selection by
         // wrapping each TEXT NODE the selection touches in its own styled
-        // span. This does NOT use extractContents()/insertNode(), which
-        // restructure the DOM and split blocks/list items (causing stray
-        // new lines or extra <li> items). Block structure is untouched.
+        // span. Does NOT use extractContents()/insertNode() (which split
+        // blocks/list items). Block structure is untouched.
+        //
+        // Important: we collect and split text nodes FIRST, then style them,
+        // so that splitText mutations during iteration cannot leave a target
+        // detached or unstyled (the cause of empty <span> with no color when
+        // the text was already inside <strong>).
         function wrapSelectionStyle( ed, prop, value ) {
             ed.focus();
             var sel = window.getSelection();
             if ( !sel || sel.rangeCount === 0 || sel.isCollapsed ) return;
             var range = sel.getRangeAt(0);
 
-            // Collect all text nodes that intersect the range.
+            var startC = range.startContainer, startO = range.startOffset;
+            var endC   = range.endContainer,   endO   = range.endOffset;
+
+            // Collect all non-empty text nodes intersecting the range.
             var textNodes = [];
             var walker = document.createTreeWalker( ed, NodeFilter.SHOW_TEXT, null );
             var n;
@@ -274,28 +289,38 @@ function spp_rich_editor_assets() {
             }
             if ( !textNodes.length ) return;
 
+            // First pass: split nodes down to exactly the selected substring.
+            var targets = [];
             for ( var i = 0; i < textNodes.length; i++ ) {
-                var node = textNodes[i];
-                var start = 0;
-                var end   = node.nodeValue.length;
-
-                // Trim to the selected portion for the first/last node.
-                if ( node === range.startContainer ) start = range.startOffset;
-                if ( node === range.endContainer )   end   = range.endOffset;
+                var node  = textNodes[i];
+                var start = ( node === startC ) ? startO : 0;
+                var end   = ( node === endC )   ? endO   : node.nodeValue.length;
                 if ( start >= end ) continue;
 
-                // Split out just the selected substring.
-                var target = node;
-                if ( start > 0 ) target = target.splitText( start );
-                // After splitText, target starts at 0; trim the tail.
-                if ( end - start < target.nodeValue.length ) {
-                    target.splitText( end - start );
+                var t = node;
+                if ( start > 0 ) t = t.splitText( start );      // t now begins at selection start
+                if ( ( end - start ) < t.nodeValue.length ) {
+                    t.splitText( end - start );                 // trim the tail off t
                 }
+                if ( t.nodeValue.length ) targets.push( t );
+            }
 
-                var span = document.createElement('span');
-                span.style[prop] = value;
-                target.parentNode.insertBefore( span, target );
-                span.appendChild( target );
+            // Second pass: wrap each target in a styled span. If the target's
+            // immediate parent is already a span with no other children, style
+            // that span directly instead of nesting another.
+            for ( var j = 0; j < targets.length; j++ ) {
+                var tgt = targets[j];
+                var parent = tgt.parentNode;
+
+                if ( parent && parent.tagName === 'SPAN' &&
+                     parent.childNodes.length === 1 ) {
+                    parent.style.setProperty( prop === 'fontSize' ? 'font-size' : prop, value );
+                } else {
+                    var span = document.createElement('span');
+                    span.style.setProperty( prop === 'fontSize' ? 'font-size' : prop, value );
+                    parent.insertBefore( span, tgt );
+                    span.appendChild( tgt );
+                }
             }
 
             syncToTextarea( ed );
