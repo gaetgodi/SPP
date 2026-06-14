@@ -3,8 +3,17 @@
  * SPP Rich Text Editor — reusable front-end editor component
  *
  * File: mu-plugins/spp-rich-editor.php
- * Version: 1.1.5
+ * Version: 1.1.6
  * Date:    2026-06-14
+ *
+ * Changes from 1.1.5:
+ * - Hardened inline styling so a bare, styleless <span> can never be
+ *   produced: wrapSelectionStyle now returns early on an empty value,
+ *   applies the style via setProperty AND a setAttribute fallback that
+ *   verifies the property actually landed, and reselects the styled text
+ *   afterward so formats can be chained. Maps fontSize -> font-size via
+ *   a helper. (Bare nested <span><span> with no color came from an
+ *   earlier version and/or an empty value reaching the wrapper.)
  *
  * Changes from 1.1.4:
  * - Fixed color/size being lost when applied to text that was already
@@ -265,11 +274,14 @@ function spp_rich_editor_assets() {
         // span. Does NOT use extractContents()/insertNode() (which split
         // blocks/list items). Block structure is untouched.
         //
-        // Important: we collect and split text nodes FIRST, then style them,
-        // so that splitText mutations during iteration cannot leave a target
-        // detached or unstyled (the cause of empty <span> with no color when
-        // the text was already inside <strong>).
+        // cssProp maps our JS-style name to the real CSS property.
+        function cssPropName( prop ) {
+            return ( prop === 'fontSize' ) ? 'font-size' : prop;
+        }
+
         function wrapSelectionStyle( ed, prop, value ) {
+            // Guard: a missing value would create bare, styleless spans.
+            if ( value === null || value === undefined || value === '' ) return;
             ed.focus();
             var sel = window.getSelection();
             if ( !sel || sel.rangeCount === 0 || sel.isCollapsed ) return;
@@ -277,6 +289,7 @@ function spp_rich_editor_assets() {
 
             var startC = range.startContainer, startO = range.startOffset;
             var endC   = range.endContainer,   endO   = range.endOffset;
+            var cssName = cssPropName( prop );
 
             // Collect all non-empty text nodes intersecting the range.
             var textNodes = [];
@@ -305,23 +318,45 @@ function spp_rich_editor_assets() {
                 if ( t.nodeValue.length ) targets.push( t );
             }
 
-            // Second pass: wrap each target in a styled span. If the target's
-            // immediate parent is already a span with no other children, style
-            // that span directly instead of nesting another.
+            // Second pass: ensure each target sits in a span carrying the style.
+            // If the target's parent is a span we created (has a style attr or
+            // is a lone wrapper), set the property on it; otherwise wrap fresh.
+            // The style is applied AND verified; if setProperty somehow leaves
+            // it blank we fall back to setAttribute so a bare span never ships.
             for ( var j = 0; j < targets.length; j++ ) {
                 var tgt = targets[j];
                 var parent = tgt.parentNode;
+                var host;
 
-                if ( parent && parent.tagName === 'SPAN' &&
-                     parent.childNodes.length === 1 ) {
-                    parent.style.setProperty( prop === 'fontSize' ? 'font-size' : prop, value );
+                if ( parent && parent.tagName === 'SPAN' && parent.childNodes.length === 1 ) {
+                    host = parent;
                 } else {
-                    var span = document.createElement('span');
-                    span.style.setProperty( prop === 'fontSize' ? 'font-size' : prop, value );
-                    parent.insertBefore( span, tgt );
-                    span.appendChild( tgt );
+                    host = document.createElement('span');
+                    parent.insertBefore( host, tgt );
+                    host.appendChild( tgt );
+                }
+
+                host.style.setProperty( cssName, value );
+                // Fallback: guarantee the style attribute is present.
+                if ( ! host.getAttribute('style') ||
+                     host.style.getPropertyValue( cssName ) === '' ) {
+                    var existing = host.getAttribute('style') || '';
+                    if ( existing && existing.charAt( existing.length - 1 ) !== ';' ) existing += ';';
+                    host.setAttribute( 'style', existing + cssName + ':' + value + ';' );
                 }
             }
+
+            // Restore a selection across the styled text so the user sees it
+            // stay highlighted and can chain another format.
+            try {
+                if ( targets.length ) {
+                    var nr = document.createRange();
+                    nr.setStartBefore( targets[0].parentNode );
+                    nr.setEndAfter( targets[targets.length - 1].parentNode );
+                    sel.removeAllRanges();
+                    sel.addRange( nr );
+                }
+            } catch ( e ) {}
 
             syncToTextarea( ed );
         }
