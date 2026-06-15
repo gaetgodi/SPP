@@ -1,7 +1,7 @@
 <?php
 /* =========================================================
    Enter Scores Menu Visibility
-   Version: 1.0.0
+   Version: 1.1.0
    Date: 2026-06-15
 
    Controls visibility of the /enter-scores/ menu item:
@@ -11,9 +11,12 @@
      AND their group's start time has passed (event_date +
      Times.T_desc for the player's group).
    - Not logged in: hidden.
+
+   v1.1.0: switched from wp_nav_menu_objects to
+   wp_get_nav_menu_items (Divi compatibility).
    ========================================================= */
 
-add_filter('wp_nav_menu_objects', function($items) {
+add_filter('wp_get_nav_menu_items', function($items, $menu, $args) {
     global $wpdb;
     $prefix = $wpdb->prefix;
 
@@ -30,7 +33,7 @@ add_filter('wp_nav_menu_objects', function($items) {
     }
 
     foreach ($items as $key => $item) {
-        if (strpos($item->url, '/enter-scores') === false) continue;
+        if ($item->object_id != '20010267') continue;
 
         // Must be logged in
         if (!is_user_logged_in()) {
@@ -48,8 +51,6 @@ add_filter('wp_nav_menu_objects', function($items) {
         if ($is_privileged) continue;
 
         // Subscribers: require their group's start time to have passed
-
-        // Get player's group time from the schedule
         $player_time = $wpdb->get_row($wpdb->prepare(
             "SELECT t.T_desc
              FROM Schedules s
@@ -60,11 +61,7 @@ add_filter('wp_nav_menu_objects', function($items) {
         ));
         if (!$player_time) { unset($items[$key]); continue; }
 
-        // Get current event date
-        $Event = (int) $wpdb->get_var(
-            "SELECT page_sequence FROM {$prefix}wpda_project_page
-             WHERE project_id = 29 AND page_id = 70"
-        );
+        $Event = (int) get_option('spp_current_event', 0);
         if (!$Event) { unset($items[$key]); continue; }
 
         $occ = $wpdb->get_row($wpdb->prepare(
@@ -73,7 +70,6 @@ add_filter('wp_nav_menu_objects', function($items) {
         ));
         if (!$occ) { unset($items[$key]); continue; }
 
-        // Combine event date with group time: "2026-06-15 5:30 pm"
         $group_start = strtotime($occ->event_date . ' ' . $player_time->T_desc);
         $now = current_time('timestamp');
 
@@ -83,5 +79,5 @@ add_filter('wp_nav_menu_objects', function($items) {
     }
 
     return $items;
-}, 10, 1);
+}, 10, 3);
 ?>
