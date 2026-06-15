@@ -161,7 +161,7 @@ $schedules_prev = "SchedulesPrev$Event";
 // -------------------------------------------------------
 // ASSIGN RANKS
 // -------------------------------------------------------
-echo do_shortcode("[cmruncode name="GL Assign ranks to registered player"]");
+echo do_shortcode("[cmruncode name='GL Assign ranks to registered player']");
 
 $settings = get_option('Pkldr_settings');
 list('Pkldr_Project' => $Pkldr_Project, 'Pkldr_PageLdr' => $Pkldr_PageLdr) = $settings;
