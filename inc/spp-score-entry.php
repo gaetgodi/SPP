@@ -14,8 +14,12 @@
  * - Available only while spp_schedule_published = 1.
  * - Paper score sheets + Score Scanner remain the verification layer.
  *
- * Version: 1.1.0
- * Date:    2026-06-10
+ * Version: 1.2.0
+ * Date:    2026-06-15
+ *
+ * Changes from 1.1.0:
+ *   - Reset button per round: clears scores (sets Game column to NULL),
+ *     recomputes totals, resets UI state.
  *
  * Changes from 1.0.0:
  *   - Group selector at top: greyed out (their own group) for players,
@@ -76,7 +80,6 @@ function spp_se_group_status( int $group_id ) : array {
         $totals[] = array( 'name' => $p['first_name'], 'total' => $tot );
     }
 
-    // Count rounds entered: round N is entered if the first blue player has a non-null Game{N}
     $entered = 0;
     foreach ( $pairings as $i => $r ) {
         $g    = 'Game' . ( $i + 1 );
@@ -112,7 +115,6 @@ function spp_score_entry_shortcode() {
     $user_id  = get_current_user_id();
     $is_admin = current_user_can( 'edit_posts' );
 
-    // All active groups (for admin dropdown)
     $all_groups = $wpdb->get_results(
         "SELECT s.group_id, g.GP_name, c.Crt_name, t.T_desc, COUNT(*) as players
          FROM Schedules s
@@ -125,14 +127,12 @@ function spp_score_entry_shortcode() {
         ARRAY_A
     );
 
-    // Player's own group
     $me = $wpdb->get_row( $wpdb->prepare(
         "SELECT group_id FROM Schedules WHERE user_id = %d AND group_id != 99",
         $user_id
     ), ARRAY_A );
     $own_group = $me ? (int) $me['group_id'] : 0;
 
-    // Resolve which group to display
     if ( $is_admin && isset( $_GET['se_group'] ) && intval( $_GET['se_group'] ) > 0 ) {
         $group_id = intval( $_GET['se_group'] );
     } elseif ( $own_group ) {
@@ -143,7 +143,6 @@ function spp_score_entry_shortcode() {
         return '<p>You are not in tonight\'s schedule, so there are no scores for you to enter.</p>';
     }
 
-    // Load the group, ordered by Rank (same order as pairings everywhere else)
     $players = $wpdb->get_results( $wpdb->prepare(
         "SELECT s.user_id, s.first_name, s.last_name, s.Rank,
                 s.Game1, s.Game2, s.Game3, s.Game4, s.Game5,
@@ -194,11 +193,12 @@ function spp_score_entry_shortcode() {
         .se-team .se-win-tag { display:none; color:#27ae60; font-size:12px; font-weight:bold; }
         .se-team.se-winner .se-win-tag { display:block; }
         .se-bye { font-size:13px; color:#888; margin-bottom:8px; }
-        .se-score-row { display:flex; gap:8px; align-items:center; }
+        .se-score-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
         .se-score-row label { font-size:14px; }
         .se-score-input { width:70px; padding:8px; font-size:18px; text-align:center; border:1px solid #bbb; border-radius:6px; }
         .se-save-btn { padding:10px 18px; background:#3766AB; color:#fff; border:none; border-radius:6px; font-size:15px; cursor:pointer; }
         .se-save-btn:disabled { background:#aaa; }
+        .se-reset-btn { padding:10px 14px; background:#dc3545; color:#fff; border:none; border-radius:6px; font-size:13px; cursor:pointer; }
         .se-saved { font-size:13px; color:#27ae60; font-weight:bold; margin-left:8px; }
         .se-current { font-size:13px; color:#555; margin-top:6px; }
         .se-msg { padding:10px 14px; border-radius:6px; margin-bottom:12px; font-size:14px; display:none; }
@@ -274,11 +274,12 @@ function spp_score_entry_shortcode() {
                     <label>Loser score:</label>
                     <input type="number" class="se-score-input" min="0" max="<?php echo $win_score - 1; ?>" inputmode="numeric" pattern="[0-9]*">
                     <button type="button" class="se-save-btn" disabled>Save</button>
-                    <span class="se-saved" style="display:none;">Saved ✓</span>
+                    <button type="button" class="se-reset-btn">Reset</button>
+                    <span class="se-saved" style="display:none;">Saved</span>
                 </div>
                 <?php if ( $has_scores ) : ?>
                     <div class="se-current">
-                        Current: Blue <?php echo esc_html( $blue_score ); ?> — Red <?php echo esc_html( $red_score ); ?>
+                        Current: Blue <?php echo esc_html( $blue_score ); ?> -- Red <?php echo esc_html( $red_score ); ?>
                     </div>
                 <?php endif; ?>
             </div>
@@ -324,11 +325,12 @@ function spp_score_entry_shortcode() {
         }
 
         document.querySelectorAll('.se-round').forEach(function(roundEl) {
-            var winner  = null;
-            var teams   = roundEl.querySelectorAll('.se-team');
-            var input   = roundEl.querySelector('.se-score-input');
-            var saveBtn = roundEl.querySelector('.se-save-btn');
-            var savedTag= roundEl.querySelector('.se-saved');
+            var winner   = null;
+            var teams    = roundEl.querySelectorAll('.se-team');
+            var input    = roundEl.querySelector('.se-score-input');
+            var saveBtn  = roundEl.querySelector('.se-save-btn');
+            var resetBtn = roundEl.querySelector('.se-reset-btn');
+            var savedTag = roundEl.querySelector('.se-saved');
 
             function updateSaveState() {
                 saveBtn.disabled = !(winner && input.value !== '' && parseInt(input.value) >= 0);
@@ -371,7 +373,7 @@ function spp_score_entry_shortcode() {
                                 cur.className = 'se-current';
                                 roundEl.appendChild(cur);
                             }
-                            cur.textContent = 'Current: Blue ' + res.data.blue + ' — Red ' + res.data.red;
+                            cur.textContent = 'Current: Blue ' + res.data.blue + ' -- Red ' + res.data.red;
                             updateStatus(res.data.status);
                         } else {
                             showMsg(res.data || 'Save failed', false);
@@ -380,7 +382,46 @@ function spp_score_entry_shortcode() {
                     .catch(function() {
                         saveBtn.textContent = 'Save';
                         saveBtn.disabled = false;
-                        showMsg('Network error — try again', false);
+                        showMsg('Network error -- try again', false);
+                    });
+            });
+
+            resetBtn.addEventListener('click', function() {
+                if (!confirm('Clear scores for this round?')) return;
+                resetBtn.disabled = true;
+                resetBtn.textContent = '...';
+
+                var data = new FormData();
+                data.append('action', 'spp_player_score_entry');
+                data.append('nonce', nonce);
+                data.append('round', roundEl.dataset.round);
+                data.append('winner', 'reset');
+                data.append('loser_score', '0');
+                data.append('group_id', groupId);
+
+                fetch(ajaxurl, { method: 'POST', body: data, credentials: 'same-origin' })
+                    .then(function(r){ return r.json(); })
+                    .then(function(res) {
+                        resetBtn.textContent = 'Reset';
+                        resetBtn.disabled = false;
+                        if (res.success) {
+                            savedTag.style.display = 'none';
+                            showMsg(res.data.message, true);
+                            var cur = roundEl.querySelector('.se-current');
+                            if (cur) cur.textContent = '';
+                            teams.forEach(function(t){ t.classList.remove('se-winner'); });
+                            input.value = '';
+                            winner = null;
+                            saveBtn.disabled = true;
+                            updateStatus(res.data.status);
+                        } else {
+                            showMsg(res.data || 'Reset failed', false);
+                        }
+                    })
+                    .catch(function() {
+                        resetBtn.textContent = 'Reset';
+                        resetBtn.disabled = false;
+                        showMsg('Network error', false);
                     });
             });
         });
@@ -390,7 +431,7 @@ function spp_score_entry_shortcode() {
     return ob_get_clean();
 }
 
-// ── AJAX: save one round's scores ────────────────────────────────────────────
+// ── AJAX: save or reset one round's scores ───────────────────────────────────
 
 add_action( 'wp_ajax_spp_player_score_entry', function() {
     global $wpdb;
@@ -412,12 +453,10 @@ add_action( 'wp_ajax_spp_player_score_entry', function() {
     $loser_score = intval( $_POST['loser_score'] ?? -1 );
     $req_group   = intval( $_POST['group_id'] ?? 0 );
 
-    if ( $round < 1 || $round > 5 || ! in_array( $winner, array( 'blue', 'red' ), true ) || $loser_score < 0 ) {
+    if ( $round < 1 || $round > 5 || ! in_array( $winner, array( 'blue', 'red', 'reset' ), true ) || $loser_score < 0 ) {
         wp_send_json_error( 'Invalid input.' );
     }
 
-    // Resolve the group server-side. Players are always locked to their own
-    // group; editors/admins may target any group via group_id.
     $me = $wpdb->get_row( $wpdb->prepare(
         "SELECT group_id FROM Schedules WHERE user_id = %d AND group_id != 99",
         $user_id
@@ -448,14 +487,43 @@ add_action( 'wp_ajax_spp_player_score_entry', function() {
     if ( $round > count( $pairings ) ) {
         wp_send_json_error( 'Invalid round for this group.' );
     }
+
+    $r        = $pairings[ $round - 1 ];
+    $game_col = 'Game' . $round;
+
+    // ── Handle reset ─────────────────────────────────────────────────────────
+    if ( $winner === 'reset' ) {
+        foreach ( array_merge( $r['blue'], $r['red'] ) as $pos ) {
+            if ( ! isset( $players[ $pos ] ) ) continue;
+            $uid = (int) $players[ $pos ]['user_id'];
+            $wpdb->query( $wpdb->prepare(
+                "UPDATE Schedules SET {$game_col} = NULL WHERE user_id = %d",
+                $uid
+            ) );
+            $wpdb->query( $wpdb->prepare(
+                "UPDATE Schedules
+                 SET Score = COALESCE(IF(Game1>=0,Game1,0),0) + COALESCE(IF(Game2>=0,Game2,0),0)
+                           + COALESCE(IF(Game3>=0,Game3,0),0) + COALESCE(IF(Game4>=0,Game4,0),0)
+                           + COALESCE(IF(Game5>=0,Game5,0),0)
+                 WHERE user_id = %d",
+                $uid
+            ) );
+        }
+        wp_send_json_success( array(
+            'message' => "Round {$round} cleared.",
+            'blue'    => '',
+            'red'     => '',
+            'status'  => spp_se_group_status( $group_id ),
+        ) );
+    }
+
+    // ── Handle score entry ───────────────────────────────────────────────────
     if ( $loser_score >= $win_score ) {
         wp_send_json_error( "Loser score must be less than {$win_score}." );
     }
 
-    $r          = $pairings[ $round - 1 ];
     $blue_score = ( $winner === 'blue' ) ? $win_score : $loser_score;
     $red_score  = ( $winner === 'red' )  ? $win_score : $loser_score;
-    $game_col   = 'Game' . $round;
 
     $set_score = function( $positions, $score ) use ( $wpdb, $players, $game_col ) {
         foreach ( $positions as $pos ) {
@@ -465,7 +533,6 @@ add_action( 'wp_ajax_spp_player_score_entry', function() {
                 "UPDATE Schedules SET {$game_col} = %d WHERE user_id = %d",
                 $score, $uid
             ) );
-            // Recompute total Score from games
             $wpdb->query( $wpdb->prepare(
                 "UPDATE Schedules
                  SET Score = COALESCE(IF(Game1>=0,Game1,0),0) + COALESCE(IF(Game2>=0,Game2,0),0)
@@ -481,7 +548,7 @@ add_action( 'wp_ajax_spp_player_score_entry', function() {
     $set_score( $r['red'],  $red_score );
 
     wp_send_json_success( array(
-        'message' => "Round {$round} saved: Blue {$blue_score} — Red {$red_score}.",
+        'message' => "Round {$round} saved: Blue {$blue_score} -- Red {$red_score}.",
         'blue'    => $blue_score,
         'red'     => $red_score,
         'status'  => spp_se_group_status( $group_id ),
