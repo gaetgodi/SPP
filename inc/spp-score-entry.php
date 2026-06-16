@@ -6,16 +6,21 @@
  *
  * Lets a logged-in player enter their group's scores from their phone.
  * - Identifies the player's group from Schedules via user_id
- * - For each round, the player taps the winning team and enters
- *   the losing team's score; the system fills in all four players:
+ * - For each round, the player taps the LOSING team and enters
+ *   their score; the system fills in all four players:
  *     Winners get the fixed winning score (15 for 5-player groups,
  *     20 for 4-player groups), both losers get the entered score.
  * - Any player in the group can enter scores; most recent entry wins.
  * - Available only while spp_schedule_published = 1.
  * - Paper score sheets + Score Scanner remain the verification layer.
  *
- * Version: 1.2.0
- * Date:    2026-06-15
+ * Version: 1.3.0
+ * Date:    2026-06-16
+ *
+ * Changes from 1.2.0:
+ *   - UX: tap the LOSING team instead of the winning team.
+ *     More intuitive -- player taps a team and enters THAT
+ *     team's score. JS flips to winner for the AJAX call.
  *
  * Changes from 1.1.0:
  *   - Reset button per round: clears scores (sets Game column to NULL),
@@ -187,11 +192,13 @@ function spp_score_entry_shortcode() {
         .se-team { flex:1; border-radius:6px; padding:10px 8px; text-align:center; cursor:pointer; border:3px solid transparent; user-select:none; }
         .se-team-blue { background:#daeef5; }
         .se-team-red  { background:#fce4ec; }
-        .se-team.se-winner { border-color:#27ae60; font-weight:bold; }
+        .se-team.se-loser { border-color:#c0392b; }
         .se-team .se-team-label { font-size:11px; text-transform:uppercase; letter-spacing:1px; color:#666; }
         .se-team .se-team-names { font-size:14px; margin-top:2px; }
+        .se-team .se-lose-tag { display:none; color:#c0392b; font-size:12px; font-weight:bold; }
+        .se-team.se-loser .se-lose-tag { display:block; }
         .se-team .se-win-tag { display:none; color:#27ae60; font-size:12px; font-weight:bold; }
-        .se-team.se-winner .se-win-tag { display:block; }
+        .se-team.se-auto-winner .se-win-tag { display:block; }
         .se-bye { font-size:13px; color:#888; margin-bottom:8px; }
         .se-score-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
         .se-score-row label { font-size:14px; }
@@ -212,18 +219,18 @@ function spp_score_entry_shortcode() {
             <select id="se_group_select" <?php echo $is_admin ? '' : 'disabled'; ?>>
                 <?php foreach ( $all_groups as $g ) : ?>
                     <option value="<?php echo esc_attr( $g['group_id'] ); ?>" <?php selected( (int) $g['group_id'], $group_id ); ?>>
-                        <?php echo esc_html( $g['GP_name'] . ' — ' . $g['Crt_name'] . ' — ' . $g['T_desc'] ); ?>
+                        <?php echo esc_html( $g['GP_name'] . ' -- ' . $g['Crt_name'] . ' -- ' . $g['T_desc'] ); ?>
                     </option>
                 <?php endforeach; ?>
             </select>
         </div>
 
         <div class="se-header">
-            <?php echo esc_html( $p0['GP_name'] . ' — ' . $p0['Crt_name'] . ' — ' . $p0['T_desc'] ); ?>
+            <?php echo esc_html( $p0['GP_name'] . ' -- ' . $p0['Crt_name'] . ' -- ' . $p0['T_desc'] ); ?>
         </div>
         <div class="se-sub">
-            Tap the winning team, enter the losing team&rsquo;s score, then Save.
-            Winners are recorded as <?php echo $win_score; ?>.
+            Tap the losing team and enter their score.
+            Winners automatically get <?php echo $win_score; ?>.
         </div>
 
         <div class="se-status" id="se_status">
@@ -262,16 +269,18 @@ function spp_score_entry_shortcode() {
                     <div class="se-team se-team-blue" data-team="blue">
                         <div class="se-team-label">Blue</div>
                         <div class="se-team-names"><?php echo esc_html( implode( ' / ', $blue_names ) ); ?></div>
+                        <div class="se-lose-tag">LOST</div>
                         <div class="se-win-tag">WINNER</div>
                     </div>
                     <div class="se-team se-team-red" data-team="red">
                         <div class="se-team-label">Red</div>
                         <div class="se-team-names"><?php echo esc_html( implode( ' / ', $red_names ) ); ?></div>
+                        <div class="se-lose-tag">LOST</div>
                         <div class="se-win-tag">WINNER</div>
                     </div>
                 </div>
                 <div class="se-score-row">
-                    <label>Loser score:</label>
+                    <label>Their score:</label>
                     <input type="number" class="se-score-input" min="0" max="<?php echo $win_score - 1; ?>" inputmode="numeric" pattern="[0-9]*">
                     <button type="button" class="se-save-btn" disabled>Save</button>
                     <button type="button" class="se-reset-btn">Reset</button>
@@ -325,7 +334,7 @@ function spp_score_entry_shortcode() {
         }
 
         document.querySelectorAll('.se-round').forEach(function(roundEl) {
-            var winner   = null;
+            var loser    = null;
             var teams    = roundEl.querySelectorAll('.se-team');
             var input    = roundEl.querySelector('.se-score-input');
             var saveBtn  = roundEl.querySelector('.se-save-btn');
@@ -333,14 +342,21 @@ function spp_score_entry_shortcode() {
             var savedTag = roundEl.querySelector('.se-saved');
 
             function updateSaveState() {
-                saveBtn.disabled = !(winner && input.value !== '' && parseInt(input.value) >= 0);
+                saveBtn.disabled = !(loser && input.value !== '' && parseInt(input.value) >= 0);
             }
 
             teams.forEach(function(teamEl) {
                 teamEl.addEventListener('click', function() {
-                    teams.forEach(function(t){ t.classList.remove('se-winner'); });
-                    teamEl.classList.add('se-winner');
-                    winner = teamEl.dataset.team;
+                    teams.forEach(function(t){
+                        t.classList.remove('se-loser');
+                        t.classList.remove('se-auto-winner');
+                    });
+                    teamEl.classList.add('se-loser');
+                    // Mark the other team as winner
+                    teams.forEach(function(t){
+                        if (t !== teamEl) t.classList.add('se-auto-winner');
+                    });
+                    loser = teamEl.dataset.team;
                     updateSaveState();
                 });
             });
@@ -350,6 +366,9 @@ function spp_score_entry_shortcode() {
             saveBtn.addEventListener('click', function() {
                 saveBtn.disabled = true;
                 saveBtn.textContent = '...';
+
+                // Flip: user selected the loser, AJAX expects the winner
+                var winner = (loser === 'blue') ? 'red' : 'blue';
 
                 var data = new FormData();
                 data.append('action', 'spp_player_score_entry');
@@ -409,9 +428,12 @@ function spp_score_entry_shortcode() {
                             showMsg(res.data.message, true);
                             var cur = roundEl.querySelector('.se-current');
                             if (cur) cur.textContent = '';
-                            teams.forEach(function(t){ t.classList.remove('se-winner'); });
+                            teams.forEach(function(t){
+                                t.classList.remove('se-loser');
+                                t.classList.remove('se-auto-winner');
+                            });
                             input.value = '';
-                            winner = null;
+                            loser = null;
                             saveBtn.disabled = true;
                             updateStatus(res.data.status);
                         } else {
