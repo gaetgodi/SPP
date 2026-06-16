@@ -1,8 +1,14 @@
 <?php
 /* =========================================================
    GL Schedule Production
-   Version: 1.7.0
+   Version: 1.8.0
    Date: 2026-06-16
+
+   Changes from 1.7.0:
+   - Phase 5 enhanced: paired carpool swap logic added. When a
+     + preference player also has a carpool partner, both are
+     swapped together with no-preference players at the target
+     time. Tolerance tiers expanded to 1.0x, 1.5x, 3.0x.
 
    Changes from 1.6.0:
    - Phase 5 added: travel + preference last pass. Iteratively
@@ -1695,6 +1701,7 @@ if (isset($Event) and $Event <> 0) {
     $phase5_swaps = 0;
     $phase5_max_loops = 20;
     $phase5_loop = 0;
+    $tolerance_multipliers_p5 = array(1.0, 1.5, 3.0);
 
     do {
         $phase5_loop++;
@@ -1710,8 +1717,11 @@ if (isset($Event) and $Event <> 0) {
             ARRAY_A
         );
 
+        $p5_handled = array();
+
         foreach ($plus_players as $pp) {
             $pp_uid    = (int)$pp['user_id'];
+            if (isset($p5_handled[$pp_uid])) continue;
             $pp_tid    = (int)$pp['time_id'];
             $pp_gid    = (int)$pp['group_id'];
             $pp_rank   = (int)$pp['Rank'];
@@ -1726,12 +1736,145 @@ if (isset($Event) and $Event <> 0) {
             $target_tid_p5 = $time_ids[$target_pos];
             if ($pp_tid == $target_tid_p5) continue;
 
+            $pp_cp = $carpool_key($extract_carpool($pp_travel));
+
+            // ── PAIRED CARPOOL SWAP ──────────────────────────────────────
+            if (!empty($pp_cp)) {
+                $cp_movers = array();
+                foreach ($plus_players as $other) {
+                    $o_uid = (int)$other['user_id'];
+                    $o_travel = $normalize_travel($other['travel']);
+                    $o_cp = $carpool_key($extract_carpool($o_travel));
+                    if ($o_cp === $pp_cp) {
+                        $cp_movers[] = $other;
+                    }
+                }
+
+                $all_want_same = true;
+                foreach ($cp_movers as $cm) {
+                    $cm_travel = $normalize_travel($cm['travel']);
+                    $cm_target = null;
+                    if (preg_match('/^\+5:30/i', $cm_travel)) $cm_target = 0;
+                    elseif (preg_match('/^\+6:40/i', $cm_travel)) $cm_target = 1;
+                    elseif (preg_match('/^\+7:50/i', $cm_travel)) $cm_target = 2;
+                    if ($cm_target !== $target_pos) { $all_want_same = false; break; }
+                }
+                if (!$all_want_same) continue;
+
+                $movers_needing_swap = array();
+                foreach ($cp_movers as $cm) {
+                    if ((int)$cm['time_id'] != $target_tid_p5) {
+                        $movers_needing_swap[] = $cm;
+                    }
+                }
+                if (empty($movers_needing_swap)) continue;
+
+                $found_all = false;
+
+                foreach ($tolerance_multipliers_p5 as $mult) {
+                    $swap_pairs = array();
+                    $used_sc_uids = array();
+                    $can_swap_all = true;
+
+                    foreach ($movers_needing_swap as $mv) {
+                        $mv_uid  = (int)$mv['user_id'];
+                        $mv_rank = (int)$mv['Rank'];
+                        $tol = (int)round($effective_tolerance($mv_rank) * $mult);
+
+                        $swap_cands = $wpdb->get_results(
+                            "SELECT s.user_id, s.group_id, s.time_id, s.Crt_ID, s.Rank, m.travel, m.first_name, m.last_name
+                             FROM $Schedules s
+                             JOIN $Master m ON s.user_id = m.user_id
+                             WHERE s.group_id != 99
+                             AND s.time_id = $target_tid_p5
+                             ORDER BY ABS(s.Rank - $mv_rank)",
+                            ARRAY_A
+                        );
+
+                        $found_cand = false;
+                        foreach ($swap_cands as $sc) {
+                            $sc_uid = (int)$sc['user_id'];
+                            if (in_array($sc_uid, $used_sc_uids)) continue;
+                            $sc_travel_norm = $normalize_travel($sc['travel']);
+                            if (!empty($sc_travel_norm)) continue;
+                            $sc_cp_name = $carpool_key($extract_carpool($sc['travel']));
+                            if (!empty($sc_cp_name)) continue;
+                            if (abs($mv_rank - (int)$sc['Rank']) > $tol) continue;
+                            $mv_tid_current = (int)$mv['time_id'];
+                            if ($has_travel_conflict($sc_uid, $mv_tid_current)) continue;
+
+                            $swap_pairs[] = array('mover' => $mv, 'swap' => $sc);
+                            $used_sc_uids[] = $sc_uid;
+                            $found_cand = true;
+                            break;
+                        }
+                        if (!$found_cand) { $can_swap_all = false; break; }
+                    }
+
+                    if (!$can_swap_all) continue;
+
+                    $rollback = array();
+                    foreach ($swap_pairs as $pair) {
+                        $mv = $pair['mover'];
+                        $sc = $pair['swap'];
+                        $mv_uid = (int)$mv['user_id'];
+                        $sc_uid = (int)$sc['user_id'];
+                        $mv_gid = (int)$mv['group_id'];
+                        $sc_gid = (int)$sc['group_id'];
+                        $mv_tid = (int)$mv['time_id'];
+                        $sc_tid = (int)$sc['time_id'];
+
+                        $mv_crt = $wpdb->get_var("SELECT Crt_ID FROM $Schedules WHERE user_id = $mv_uid");
+                        $sc_crt = $wpdb->get_var("SELECT Crt_ID FROM $Schedules WHERE user_id = $sc_uid");
+                        $crt_for_mv = $wpdb->get_var("SELECT Crt_ID FROM $Schedules WHERE group_id = $sc_gid AND user_id != $sc_uid LIMIT 1");
+                        $crt_for_sc = $wpdb->get_var("SELECT Crt_ID FROM $Schedules WHERE group_id = $mv_gid AND user_id != $mv_uid LIMIT 1");
+                        if (!$crt_for_mv) $crt_for_mv = $sc_crt;
+                        if (!$crt_for_sc) $crt_for_sc = $mv_crt;
+
+                        $rollback[] = array(
+                            'mv_uid' => $mv_uid, 'mv_gid' => $mv_gid, 'mv_tid' => $mv_tid, 'mv_crt' => $mv_crt,
+                            'sc_uid' => $sc_uid, 'sc_gid' => $sc_gid, 'sc_tid' => $sc_tid, 'sc_crt' => $sc_crt,
+                        );
+
+                        $wpdb->query("UPDATE $Schedules SET group_id = $sc_gid, time_id = $sc_tid, Crt_ID = $crt_for_mv WHERE user_id = $mv_uid");
+                        $wpdb->query("UPDATE $Schedules SET group_id = $mv_gid, time_id = $mv_tid, Crt_ID = $crt_for_sc WHERE user_id = $sc_uid");
+                    }
+
+                    $carpool_after_p5 = $carpool_score();
+                    if ($carpool_after_p5 > $carpool_baseline_p5) {
+                        foreach (array_reverse($rollback) as $rb) {
+                            $wpdb->query("UPDATE $Schedules SET group_id = {$rb['mv_gid']}, time_id = {$rb['mv_tid']}, Crt_ID = {$rb['mv_crt']} WHERE user_id = {$rb['mv_uid']}");
+                            $wpdb->query("UPDATE $Schedules SET group_id = {$rb['sc_gid']}, time_id = {$rb['sc_tid']}, Crt_ID = {$rb['sc_crt']} WHERE user_id = {$rb['sc_uid']}");
+                        }
+                        continue;
+                    }
+
+                    $tol_label = $mult > 1.0 ? ' (relaxed ' . $mult . 'x)' : '';
+                    foreach ($swap_pairs as $pair) {
+                        $mv = $pair['mover'];
+                        $sc = $pair['swap'];
+                        $mv_name = $mv['first_name'] . ' ' . $mv['last_name'];
+                        $sc_name = $sc['first_name'] . ' ' . $sc['last_name'];
+                        $mv_tid_label = $time_labels[(int)$mv['time_id']] ?? $mv['time_id'];
+                        echo "OK: [Carpool '$pp_cp'] $mv_name (rank {$mv['Rank']}, {$mv_tid_label}-->{$time_labels[$target_tid_p5]}) swapped with $sc_name (rank {$sc['Rank']}){$tol_label}.<br>";
+                        $phase5_swaps++;
+                        $p5_handled[(int)$mv['user_id']] = true;
+                    }
+                    $swapped_p5 = true;
+                    $found_all = true;
+                    break;
+                }
+
+                if ($found_all) break;
+                continue;
+            }
+
+            // ── SINGLE PLAYER SWAP ───────────────────────────────────────
             $found_p5 = false;
-            $tolerance_multipliers_p5 = array(1.0, 1.5);
 
             foreach ($tolerance_multipliers_p5 as $mult) {
                 $tol = (int)round($effective_tolerance($pp_rank) * $mult);
-                $tol_label = $mult > 1.0 ? ' (relaxed)' : '';
+                $tol_label = $mult > 1.0 ? ' (relaxed ' . $mult . 'x)' : '';
 
                 $swap_cands_p5 = $wpdb->get_results(
                     "SELECT s.user_id, s.group_id, s.time_id, s.Crt_ID, s.Rank, m.travel, m.first_name, m.last_name
