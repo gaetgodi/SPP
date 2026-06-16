@@ -74,14 +74,12 @@ $ctoffdt = "2050-12-31";
 $prefix = $wpdb->prefix;
 if (!isset($Event) || !$Event) { echo '<p class="gl-error">No event selected. Please select a ladder event first.</p>'; return; }
 // -------------------------------------------------------
-// GUARD: Block if previous results not yet posted
+// GUARD: Block if published schedule awaiting results
 // -------------------------------------------------------
-$sched_exists = $wpdb->get_var("SHOW TABLES LIKE 'Schedules'");
-$sched_has_rows = $sched_exists ? (int)$wpdb->get_var("SELECT COUNT(*) FROM Schedules") : 0;
-if ($sched_has_rows > 0 && !get_option('spp_results_posted', 0)) {
-    echo '<p class="gl-error" style="color:#c0392b;font-weight:bold;">Cannot produce a new schedule: the previous event\'s results have not been posted yet. Run Apply Override first.</p>';
+if (get_option('spp_schedule_published', 0) && !get_option('spp_results_posted', 0)) {
+    echo '<p class="gl-error" style="color:#c0392b;font-weight:bold;">Cannot produce a new schedule: the published schedule\'s results have not been posted yet. Publish results first.</p>';
     return;
-} 
+}
 $schedules_prev = "SchedulesPrev$Event";
 // Need to run this to refresh travel fields
 echo do_shortcode("[cmruncode name='Create membership table']");
