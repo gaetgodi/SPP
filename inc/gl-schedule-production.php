@@ -1,8 +1,13 @@
 <?php
 /* =========================================================
    GL Schedule Production
-   Version: 1.9.1
+   Version: 1.9.2
    Date: 2026-06-16
+
+   Changes from 1.9.1:
+   - Carpool Adjacency Report added after Phase 5. Shows count
+     of same-slot, adjacent, and separated carpool pairs with
+     names and time slots for adjacent/separated pairs.
 
    Changes from 1.9.0:
    - Distribution fill rewritten: remaining groups allocated
@@ -2035,6 +2040,72 @@ if (isset($Event) and $Event <> 0) {
     } else {
         echo "OK: $phase5_swaps preference swap(s) completed in $phase5_loop pass(es).<br>";
     }
+
+    // -------------------------------------------------------
+    // CARPOOL ADJACENCY REPORT
+    // -------------------------------------------------------
+    echo "<br><strong>Carpool Adjacency Report:</strong><br>";
+
+    $adj_players = $wpdb->get_results(
+        "SELECT s.user_id, s.group_id, s.time_id, m.travel, m.first_name, m.last_name
+         FROM $Schedules s JOIN $Master m ON s.user_id = m.user_id
+         WHERE s.group_id != 99",
+        ARRAY_A
+    );
+    $adj_cp_groups = array();
+    foreach ($adj_players as $p) {
+        $travel = $normalize_travel($p['travel']);
+        $cp = $carpool_key($extract_carpool($travel));
+        if (!empty($cp)) {
+            $adj_cp_groups[$cp][] = $p;
+        }
+    }
+
+    $same_slot_pairs = 0;
+    $adjacent_pairs = 0;
+    $separated_pairs = 0;
+    $adjacent_details = array();
+    $separated_details = array();
+
+    foreach ($adj_cp_groups as $cp => $members) {
+        if (count($members) < 2) continue;
+        for ($i = 0; $i < count($members); $i++) {
+            for ($j = $i + 1; $j < count($members); $j++) {
+                $pos1 = array_search((int)$members[$i]['time_id'], $time_ids);
+                $pos2 = array_search((int)$members[$j]['time_id'], $time_ids);
+                $gap = abs($pos1 - $pos2);
+                $n1 = $members[$i]['first_name'] . ' ' . $members[$i]['last_name'];
+                $n2 = $members[$j]['first_name'] . ' ' . $members[$j]['last_name'];
+                $t1 = $time_labels[(int)$members[$i]['time_id']] ?? $members[$i]['time_id'];
+                $t2 = $time_labels[(int)$members[$j]['time_id']] ?? $members[$j]['time_id'];
+                if ($gap === 0) {
+                    $same_slot_pairs++;
+                } elseif ($gap === 1) {
+                    $adjacent_pairs++;
+                    $adjacent_details[] = "$n1 ($t1) / $n2 ($t2) [carpool: $cp]";
+                } else {
+                    $separated_pairs++;
+                    $separated_details[] = "$n1 ($t1) / $n2 ($t2) [carpool: $cp]";
+                }
+            }
+        }
+    }
+
+    $total_pairs = $same_slot_pairs + $adjacent_pairs + $separated_pairs;
+    echo "Carpool pairs: $total_pairs total -- $same_slot_pairs same slot, $adjacent_pairs adjacent, $separated_pairs separated.<br>";
+
+    if (!empty($adjacent_details)) {
+        echo "Adjacent (could be improved):<br>";
+        foreach ($adjacent_details as $d) echo "&nbsp;&nbsp;&nbsp;$d<br>";
+    }
+    if (!empty($separated_details)) {
+        echo "Separated (needs manual fix):<br>";
+        foreach ($separated_details as $d) echo "&nbsp;&nbsp;&nbsp;$d<br>";
+    }
+    if ($adjacent_pairs === 0 && $separated_pairs === 0) {
+        echo "All carpool partners are in the same time slot.<br>";
+    }
+
 
     // -------------------------------------------------------
     // FINAL VIOLATION REPORT
