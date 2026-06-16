@@ -1,8 +1,13 @@
 <?php
 /* =========================================================
    GL Schedule Production
-   Version: 1.8.0
+   Version: 1.8.1
    Date: 2026-06-16
+
+   Changes from 1.8.0:
+   - Distribution floor: enforce minimum 1 group per time slot.
+     Prevents degenerate case where a time slot ends up empty
+     and + preference players cannot be placed there.
 
    Changes from 1.7.0:
    - Phase 5 enhanced: paired carpool swap logic added. When a
@@ -477,7 +482,17 @@ if (isset($Event) and $Event <> 0) {
     } else {
         $counts = $valid_combos[array_rand($valid_combos)];
     }
+
     shuffle($counts);
+
+    // Enforce minimum 1 group per time slot
+    for ($i = 0; $i < $num_times; $i++) {
+        if ($counts[$i] === 0) {
+            $max_idx = array_search(max($counts), $counts);
+            $counts[$max_idx]--;
+            $counts[$i] = 1;
+        }
+    }
 
     echo "Distribution base (before carpool): " . implode(', ', $counts) . "<br>";
 
