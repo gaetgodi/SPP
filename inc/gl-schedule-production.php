@@ -1,8 +1,14 @@
 <?php
 /* =========================================================
    GL Schedule Production
-   Version: 1.4.0
+   Version: 1.5.0
    Date: 2026-06-10
+
+   Changes from 1.4.0:
+- Guard added: schedule production blocked until previous
+  results are posted via Apply Override.
+  Uses spp_results_posted option (set to 1 by Apply Override
+  Stage 1, reset to 0 after schedule creation).
 
    Changes from 1.3.0:
    - Clear spp_modified_groups option when new schedule is created.
@@ -53,7 +59,15 @@ $Schedules = "Schedules";
 $ctoffdt = "2050-12-31";
 $prefix = $wpdb->prefix;
 if (!isset($Event) || !$Event) { echo '<p class="gl-error">No event selected. Please select a ladder event first.</p>'; return; }
-
+// -------------------------------------------------------
+// GUARD: Block if previous results not yet posted
+// -------------------------------------------------------
+$sched_exists = $wpdb->get_var("SHOW TABLES LIKE 'Schedules'");
+$sched_has_rows = $sched_exists ? (int)$wpdb->get_var("SELECT COUNT(*) FROM Schedules") : 0;
+if ($sched_has_rows > 0 && !get_option('spp_results_posted', 0)) {
+    echo '<p class="gl-error" style="color:#c0392b;font-weight:bold;">Cannot produce a new schedule: the previous event\'s results have not been posted yet. Run Apply Override first.</p>';
+    return;
+} 
 $schedules_prev = "SchedulesPrev$Event";
 // Need to run this to refresh travel fields
 echo do_shortcode("[cmruncode name='Create membership table']");
@@ -1653,6 +1667,8 @@ if (isset($Event) and $Event <> 0) {
 
     // Clear modified groups from previous event
     delete_option( 'spp_modified_groups' );
+    // Mark results as not yet posted for this new schedule
+    update_option('spp_results_posted', 0);
     echo "✓ Modified groups list cleared for new event.<br>";
 
 } else {
