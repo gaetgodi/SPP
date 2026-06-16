@@ -1,8 +1,14 @@
 <?php
 /* =========================================================
    GL Schedule Production
-   Version: 1.6.0
+   Version: 1.7.0
    Date: 2026-06-16
+
+   Changes from 1.6.0:
+   - Phase 5 added: travel + preference last pass. Iteratively
+     swaps +5:30/+6:40/+7:50 players not at their preferred time
+     with no-preference players at the target time. Uses
+     $effective_tolerance with 1.5x fallback. Carpool guardrail.
 
    Changes from 1.5.0:
    - Phase 4 added: carpool same-slot last pass. After all other
@@ -1682,6 +1688,119 @@ if (isset($Event) and $Event <> 0) {
     } else {
         echo "OK: $phase4_swaps carpool swap(s) completed in $phase4_loop pass(es).<br>";
     }
+
+    // -------------------------------------------------------
+    // PHASE 5 — TRAVEL + PREFERENCE LAST PASS
+    // -------------------------------------------------------
+    echo "<br><strong>Post-processing Phase 5 -- Travel Preference Last Pass:</strong><br>";
+
+    $phase5_swaps = 0;
+    $phase5_max_loops = 20;
+    $phase5_loop = 0;
+
+    do {
+        $phase5_loop++;
+        $swapped_p5 = false;
+        $carpool_baseline_p5 = $carpool_score();
+
+        $plus_players = $wpdb->get_results(
+            "SELECT s.user_id, s.group_id, s.time_id, s.Crt_ID, s.Rank, m.travel, m.first_name, m.last_name
+             FROM $Schedules s
+             JOIN $Master m ON s.user_id = m.user_id
+             WHERE s.group_id != 99
+             ORDER BY s.Rank",
+            ARRAY_A
+        );
+
+        foreach ($plus_players as $pp) {
+            $pp_uid    = (int)$pp['user_id'];
+            $pp_tid    = (int)$pp['time_id'];
+            $pp_gid    = (int)$pp['group_id'];
+            $pp_rank   = (int)$pp['Rank'];
+            $pp_travel = $normalize_travel($pp['travel']);
+
+            $target_pos = null;
+            if (preg_match('/^\+5:30/i', $pp_travel)) $target_pos = 0;
+            elseif (preg_match('/^\+6:40/i', $pp_travel)) $target_pos = 1;
+            elseif (preg_match('/^\+7:50/i', $pp_travel)) $target_pos = 2;
+            if ($target_pos === null) continue;
+
+            $target_tid_p5 = $time_ids[$target_pos];
+            if ($pp_tid == $target_tid_p5) continue;
+
+            $found_p5 = false;
+            $tolerance_multipliers_p5 = array(1.0, 1.5);
+
+            foreach ($tolerance_multipliers_p5 as $mult) {
+                $tol = (int)round($effective_tolerance($pp_rank) * $mult);
+                $tol_label = $mult > 1.0 ? ' (relaxed)' : '';
+
+                $swap_cands_p5 = $wpdb->get_results(
+                    "SELECT s.user_id, s.group_id, s.time_id, s.Crt_ID, s.Rank, m.travel, m.first_name, m.last_name
+                     FROM $Schedules s
+                     JOIN $Master m ON s.user_id = m.user_id
+                     WHERE s.group_id != 99
+                     AND s.time_id = $target_tid_p5
+                     AND s.user_id != $pp_uid
+                     ORDER BY ABS(s.Rank - $pp_rank)",
+                    ARRAY_A
+                );
+
+                foreach ($swap_cands_p5 as $sc) {
+                    $sc_uid    = (int)$sc['user_id'];
+                    $sc_gid    = (int)$sc['group_id'];
+                    $sc_tid    = (int)$sc['time_id'];
+                    $sc_rank   = (int)$sc['Rank'];
+                    $sc_travel_norm = $normalize_travel($sc['travel']);
+
+                    if (!empty($sc_travel_norm)) continue;
+
+                    if (abs($pp_rank - $sc_rank) > $tol) continue;
+
+                    if ($has_travel_conflict($sc_uid, $pp_tid)) continue;
+
+                    $sc_cp_name = $carpool_key($extract_carpool($sc['travel']));
+                    if (!empty($sc_cp_name)) continue;
+
+                    $pp_crt = $wpdb->get_var("SELECT Crt_ID FROM $Schedules WHERE user_id = $pp_uid");
+                    $sc_crt = $wpdb->get_var("SELECT Crt_ID FROM $Schedules WHERE user_id = $sc_uid");
+                    $crt_for_pp = $wpdb->get_var("SELECT Crt_ID FROM $Schedules WHERE group_id = $sc_gid AND user_id != $sc_uid LIMIT 1");
+                    $crt_for_sc = $wpdb->get_var("SELECT Crt_ID FROM $Schedules WHERE group_id = $pp_gid AND user_id != $pp_uid LIMIT 1");
+                    if (!$crt_for_pp) $crt_for_pp = $sc_crt;
+                    if (!$crt_for_sc) $crt_for_sc = $pp_crt;
+
+                    $wpdb->query("UPDATE $Schedules SET group_id = $sc_gid, time_id = $sc_tid, Crt_ID = $crt_for_pp WHERE user_id = $pp_uid");
+                    $wpdb->query("UPDATE $Schedules SET group_id = $pp_gid, time_id = $pp_tid, Crt_ID = $crt_for_sc WHERE user_id = $sc_uid");
+
+                    $carpool_after_p5 = $carpool_score();
+                    if ($carpool_after_p5 > $carpool_baseline_p5) {
+                        $wpdb->query("UPDATE $Schedules SET group_id = $pp_gid, time_id = $pp_tid, Crt_ID = $pp_crt WHERE user_id = $pp_uid");
+                        $wpdb->query("UPDATE $Schedules SET group_id = $sc_gid, time_id = $sc_tid, Crt_ID = $sc_crt WHERE user_id = $sc_uid");
+                        continue;
+                    }
+
+                    $pp_name = $pp['first_name'] . ' ' . $pp['last_name'];
+                    $sc_name = $sc['first_name'] . ' ' . $sc['last_name'];
+                    echo "OK: $pp_name (rank $pp_rank, {$time_labels[$pp_tid]}-->{$time_labels[$target_tid_p5]}) swapped with $sc_name (rank $sc_rank){$tol_label}.<br>";
+                    $phase5_swaps++;
+                    $swapped_p5 = true;
+                    $found_p5 = true;
+                    break;
+                }
+
+                if ($found_p5) break;
+            }
+
+            if ($swapped_p5) break;
+        }
+    } while ($swapped_p5 && $phase5_loop < $phase5_max_loops);
+
+    if ($phase5_swaps === 0) {
+        echo "OK: All + preference players already at their preferred time slot.<br>";
+    } else {
+        echo "OK: $phase5_swaps preference swap(s) completed in $phase5_loop pass(es).<br>";
+    }
+
     // -------------------------------------------------------
     // FINAL VIOLATION REPORT
     // -------------------------------------------------------
