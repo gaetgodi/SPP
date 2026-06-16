@@ -1,8 +1,14 @@
 <?php
 /* =========================================================
    GL Schedule Production
-   Version: 1.9.o
+   Version: 1.9.1
    Date: 2026-06-16
+
+   Changes from 1.9.0:
+   - Distribution fill rewritten: remaining groups allocated
+     proportionally to slots receiving displaced - players,
+     then evenly to slots with room. Prevents greedy fill
+     from starving later time slots.
 
    Changes from 1.8.1:
    - Base distribution rewritten: demand-driven sequential.
@@ -519,17 +525,51 @@ if (isset($Event) and $Event <> 0) {
             }
         }
     }
+    // Fill remaining groups: prioritize slots receiving displaced - players,
+    // then distribute any leftover evenly across slots with room
+    if ($remaining_groups > 0) {
+        $receive_weight = array_fill(0, $num_times, 0);
+        for ($i = 0; $i < $num_times; $i++) {
+            if ($minus_demand[$i] > 0) {
+                for ($j = 0; $j < $num_times; $j++) {
+                    if ($j === $i) continue;
+                    $receive_weight[$j] += $minus_demand[$i];
+                }
+            }
+        }
 
-    // Fill remaining groups sequentially slot 1 -> 2 -> 3 -> ...
-    for ($i = 0; $i < $num_times; $i++) {
-        if ($remaining_groups <= 0) break;
-        $can_add = $num_crts - $counts[$i];
-        $to_add = min($can_add, $remaining_groups);
-        if ($to_add > 0) {
-            $counts[$i] += $to_add;
-            $remaining_groups -= $to_add;
+        // Allocate proportionally to receive weight
+        $total_weight = array_sum($receive_weight);
+        if ($total_weight > 0) {
+            $weighted_alloc = array_fill(0, $num_times, 0);
+            foreach ($receive_weight as $i => $w) {
+                if ($w <= 0) continue;
+                $share = (int)round($remaining_groups * $w / $total_weight);
+                $can_add = $num_crts - $counts[$i];
+                $to_add = min($share, $can_add, $remaining_groups);
+                if ($to_add > 0) {
+                    $counts[$i] += $to_add;
+                    $remaining_groups -= $to_add;
+                }
+            }
+        }
+
+        // Any leftover: distribute evenly to slots with room
+        while ($remaining_groups > 0) {
+            $added_any = false;
+            for ($i = 0; $i < $num_times; $i++) {
+                if ($remaining_groups <= 0) break;
+                if ($counts[$i] < $num_crts) {
+                    $counts[$i]++;
+                    $remaining_groups--;
+                    $added_any = true;
+                }
+            }
+            if (!$added_any) break;
         }
     }
+
+
 
     echo "Distribution (demand-driven): " . implode(', ', $counts);
     echo " | +demand: " . implode(',', $plus_demand);
