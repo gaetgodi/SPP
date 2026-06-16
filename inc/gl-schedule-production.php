@@ -1,8 +1,15 @@
 <?php
 /* =========================================================
    GL Schedule Production
-   Version: 1.8.1
+   Version: 1.9.o
    Date: 2026-06-16
+
+   Changes from 1.8.1:
+   - Base distribution rewritten: demand-driven sequential.
+     Counts + and - travel preferences per time slot, allocates
+     minimum groups to hold + players, ensures room for displaced
+     - players, fills remaining groups sequentially slot 1 onward.
+     Replaces random distribution and minimum-1 floor.
 
    Changes from 1.8.0:
    - Distribution floor: enforce minimum 1 group per time slot.
@@ -462,39 +469,71 @@ if (isset($Event) and $Event <> 0) {
     $all_carpools = $priority_carpool_to_groups + $carpool_to_groups;
 
     // -------------------------------------------------------
-    // BASE TIME SLOT DISTRIBUTION
+    // BASE TIME SLOT DISTRIBUTION — DEMAND-DRIVEN SEQUENTIAL
     // -------------------------------------------------------
-    $valid_combos = [];
-    for ($a = 1; $a <= $num_crts; $a++) {
-        for ($b = 1; $b <= $num_crts; $b++) {
-            $c = $groups_needed - $a - $b;
-            if ($c >= 1 && $c <= $num_crts) {
-                if ($a === $b && $b === $c) continue;
-                $valid_combos[] = [$a, $b, $c];
+
+    // Count + and - preferences per time slot
+    $plus_demand = array_fill(0, $num_times, 0);
+    $minus_demand = array_fill(0, $num_times, 0);
+
+    foreach ($selected_registrants as $uid) {
+        $raw = $wpdb->get_var($wpdb->prepare("SELECT travel FROM $Master WHERE user_id = %d", $uid));
+        $travel = $normalize_travel($raw);
+        if (empty($travel)) continue;
+        if (preg_match('/^\+5:30/i', $travel)) $plus_demand[0]++;
+        elseif (preg_match('/^\+6:40/i', $travel)) $plus_demand[1]++;
+        elseif (preg_match('/^\+7:50/i', $travel)) $plus_demand[2]++;
+        if (preg_match('/^-5:30/i', $travel)) $minus_demand[0]++;
+        elseif (preg_match('/^-6:40/i', $travel)) $minus_demand[1]++;
+        elseif (preg_match('/^-7:50/i', $travel)) $minus_demand[2]++;
+    }
+
+    // Minimum groups per slot: enough to hold + players (groups of 4-5)
+    $counts = array_fill(0, $num_times, 0);
+    $remaining_groups = $groups_needed;
+
+    for ($i = 0; $i < $num_times; $i++) {
+        $min_needed = (int)ceil($plus_demand[$i] / 4);
+        $min_needed = max($min_needed, 1);
+        $min_needed = min($min_needed, $num_crts, $remaining_groups);
+        $counts[$i] = $min_needed;
+        $remaining_groups -= $min_needed;
+    }
+
+    // Ensure slots receiving - players from other slots have room
+    // Players with -X must go somewhere else, so other slots need capacity
+    for ($i = 0; $i < $num_times; $i++) {
+        if ($minus_demand[$i] > 0) {
+            $displaced = (int)ceil($minus_demand[$i] / 4);
+            for ($j = 0; $j < $num_times; $j++) {
+                if ($j === $i) continue;
+                if ($remaining_groups <= 0) break;
+                $can_add = $num_crts - $counts[$j];
+                $to_add = min($displaced, $can_add, $remaining_groups);
+                if ($to_add > 0) {
+                    $counts[$j] += $to_add;
+                    $remaining_groups -= $to_add;
+                    $displaced -= $to_add;
+                }
+                if ($displaced <= 0) break;
             }
         }
     }
-    if (empty($valid_combos)) {
-        $even = intval($groups_needed / $num_times);
-        $counts = array_fill(0, $num_times, $even);
-        $remainder = $groups_needed % $num_times;
-        for ($i = 0; $i < $remainder; $i++) $counts[$i]++;
-    } else {
-        $counts = $valid_combos[array_rand($valid_combos)];
-    }
 
-    shuffle($counts);
-
-    // Enforce minimum 1 group per time slot
+    // Fill remaining groups sequentially slot 1 -> 2 -> 3 -> ...
     for ($i = 0; $i < $num_times; $i++) {
-        if ($counts[$i] === 0) {
-            $max_idx = array_search(max($counts), $counts);
-            $counts[$max_idx]--;
-            $counts[$i] = 1;
+        if ($remaining_groups <= 0) break;
+        $can_add = $num_crts - $counts[$i];
+        $to_add = min($can_add, $remaining_groups);
+        if ($to_add > 0) {
+            $counts[$i] += $to_add;
+            $remaining_groups -= $to_add;
         }
     }
 
-    echo "Distribution base (before carpool): " . implode(', ', $counts) . "<br>";
+    echo "Distribution (demand-driven): " . implode(', ', $counts);
+    echo " | +demand: " . implode(',', $plus_demand);
+    echo " | -demand: " . implode(',', $minus_demand) . "<br>";
 
     $time_assignments = [];
     $t_index = 0;
