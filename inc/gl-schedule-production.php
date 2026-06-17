@@ -1,8 +1,16 @@
 <?php
 /* =========================================================
    GL Schedule Production
-   Version: 1.9.2
+   Version: 2.0.0
    Date: 2026-06-16
+   
+   Changes from 1.9.2:
+   - Distribution: extra group added to any time slot with +
+     demand, giving breathing room for carpool pass erosion.
+   - Phases 4 and 5: rank comparison changed from individual
+     rank to group average rank (primary) with 4x individual
+     ceiling as safety net. Applies to single swaps, paired
+     carpool swaps, and carpool same-slot swaps.
 
    Changes from 1.9.1:
    - Carpool Adjacency Report added after Phase 5. Shows count
@@ -505,6 +513,7 @@ if (isset($Event) and $Event <> 0) {
 
     for ($i = 0; $i < $num_times; $i++) {
         $min_needed = (int)ceil($plus_demand[$i] / 4);
+        if ($plus_demand[$i] > 0) $min_needed++;
         $min_needed = max($min_needed, 1);
         $min_needed = min($min_needed, $num_crts, $remaining_groups);
         $counts[$i] = $min_needed;
@@ -1745,7 +1754,14 @@ if (isset($Event) and $Event <> 0) {
 
                         if (!empty($sc_travel_norm)) continue;
 
-                        if (abs($mv_rank - $sc_rank) > $tol) continue;
+                        // Group average rank check (primary)
+                        $sc_group_ranks = $wpdb->get_col("SELECT Rank FROM $Schedules WHERE group_id = $sc_gid AND group_id != 99");
+                        $sc_group_avg = count($sc_group_ranks) > 0 ? array_sum($sc_group_ranks) / count($sc_group_ranks) : $sc_rank;
+                        if (abs($mv_rank - $sc_group_avg) > $tol) continue;
+
+                        // Individual ceiling (safety net at 4x)
+                        $ceiling = (int)round($effective_tolerance($mv_rank) * 4.0);
+                        if (abs($mv_rank - $sc_rank) > $ceiling) continue;
 
                         if ($has_travel_conflict($sc_uid, $mv_tid)) continue;
 
@@ -1898,7 +1914,17 @@ if (isset($Event) and $Event <> 0) {
                             if (!empty($sc_travel_norm)) continue;
                             $sc_cp_name = $carpool_key($extract_carpool($sc['travel']));
                             if (!empty($sc_cp_name)) continue;
-                            if (abs($mv_rank - (int)$sc['Rank']) > $tol) continue;
+
+                            // Group average rank check (primary)
+                            $sc_gid_paired = (int)$sc['group_id'];
+                            $sc_group_ranks_paired = $wpdb->get_col("SELECT Rank FROM $Schedules WHERE group_id = $sc_gid_paired AND group_id != 99");
+                            $sc_group_avg_paired = count($sc_group_ranks_paired) > 0 ? array_sum($sc_group_ranks_paired) / count($sc_group_ranks_paired) : (int)$sc['Rank'];
+                            if (abs($mv_rank - $sc_group_avg_paired) > $tol) continue;
+
+                            // Individual ceiling (safety net at 4x)
+                            $ceiling_paired = (int)round($effective_tolerance($mv_rank) * 4.0);
+                            if (abs($mv_rank - (int)$sc['Rank']) > $ceiling_paired) continue;
+
                             $mv_tid_current = (int)$mv['time_id'];
                             if ($has_travel_conflict($sc_uid, $mv_tid_current)) continue;
 
@@ -1995,7 +2021,14 @@ if (isset($Event) and $Event <> 0) {
 
                     if (!empty($sc_travel_norm)) continue;
 
-                    if (abs($pp_rank - $sc_rank) > $tol) continue;
+                    // Group average rank check (primary)
+                    $sc_group_ranks_p5 = $wpdb->get_col("SELECT Rank FROM $Schedules WHERE group_id = $sc_gid AND group_id != 99");
+                    $sc_group_avg_p5 = count($sc_group_ranks_p5) > 0 ? array_sum($sc_group_ranks_p5) / count($sc_group_ranks_p5) : $sc_rank;
+                    if (abs($pp_rank - $sc_group_avg_p5) > $tol) continue;
+
+                    // Individual ceiling (safety net at 4x)
+                    $ceiling_p5 = (int)round($effective_tolerance($pp_rank) * 4.0);
+                    if (abs($pp_rank - $sc_rank) > $ceiling_p5) continue;
 
                     if ($has_travel_conflict($sc_uid, $pp_tid)) continue;
 
