@@ -1,8 +1,13 @@
 <?php
 /* =========================================================
    GL Schedule Production
-   Version: 2.0.0
+   Version: 2.0.1
    Date: 2026-06-16
+
+   Changes from 2.0.0:
+   - Tiered individual ceiling: rank 1-20 gets 2x, rank 21-50
+     gets 3x, rank 51+ gets 4x effective_tolerance. Prevents
+     top-ranked players from being swapped into mismatched groups.
    
    Changes from 1.9.2:
    - Distribution: extra group added to any time slot with +
@@ -331,6 +336,12 @@ if (isset($Event) and $Event <> 0) {
         if ($rank <= 20) return (int)round($carpool_rank_tolerance * 2 / 3);
         if ($rank <= 50) return $carpool_rank_tolerance;
         return (int)round($carpool_rank_tolerance * 4 / 3);
+    };
+
+    $effective_ceiling = function($rank) use ($effective_tolerance) {
+        if ($rank <= 20) return (int)round($effective_tolerance($rank) * 2.0);
+        if ($rank <= 50) return (int)round($effective_tolerance($rank) * 3.0);
+        return (int)round($effective_tolerance($rank) * 4.0);
     };
 
     // -------------------------------------------------------
@@ -1759,8 +1770,9 @@ if (isset($Event) and $Event <> 0) {
                         $sc_group_avg = count($sc_group_ranks) > 0 ? array_sum($sc_group_ranks) / count($sc_group_ranks) : $sc_rank;
                         if (abs($mv_rank - $sc_group_avg) > $tol) continue;
 
-                        // Individual ceiling (safety net at 4x)
-                        $ceiling = (int)round($effective_tolerance($mv_rank) * 4.0);
+                        // Individual ceiling (tiered safety net)
+                        $ceiling = $effective_ceiling($mv_rank);
+
                         if (abs($mv_rank - $sc_rank) > $ceiling) continue;
 
                         if ($has_travel_conflict($sc_uid, $mv_tid)) continue;
@@ -1921,8 +1933,9 @@ if (isset($Event) and $Event <> 0) {
                             $sc_group_avg_paired = count($sc_group_ranks_paired) > 0 ? array_sum($sc_group_ranks_paired) / count($sc_group_ranks_paired) : (int)$sc['Rank'];
                             if (abs($mv_rank - $sc_group_avg_paired) > $tol) continue;
 
-                            // Individual ceiling (safety net at 4x)
-                            $ceiling_paired = (int)round($effective_tolerance($mv_rank) * 4.0);
+                            // Individual ceiling (tiered safety net)
+                            $ceiling_paired = $effective_ceiling($mv_rank);
+
                             if (abs($mv_rank - (int)$sc['Rank']) > $ceiling_paired) continue;
 
                             $mv_tid_current = (int)$mv['time_id'];
@@ -2026,8 +2039,9 @@ if (isset($Event) and $Event <> 0) {
                     $sc_group_avg_p5 = count($sc_group_ranks_p5) > 0 ? array_sum($sc_group_ranks_p5) / count($sc_group_ranks_p5) : $sc_rank;
                     if (abs($pp_rank - $sc_group_avg_p5) > $tol) continue;
 
-                    // Individual ceiling (safety net at 4x)
-                    $ceiling_p5 = (int)round($effective_tolerance($pp_rank) * 4.0);
+                    // Individual ceiling (tiered safety net)
+                    $ceiling_p5 = $effective_ceiling($pp_rank);
+
                     if (abs($pp_rank - $sc_rank) > $ceiling_p5) continue;
 
                     if ($has_travel_conflict($sc_uid, $pp_tid)) continue;
