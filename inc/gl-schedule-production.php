@@ -1,8 +1,14 @@
 <?php
 /* =========================================================
    GL Schedule Production
-   Version: 2.0.1
-   Date: 2026-06-16
+   Version: 2.0.2
+   Date: 2026-06-22
+
+   Changes from 2.0.1:
+   - First name in Schedules now includes last name initial
+     (e.g. "Lisa P.") to disambiguate players with the same
+     first name. Flows to published schedule, Enter Scores,
+     and player schedule view.
 
    Changes from 2.0.0:
    - Tiered individual ceiling: rank 1-20 gets 2x, rank 21-50
@@ -965,13 +971,17 @@ if (isset($Event) and $Event <> 0) {
         $court_index[$time_id]++;
 
         foreach ($players as $user_id) {
-            $pref_user = $wpdb->get_var($wpdb->prepare("SELECT user_id FROM $pref_active WHERE user_id = %d", $user_id));
+ $pref_user = $wpdb->get_var($wpdb->prepare("SELECT user_id FROM $pref_active WHERE user_id = %d", $user_id));
+            $raw_first = $wpdb->get_var($wpdb->prepare("SELECT first_name FROM $Master WHERE user_id = %d", $user_id));
+            $raw_last  = $wpdb->get_var($wpdb->prepare("SELECT last_name FROM $Master WHERE user_id = %d", $user_id));
+            $last_initial = !empty($raw_last) ? ' ' . strtoupper(substr($raw_last, 0, 1)) . '.' : '';
             if ($user_id == $pref_user) {
-                $first_name = "P-" . $wpdb->get_var($wpdb->prepare("SELECT first_name FROM $Master WHERE user_id = %d", $user_id));
+                $first_name = "P-" . $raw_first . $last_initial;
             } else {
-                $first_name = $wpdb->get_var($wpdb->prepare("SELECT first_name FROM $Master WHERE user_id = %d", $user_id));
+                $first_name = $raw_first . $last_initial;
             }
-            $user_rank = $player_ranks[$user_id] ?? $wpdb->get_var($wpdb->prepare("SELECT Rank FROM $Master WHERE user_id = %d", $user_id));
+ 
+        $user_rank = $player_ranks[$user_id] ?? $wpdb->get_var($wpdb->prepare("SELECT Rank FROM $Master WHERE user_id = %d", $user_id));
             $travel = $wpdb->get_var($wpdb->prepare("SELECT travel FROM $Master WHERE user_id = %d", $user_id));
 
             // ── GL EVENTS: get registration date from gl_registrations ────────
