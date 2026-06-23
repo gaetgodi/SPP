@@ -9,13 +9,14 @@
  *   filter="ace"   - optional partial case-insensitive title match
  *                    to limit events shown in dropdown
  *
- * Version: 2.7.0
- * Changes from 2.6.2:
- *   - Send to Group section now has Rating and Ladder filters
- *   - Rating filter handles mixed numeric/text values (2, 2.0, Beginner etc.)
- *   - Ladder filter (Any / Ladder only / Non-ladder only) for Members group
- *   - Filter panel shown/hidden per group selection
- *   - New AJAX handler: spp_get_group_emails accepts rating/ladder params
+ * Version: 3.0.0
+ * Changes from 2.7.0:
+ *   - Removed all RTEC and TEC references. Now reads exclusively
+ *     from gl_event_occurrences and gl_registrations.
+ *   - Withdrawn section added below waiting list, showing both
+ *     'withdrawn' and 'late_withdrawn' with withdrawal date/time.
+ *   - Individual email checkboxes on each row in confirmed/waiting
+ *     lists, with "Email Selected" button.
  */
 
 // ============================================================
@@ -29,14 +30,14 @@ function spp_registrant_list_enqueue() {
         'spp-registrant-list',
         get_stylesheet_directory_uri() . '/css/spp-registrant-list.css',
         array(),
-        '2.7.2'
+        '3.0.0'
     );
 
     wp_enqueue_script(
         'spp-registrant-list',
         get_stylesheet_directory_uri() . '/js/spp-registrant-list.js',
         array( 'jquery' ),
-        '2.7.0',
+        '3.0.0',
         true
     );
     wp_localize_script(
@@ -60,6 +61,9 @@ function spp_build_compose_form( $type, $label, $emails, $subject_default, $btn_
     $html .= '<button type="button" class="spp-email-all-btn"' . $style . ' '
            . "onclick=\"sppShowCompose('{$type}', {$emails_json}, '{$subj_js}')\">"
            . '&#9993; Email ' . esc_html( $label ) . ' (' . $count . ')</button>';
+    $html .= ' <button type="button" class="spp-email-selected-btn"' . $style . ' '
+           . "onclick=\"sppEmailSelected('{$type}', '{$subj_js}')\">"
+           . '&#9993; Email Selected</button>';
     if ( $type === 'confirmed' ) {
         $html .= ' <button type="button" class="spp-csv-btn" onclick="sppExportCSV()">&#8681; Export to CSV</button>';
     }
@@ -72,7 +76,7 @@ function spp_build_compose_form( $type, $label, $emails, $subject_default, $btn_
     $html .= '<label class="spp-compose-label">Subject</label>';
     $html .= '<input type="text" id="spp-subject-' . $type . '" class="spp-compose-subject" value="' . esc_attr( $subject_default ) . '">';
 
-    $html .= '<label class="spp-compose-label">Recipients (BCC) <span class="spp-compose-hint">— edit to add or remove addresses</span></label>';
+    $html .= '<label class="spp-compose-label">Recipients (BCC) <span class="spp-compose-hint">-- edit to add or remove addresses</span></label>';
     $html .= '<textarea id="spp-bcc-' . $type . '" class="spp-compose-bcc" rows="3">' . esc_textarea( $bcc_list ) . '</textarea>';
 
     $html .= '<label class="spp-compose-label">Message</label>';
@@ -101,26 +105,36 @@ function spp_build_compose_form( $type, $label, $emails, $subject_default, $btn_
 }
 
 // ============================================================
-// Helper: render a registrant table
+// Helper: render a registrant table with optional checkboxes
 // ============================================================
-function spp_render_registrant_table( $rows, $extra_class = '', $show_rating = false ) {
+function spp_render_registrant_table( $rows, $extra_class = '', $show_rating = false, $show_checkbox = false, $show_withdrawn_date = false ) {
     $class = 'spp-registrant-table' . ( $extra_class ? ' ' . $extra_class : '' );
     $html  = '<table class="' . $class . '">';
-    $html .= '<thead><tr><th>#</th><th>Name</th><th>Email</th>';
+    $html .= '<thead><tr>';
+    if ( $show_checkbox ) $html .= '<th class="spp-col-check"><input type="checkbox" onclick="sppToggleAll(this)" title="Select all"></th>';
+    $html .= '<th>#</th><th>Name</th><th>Email</th>';
     if ( $show_rating ) $html .= '<th>Rating</th>';
+    elseif ( $show_withdrawn_date ) $html .= '<th>Withdrawn</th>';
     else $html .= '<th>Phone</th>';
     $html .= '</tr></thead><tbody>';
 
     foreach ( $rows as $i => $r ) {
         $row_class = ( $i % 2 === 0 ) ? 'spp-row-even' : 'spp-row-odd';
+        $email = ! empty( $r->user_email ) ? $r->user_email : '';
         $html .= '<tr class="' . $row_class . '">';
+        if ( $show_checkbox ) {
+            $html .= '<td class="spp-col-check"><input type="checkbox" class="spp-email-check" value="' . esc_attr( $email ) . '"></td>';
+        }
         $html .= '<td class="spp-col-num">'   . ( $i + 1 ) . '</td>';
         $name  = isset( $r->display_name ) ? $r->display_name
                : ( ( $r->first_name ?? '' ) . ' ' . ( $r->last_name ?? '' ) );
         $html .= '<td class="spp-col-name">'  . esc_html( trim( $name ) ) . '</td>';
-        $html .= '<td class="spp-col-email">' . ( ! empty( $r->user_email ) ? esc_html( $r->user_email ) : '&mdash;' ) . '</td>';
+        $html .= '<td class="spp-col-email">' . ( $email ? esc_html( $email ) : '&mdash;' ) . '</td>';
         if ( $show_rating ) {
             $html .= '<td class="spp-col-rating">' . ( ! empty( $r->Rating ) ? esc_html( $r->Rating ) : '&mdash;' ) . '</td>';
+        } elseif ( $show_withdrawn_date ) {
+            $wd = ! empty( $r->withdrawn_at ) ? date( 'M j, g:ia', strtotime( $r->withdrawn_at ) ) : '&mdash;';
+            $html .= '<td class="spp-col-withdrawn">' . $wd . '</td>';
         } else {
             $html .= '<td class="spp-col-phone">' . ( ! empty( $r->user_phone ) ? esc_html( $r->user_phone ) : '&mdash;' ) . '</td>';
         }
@@ -144,48 +158,35 @@ function spp_registrant_list_shortcode( $atts ) {
     global $wpdb;
     $p = $wpdb->prefix;
 
+    // ── Build event dropdown from gl_event_occurrences + gl_registrations ─────
     $filter_sql = '';
     if ( ! empty( $atts['filter'] ) ) {
         $like = '%' . $wpdb->esc_like( $atts['filter'] ) . '%';
-        $filter_sql = $wpdb->prepare( "AND p.post_title LIKE %s", $like );
+        $filter_sql = $wpdb->prepare( "AND o.title LIKE %s", $like );
     }
 
     $events = $wpdb->get_results( "
         SELECT
-            o.occurrence_id,
-            o.post_id,
-            o.start_date,
-            o.end_date,
-            p.post_title,
-            COUNT(DISTINCT latest.user_id) AS reg_count,
-            occ_counts.total_occs
-        FROM {$p}tec_occurrences o
-        JOIN {$p}posts p ON o.post_id = p.ID
+            o.id AS occurrence_id,
+            o.series_id,
+            o.title,
+            o.event_date,
+            o.event_time,
+            COUNT(DISTINCT r.user_id) AS reg_count,
+            s_counts.total_occs
+        FROM {$p}gl_event_occurrences o
+        JOIN {$p}gl_registrations r ON r.occurrence_id = o.id AND r.status = 'confirmed'
         JOIN (
-            SELECT event_id, user_id, status
-            FROM {$p}rtec_entries e1
-            WHERE id = (
-                SELECT MAX(id) FROM {$p}rtec_entries e2
-                WHERE e2.event_id = e1.event_id
-                AND e2.user_id = e1.user_id
-            )
-        ) latest ON ( o.post_id = latest.event_id OR o.occurrence_id + 30000000 = latest.event_id )
-            AND latest.status = 'confirmed'
-        JOIN (
-            SELECT post_id, COUNT(*) AS total_occs
-            FROM {$p}tec_occurrences
-            GROUP BY post_id
-        ) occ_counts ON occ_counts.post_id = o.post_id
-        WHERE o.end_date >= CURDATE()
-        AND p.post_status = 'publish'
-        AND p.ID NOT IN (
-            SELECT post_id FROM {$p}postmeta
-            WHERE meta_key = '_RTECcanceled' AND meta_value = '1'
-        )
+            SELECT series_id, COUNT(*) AS total_occs
+            FROM {$p}gl_event_occurrences
+            GROUP BY series_id
+        ) s_counts ON s_counts.series_id = o.series_id
+        WHERE o.event_date >= CURDATE()
+        AND o.cancelled = 0
         {$filter_sql}
-        GROUP BY o.occurrence_id
+        GROUP BY o.id
         HAVING reg_count > 0
-        ORDER BY total_occs DESC, o.start_date ASC
+        ORDER BY s_counts.total_occs DESC, o.event_date ASC, o.event_time ASC
     " );
 
     $recurring = array();
@@ -206,13 +207,13 @@ function spp_registrant_list_shortcode( $atts ) {
     if ( ! empty( $recurring ) ) {
         $out .= '<optgroup label="Recurring Events">';
         foreach ( $recurring as $ev ) {
-            $rtec_event_id = $ev->occurrence_id + 30000000;
-            $label = esc_html( $ev->post_title )
-                   . ' - ' . date( 'M j, Y g:i a', strtotime( $ev->start_date ) )
+            $dt = $ev->event_date . ' ' . $ev->event_time;
+            $label = esc_html( $ev->title )
+                   . ' - ' . date( 'M j, Y g:i a', strtotime( $dt ) )
                    . ' (' . (int) $ev->reg_count . ' registered)';
-            $out .= '<option value="' . $rtec_event_id . '"'
-                  . ' data-title="' . esc_attr( $ev->post_title ) . '"'
-                  . ' data-date="' . esc_attr( date( 'l, F j, Y g:i a', strtotime( $ev->start_date ) ) ) . '">'
+            $out .= '<option value="' . (int) $ev->occurrence_id . '"'
+                  . ' data-title="' . esc_attr( $ev->title ) . '"'
+                  . ' data-date="' . esc_attr( date( 'l, F j, Y g:i a', strtotime( $dt ) ) ) . '">'
                   . $label . '</option>';
         }
         $out .= '</optgroup>';
@@ -221,13 +222,13 @@ function spp_registrant_list_shortcode( $atts ) {
     if ( ! empty( $oneoff ) ) {
         $out .= '<optgroup label="Single Events">';
         foreach ( $oneoff as $ev ) {
-            $rtec_event_id = $ev->post_id;
-            $label = esc_html( $ev->post_title )
-                   . ' - ' . date( 'M j, Y g:i a', strtotime( $ev->start_date ) )
+            $dt = $ev->event_date . ' ' . $ev->event_time;
+            $label = esc_html( $ev->title )
+                   . ' - ' . date( 'M j, Y g:i a', strtotime( $dt ) )
                    . ' (' . (int) $ev->reg_count . ' registered)';
-            $out .= '<option value="' . $rtec_event_id . '"'
-                  . ' data-title="' . esc_attr( $ev->post_title ) . '"'
-                  . ' data-date="' . esc_attr( date( 'l, F j, Y g:i a', strtotime( $ev->start_date ) ) ) . '">'
+            $out .= '<option value="' . (int) $ev->occurrence_id . '"'
+                  . ' data-title="' . esc_attr( $ev->title ) . '"'
+                  . ' data-date="' . esc_attr( date( 'l, F j, Y g:i a', strtotime( $dt ) ) ) . '">'
                   . $label . '</option>';
         }
         $out .= '</optgroup>';
@@ -249,11 +250,10 @@ function spp_registrant_list_shortcode( $atts ) {
     $out .= '</select>';
     $out .= '</div>';
 
-    // Filter panel — hidden until a group is selected
+    // Filter panel
     $out .= '<div id="spp-group-filters" class="spp-group-filters" style="display:none;">';
     $out .= '<div class="spp-filter-row">';
 
-    // Rating filter
     $out .= '<div class="spp-filter-field">';
     $out .= '<label class="spp-filter-label">Rating</label>';
     $out .= '<select id="spp-filter-rating" class="spp-filter-select">';
@@ -268,7 +268,6 @@ function spp_registrant_list_shortcode( $atts ) {
     $out .= '</select>';
     $out .= '</div>';
 
-    // Ladder filter — only relevant for members group
     $out .= '<div class="spp-filter-field" id="spp-ladder-filter-wrap">';
     $out .= '<label class="spp-filter-label">Ladder</label>';
     $out .= '<select id="spp-filter-ladder" class="spp-filter-select">';
@@ -278,17 +277,17 @@ function spp_registrant_list_shortcode( $atts ) {
     $out .= '</select>';
     $out .= '</div>';
 
-    $out .= '</div>'; // .spp-filter-row
+    $out .= '</div>';
 
     $out .= '<div class="spp-filter-actions">';
     $out .= '<button type="button" class="spp-filter-apply-btn" onclick="sppApplyGroupFilter()">Apply Filter</button>';
     $out .= ' <button type="button" class="spp-filter-clear-btn" onclick="sppClearGroupFilter()">Clear</button>';
     $out .= '</div>';
-    $out .= '</div>'; // #spp-group-filters
+    $out .= '</div>';
 
     $out .= '<div id="spp-group-results" class="spp-registrant-results"></div>';
-    $out .= '</div>'; // .spp-group-section
-    $out .= '</div>'; // .spp-registrant-list-wrap
+    $out .= '</div>';
+    $out .= '</div>';
 
     return $out;
 }
@@ -310,31 +309,38 @@ function spp_get_registrants_ajax() {
     global $wpdb;
     $p = $wpdb->prefix;
 
+    // ── Confirmed registrants ────────────────────────────────────────────────
     $registrants = $wpdb->get_results( $wpdb->prepare(
-        "SELECT e1.id, u.display_name, m.user_email, m.user_phone, e1.registration_date
-         FROM {$p}rtec_entries e1
-         JOIN {$p}users u ON u.ID = e1.user_id
-         JOIN membership m ON m.user_id = e1.user_id
-         WHERE e1.event_id = %d AND e1.status = 'confirmed'
-         AND e1.id = (SELECT MAX(id) FROM {$p}rtec_entries e2
-                      WHERE e2.event_id = e1.event_id AND e2.user_id = e1.user_id)
-         ORDER BY u.display_name ASC",
+        "SELECT r.user_id, m.first_name, m.last_name, m.user_email, m.user_phone, r.registered_at
+         FROM {$p}gl_registrations r
+         JOIN membership m ON m.user_id = r.user_id
+         WHERE r.occurrence_id = %d AND r.status = 'confirmed'
+         ORDER BY m.last_name, m.first_name",
         $event_id
     ) );
 
+    // ── Waiting list ─────────────────────────────────────────────────────────
     $waiting = $wpdb->get_results( $wpdb->prepare(
-        "SELECT e1.id, u.display_name, m.user_email, m.user_phone, e1.registration_date
-         FROM {$p}rtec_entries e1
-         JOIN {$p}users u ON u.ID = e1.user_id
-         JOIN membership m ON m.user_id = e1.user_id
-         WHERE e1.event_id = %d AND e1.status = 'waiting'
-         AND e1.id = (SELECT MAX(id) FROM {$p}rtec_entries e2
-                      WHERE e2.event_id = e1.event_id AND e2.user_id = e1.user_id)
-         ORDER BY e1.id ASC",
+        "SELECT r.user_id, m.first_name, m.last_name, m.user_email, m.user_phone, r.registered_at
+         FROM {$p}gl_registrations r
+         JOIN membership m ON m.user_id = r.user_id
+         WHERE r.occurrence_id = %d AND r.status = 'waiting'
+         ORDER BY r.registered_at ASC",
         $event_id
     ) );
 
-    if ( empty( $registrants ) && empty( $waiting ) ) {
+    // ── Withdrawn ────────────────────────────────────────────────────────────
+    $withdrawn = $wpdb->get_results( $wpdb->prepare(
+        "SELECT r.user_id, m.first_name, m.last_name, m.user_email, m.user_phone,
+                r.status, r.updated_at AS withdrawn_at
+         FROM {$p}gl_registrations r
+         JOIN membership m ON m.user_id = r.user_id
+         WHERE r.occurrence_id = %d AND r.status IN ('withdrawn', 'late_withdrawn')
+         ORDER BY r.updated_at DESC",
+        $event_id
+    ) );
+
+    if ( empty( $registrants ) && empty( $waiting ) && empty( $withdrawn ) ) {
         wp_send_json_success( array( 'html' => '<p class="spp-registrant-none">No registrants yet.</p>' ) );
     }
 
@@ -346,19 +352,29 @@ function spp_get_registrants_ajax() {
     $html .= '<p class="spp-registrant-date">' . esc_html( $date ) . '</p>';
     $html .= '</div>';
 
+    // ── Confirmed section ────────────────────────────────────────────────────
     if ( ! empty( $registrants ) ) {
         $html .= spp_build_compose_form( 'confirmed', 'All ' . count( $registrants ) . ' Confirmed Registrants', $confirmed_emails, $subject_default );
-        $html .= spp_render_registrant_table( $registrants );
+        $html .= spp_render_registrant_table( $registrants, '', false, true );
         $html .= '<p class="spp-registrant-count">' . count( $registrants ) . ' confirmed registrant' . ( count( $registrants ) !== 1 ? 's' : '' ) . '</p>';
     }
 
+    // ── Waiting section ──────────────────────────────────────────────────────
     if ( ! empty( $waiting ) ) {
         $html .= '<div class="spp-waiting-header" style="margin-top:24px;">';
         $html .= '<h4 class="spp-waiting-title" style="color:#c0392b;margin-bottom:6px;">Waiting List</h4>';
         $html .= '</div>';
         $html .= spp_build_compose_form( 'waiting', 'All ' . count( $waiting ) . ' Waiting', $waiting_emails, $subject_default, '#c0392b' );
-        $html .= spp_render_registrant_table( $waiting, 'spp-waiting-table' );
+        $html .= spp_render_registrant_table( $waiting, 'spp-waiting-table', false, true );
         $html .= '<p class="spp-registrant-count" style="color:#c0392b;">' . count( $waiting ) . ' on waiting list</p>';
+    }
+
+    // ── Withdrawn section ────────────────────────────────────────────────────
+    if ( ! empty( $withdrawn ) ) {
+        $html .= '<div class="spp-withdrawn-header" style="margin-top:24px;">';
+        $html .= '<h4 class="spp-withdrawn-title" style="color:#888;margin-bottom:6px;">Withdrawn (' . count( $withdrawn ) . ')</h4>';
+        $html .= '</div>';
+        $html .= spp_render_registrant_table( $withdrawn, 'spp-withdrawn-table', false, false, true );
     }
 
     wp_send_json_success( array( 'html' => $html ) );
@@ -381,7 +397,6 @@ function spp_get_group_emails_ajax() {
 
     $where = array( "user_email != ''" );
 
-    // Rating filter — handles mixed numeric/text
     if ( ! empty( $rating ) ) {
         if ( $rating === 'beginner' ) {
             $where[] = "Rating = 'Beginner'";
@@ -398,11 +413,9 @@ function spp_get_group_emails_ajax() {
     if ( $group === 'ladder' ) {
         $table = 'Master';
         $label = 'All Ladder Players';
-        // Ladder filter not applicable to Master (all are ladder players)
     } else {
         $table = 'membership';
         $label = 'All Members';
-        // Ladder filter
         if ( $ladder === 'yes' ) {
             $where[] = "Ladder = 'Yes'";
         } elseif ( $ladder === 'no' ) {
@@ -413,7 +426,6 @@ function spp_get_group_emails_ajax() {
     $where_sql = 'WHERE ' . implode( ' AND ', $where );
     $rows = $wpdb->get_results( "SELECT first_name, last_name, user_email, Rating FROM {$table} {$where_sql} ORDER BY last_name, first_name" );
 
-    // Build filter description for display
     $filter_desc = array();
     if ( ! empty( $rating ) ) {
         $rating_labels = array(

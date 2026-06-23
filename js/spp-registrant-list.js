@@ -1,13 +1,12 @@
 /**
  * SPP Registrant List - AJAX handler with rich editor, BCC, group send, filters, CSV
  * File: js/spp-registrant-list.js
- * Version: 2.7.0
+ * Version: 3.0.0
  *
- * Changes from 2.6.2:
- *   - sppGroupChanged() — shows filter panel and loads group on selection
- *   - sppApplyGroupFilter() — reads filter values and reloads group list
- *   - sppClearGroupFilter() — resets filters and reloads group list
- *   - Ladder filter shown only for members group, hidden for ladder group
+ * Changes from 2.7.0:
+ *   - sppEmailSelected() — opens compose form with only checked emails
+ *   - sppToggleAll() — select/deselect all checkboxes in a table
+ *   - Removed RTEC references from comments
  */
 
 jQuery(document).ready(function ($) {
@@ -56,6 +55,40 @@ jQuery(document).ready(function ($) {
     }
 
 });
+
+// ============================================================
+// Toggle all checkboxes in the same table
+// ============================================================
+function sppToggleAll(masterCheckbox) {
+    var table = masterCheckbox.closest('table');
+    var checks = table.querySelectorAll('.spp-email-check');
+    checks.forEach(function(cb) {
+        cb.checked = masterCheckbox.checked;
+    });
+}
+
+// ============================================================
+// Email Selected — open compose with checked emails only
+// ============================================================
+function sppEmailSelected(type, defaultSubject) {
+    var $compose = jQuery('#spp-compose-' + type);
+    // Find checkboxes near this compose form's section
+    var $section = $compose.closest('.spp-registrant-results, .spp-registrant-list-wrap');
+    if ( ! $section.length ) $section = jQuery(document);
+
+    var emails = [];
+    $section.find('.spp-email-check:checked').each(function() {
+        var val = jQuery(this).val();
+        if ( val && val !== '' ) emails.push(val);
+    });
+
+    if ( emails.length === 0 ) {
+        alert('No players selected. Use the checkboxes to select individual players.');
+        return;
+    }
+
+    sppShowCompose(type, emails, defaultSubject);
+}
 
 // ============================================================
 // Group dropdown changed — show filters and load group
@@ -220,7 +253,7 @@ function sppInitPlaceholders() {
 }
 
 // ============================================================
-// Send email via AJAX → wp_mail → Fluent SMTP → Brevo
+// Send email via AJAX
 // ============================================================
 function sppSendEmail(type) {
     var $subject = jQuery('#spp-subject-' + type);
@@ -258,7 +291,7 @@ function sppSendEmail(type) {
         }
     ).fail(function() {
         $sendBtn.prop('disabled', false).html('&#9993; Send Now');
-        $status.html('<span style="color:#c0392b;">Server error — please try again.</span>');
+        $status.html('<span style="color:#c0392b;">Server error -- please try again.</span>');
     });
 }
 
@@ -278,14 +311,22 @@ function sppExportCSV() {
     var rows = [];
     var headers = [];
     var ths = table.querySelectorAll('thead th');
-    ths.forEach(function(th) { headers.push(th.innerText.trim()); });
+    ths.forEach(function(th) {
+        // Skip the checkbox column header
+        if ( th.classList.contains('spp-col-check') ) return;
+        headers.push(th.innerText.trim());
+    });
     rows.push(headers);
 
     var trs = table.querySelectorAll('tbody tr');
     trs.forEach(function(tr) {
         var cells = tr.querySelectorAll('td');
         var row = [];
-        cells.forEach(function(td) { row.push(td.innerText.trim()); });
+        cells.forEach(function(td) {
+            // Skip the checkbox column
+            if ( td.classList.contains('spp-col-check') ) return;
+            row.push(td.innerText.trim());
+        });
         if ( row.length > 0 ) rows.push(row);
     });
 
