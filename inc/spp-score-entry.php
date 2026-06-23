@@ -128,7 +128,7 @@ function spp_score_entry_shortcode() {
          JOIN Times t  ON s.time_id = t.T_ID
          WHERE s.group_id != 99
          GROUP BY s.group_id, g.GP_name, c.Crt_name, t.T_desc
-         ORDER BY s.group_id",
+        ORDER BY t.T_ID, c.Crt_ID",
         ARRAY_A
     );
 
