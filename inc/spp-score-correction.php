@@ -12,14 +12,15 @@
  *   - rankUsersWithTies(): score desc, current rank as tie-breaker
  *   - setCaclRank(): placement adjustment + score bonus
  *
- * Version: 1.1.0
+ * Version: 1.2.0
  * Date:    2026-06-28
  *
- * Changes from 1.0.0:
- *   - Event dropdown limited to most recent posted event only.
- *   - Players sorted by name in dropdown.
- *   - Table header text forced white with !important for Divi.
- *   - Preview box overflow-x:auto for wide tables.
+ * Changes from 1.1.0:
+ *   - Full width layout, no max-width constraint.
+ *   - Larger table fonts to use available desktop space.
+ *   - Shorter preview column headers.
+ *   - Centered data columns, left-aligned player names.
+ *   - Mobile responsive with smaller fonts at 600px.
  */
 
 defined( 'ABSPATH' ) || exit;
@@ -54,22 +55,24 @@ function spp_score_correction_shortcode() {
     ob_start();
     ?>
     <style>
-        .sc-wrap { max-width:700px; margin:20px auto; font-family:Arial,sans-serif; font-size:14px; }
+        .sc-wrap { margin:20px 0; font-family:Arial,sans-serif; font-size:14px; }
         .sc-heading { font-size:1.2rem; font-weight:bold; color:#2c3e50; margin-bottom:16px; border-bottom:2px solid #3766AB; padding-bottom:8px; }
         .sc-row { margin-bottom:14px; }
         .sc-row label { display:block; font-weight:bold; font-size:0.9rem; color:#555; margin-bottom:4px; }
-        .sc-row select, .sc-row input[type=number] { padding:8px 10px; font-size:0.95rem; border:1px solid #ccc; border-radius:4px; width:100%; max-width:400px; box-sizing:border-box; }
+        .sc-row select, .sc-row input[type=number] { padding:8px 10px; font-size:0.95rem; border:1px solid #ccc; border-radius:4px; width:100%; max-width:600px; box-sizing:border-box; }
         .sc-btn { padding:10px 20px; border:none; border-radius:5px; font-size:0.95rem; cursor:pointer; color:#fff; margin-right:8px; }
         .sc-btn-preview { background:#3766AB; }
         .sc-btn-preview:hover { background:#2a5290; }
         .sc-btn-apply { background:#c0392b; }
         .sc-btn-apply:hover { background:#a93226; }
         .sc-btn:disabled { opacity:0.5; cursor:not-allowed; }
-        .sc-preview { background:#f0f7ff; border:1px solid #3766AB; border-radius:8px; padding:16px; margin:16px 0; overflow-x:auto; max-width:100%; }
+        .sc-preview { background:#f0f7ff; border:1px solid #3766AB; border-radius:8px; padding:16px; margin:16px 0; }
         .sc-preview h4 { margin:0 0 10px; color:#3766AB; }
-        .sc-preview table { width:100%; border-collapse:collapse; font-size:0.88rem; margin-top:10px; }
-        .sc-preview th { background:#3766AB; color:#fff !important; padding:6px 8px; text-align:left; }
-        .sc-preview td { padding:5px 8px; border-bottom:1px solid #dde7f3; }
+        .sc-preview table { width:100%; border-collapse:collapse; font-size:0.9rem; margin-top:10px; }
+        .sc-preview th { background:#3766AB; color:#fff !important; padding:6px 10px; text-align:center; font-size:0.85rem; }
+        .sc-preview th:first-child { text-align:left; }
+        .sc-preview td { padding:5px 10px; border-bottom:1px solid #dde7f3; text-align:center; }
+        .sc-preview td:first-child { text-align:left; }
         .sc-preview tr:nth-child(even) { background:#e8f0fe; }
         .sc-changed { font-weight:bold; color:#c0392b; }
         .sc-same { color:#888; }
@@ -77,12 +80,19 @@ function spp_score_correction_shortcode() {
         .sc-msg-ok { background:#d4edda; border:1px solid #28a745; color:#155724; }
         .sc-msg-err { background:#f8d7da; border:1px solid #dc3545; color:#721c24; }
         .sc-group-table { margin-top:12px; }
-        .sc-group-table table { width:100%; border-collapse:collapse; font-size:0.88rem; }
-        .sc-group-table th { background:#4a7c59; color:#fff !important; padding:6px 8px; text-align:left; }
-        .sc-group-table td { padding:5px 8px; border-bottom:1px solid #e0e0e0; }
+        .sc-group-table table { width:100%; border-collapse:collapse; font-size:0.9rem; }
+        .sc-group-table th { background:#4a7c59; color:#fff !important; padding:6px 10px; text-align:center; }
+        .sc-group-table th:first-child { text-align:left; }
+        .sc-group-table td { padding:5px 10px; border-bottom:1px solid #e0e0e0; text-align:center; }
+        .sc-group-table td:first-child { text-align:left; }
         .sc-group-table tr:nth-child(even) { background:#f7f7f7; }
         .sc-highlight { background:#fff3cd !important; }
         #sc-status { min-height:20px; margin-top:10px; }
+        @media (max-width: 600px) {
+            .sc-preview table, .sc-group-table table { font-size:0.78rem; }
+            .sc-preview th, .sc-preview td, .sc-group-table th, .sc-group-table td { padding:3px 4px; }
+            .sc-row select, .sc-row input[type=number] { max-width:100%; }
+        }
     </style>
 
     <div class="sc-wrap">
@@ -138,7 +148,7 @@ function spp_score_correction_shortcode() {
         var ajaxurl = '<?php echo esc_js( admin_url( 'admin-ajax.php' ) ); ?>';
         var nonce   = '<?php echo esc_js( wp_create_nonce( 'spp_score_correction' ) ); ?>';
 
-        // Event changed — load players
+        // Event changed -- load players
         document.getElementById('sc-event').addEventListener('change', function() {
             var eventId = this.value;
             document.getElementById('sc-player').innerHTML = '<option value="">-- Select player --</option>';
@@ -175,7 +185,7 @@ function spp_score_correction_shortcode() {
                 });
         });
 
-        // Player changed — show group and game selector
+        // Player changed -- show group and game selector
         document.getElementById('sc-player').addEventListener('change', function() {
             var userId = this.value;
             var eventId = document.getElementById('sc-event').value;
@@ -383,7 +393,7 @@ add_action( 'wp_ajax_spp_sc_load_group', function() {
 });
 
 // ============================================================
-// Ranking helpers — identical to Create Results
+// Ranking helpers -- identical to Create Results
 // ============================================================
 function spp_sc_rank_users_with_ties( $scores, $currentRanks ) {
     $entries = array();
@@ -450,7 +460,7 @@ function spp_sc_calc_rank( $maxrk, $group_rank, $rank, $score, $bonus_max, $bonu
 }
 
 // ============================================================
-// Core recalculation engine — used by both preview and apply
+// Core recalculation engine -- used by both preview and apply
 // ============================================================
 function spp_sc_recalculate( $event_id, $user_id, $game_num, $new_score ) {
     global $wpdb;
@@ -542,10 +552,9 @@ function spp_sc_recalculate( $event_id, $user_id, $game_num, $new_score ) {
         $uid = (int) $m['user_id'];
         $rp  = $current_ranks[ $uid ];
 
-        // Check if player was NP/NS — Game1 < 0 means NP (-1) or NS (-2)
+        // Check if player was NP/NS -- Game1 < 0 means NP (-1) or NS (-2)
         $g1 = $m['Game1'];
         if ( $g1 !== null && (int) $g1 < 0 ) {
-            // NP/NS player — don't recalculate
             $old_calcs[ $uid ] = null;
             $new_calcs[ $uid ] = null;
             continue;
@@ -614,7 +623,7 @@ add_action( 'wp_ajax_spp_sc_preview', function() {
     $html = '<div class="sc-preview">';
     $html .= '<h4>Preview -- Group ' . $result['group_id'] . '</h4>';
     $html .= '<table>';
-    $html .= '<thead><tr><th>Player</th><th>RankPrime</th><th>Old Score</th><th>New Score</th><th>Old GrpRank</th><th>New GrpRank</th><th>Old RankCalc</th><th>New RankCalc</th><th>Change</th></tr></thead>';
+    $html .= '<thead><tr><th>Player</th><th>Rank</th><th>Old</th><th>New</th><th>Old Grp</th><th>New Grp</th><th>Old Calc</th><th>New Calc</th><th>+/-</th></tr></thead>';
     $html .= '<tbody>';
 
     foreach ( $result['members'] as $m ) {
@@ -630,7 +639,6 @@ add_action( 'wp_ajax_spp_sc_preview', function() {
         $new_rc = $result['new_calcs'][ $uid ];
 
         if ( $old_rc === null ) {
-            // NP/NS player
             $html .= '<tr><td>' . esc_html( $name ) . '</td><td>' . $rp . '</td>';
             $html .= '<td colspan="7" class="sc-same">NP/NS -- not affected</td></tr>';
             continue;
