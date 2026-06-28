@@ -46,6 +46,7 @@ require_once get_stylesheet_directory() . '/inc/spp-blog-system.php';
 require_once get_stylesheet_directory() . '/inc/gl-schedule-production.php';
 require_once get_stylesheet_directory() . '/inc/spp-schedule-admin.php';
 require_once get_stylesheet_directory() . '/inc/spp-score-entry.php';
+require_once get_stylesheet_directory() . '/inc/spp-score-correction.php';
 
 add_filter('template_include', function($template) {
     if (is_singular('tribe_events')) {
@@ -94,7 +95,7 @@ add_action('template_redirect', function() {
     if (!is_page()) return;
     if (spp_is_admin_or_editor()) return;
 
-    $member_pages = [1517, 20003754, 20003889, 20009040, 20009451, 20005967, 20009765, 20009901, 1948, 20006331, 20010179, 20010257, 20010267];
+    $member_pages = [1517, 20003754, 20003889, 20009040, 20009451, 20005967, 20009765, 20009901, 1948, 20006331, 20010179, 20010257, 20010267, 20010348];
 
     global $post;
     if ($post && !in_array($post->ID, $member_pages) && has_shortcode($post->post_content, 'cmruncode')) {
