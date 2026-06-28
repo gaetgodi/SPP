@@ -27,27 +27,21 @@ function spp_score_correction_shortcode() {
 
     global $wpdb;
 
-    // Find all Schedules_Scores_* tables to build event dropdown
-    $score_tables = $wpdb->get_col(
-        "SELECT table_name FROM information_schema.tables
-         WHERE table_schema = DATABASE()
-         AND table_name LIKE 'Schedules\\_Scores\\_%'
-         AND table_name NOT LIKE '%\\_bad\\_%'
-         ORDER BY table_name DESC"
-    );
-
+    // Find the most recent posted event from Results table
+    $last_event_id = (int) $wpdb->get_var( "SELECT event_id FROM Results LIMIT 1" );
     $events = array();
-    foreach ( $score_tables as $tbl ) {
-        preg_match( '/Schedules_Scores_(\d+)/', $tbl, $m );
-        if ( ! empty( $m[1] ) ) {
-            $eid = (int) $m[1];
+
+    if ( $last_event_id ) {
+        $table = "Schedules_Scores_{$last_event_id}";
+        $exists = $wpdb->get_var( $wpdb->prepare( "SHOW TABLES LIKE %s", $table ) );
+        if ( $exists ) {
             $occ = $wpdb->get_row( $wpdb->prepare(
-                "SELECT title, event_date FROM {$wpdb->prefix}gl_event_occurrences WHERE id = %d", $eid
+                "SELECT title, event_date FROM {$wpdb->prefix}gl_event_occurrences WHERE id = %d", $last_event_id
             ), ARRAY_A );
             $label = $occ
-                ? $occ['title'] . ' — ' . date( 'M j, Y', strtotime( $occ['event_date'] ) ) . " (event $eid)"
-                : "Event $eid";
-            $events[] = array( 'id' => $eid, 'label' => $label, 'table' => $tbl );
+                ? $occ['title'] . ' — ' . date( 'M j, Y', strtotime( $occ['event_date'] ) ) . " (event $last_event_id)"
+                : "Event $last_event_id";
+            $events[] = array( 'id' => $last_event_id, 'label' => $label, 'table' => $table );
         }
     }
 
