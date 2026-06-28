@@ -12,8 +12,14 @@
  *   - rankUsersWithTies(): score desc, current rank as tie-breaker
  *   - setCaclRank(): placement adjustment + score bonus
  *
- * Version: 1.0.0
+ * Version: 1.1.0
  * Date:    2026-06-28
+ *
+ * Changes from 1.0.0:
+ *   - Event dropdown limited to most recent posted event only.
+ *   - Players sorted by name in dropdown.
+ *   - Table header text forced white with !important for Divi.
+ *   - Preview box overflow-x:auto for wide tables.
  */
 
 defined( 'ABSPATH' ) || exit;
@@ -39,7 +45,7 @@ function spp_score_correction_shortcode() {
                 "SELECT title, event_date FROM {$wpdb->prefix}gl_event_occurrences WHERE id = %d", $last_event_id
             ), ARRAY_A );
             $label = $occ
-                ? $occ['title'] . ' — ' . date( 'M j, Y', strtotime( $occ['event_date'] ) ) . " (event $last_event_id)"
+                ? $occ['title'] . ' -- ' . date( 'M j, Y', strtotime( $occ['event_date'] ) ) . " (event $last_event_id)"
                 : "Event $last_event_id";
             $events[] = array( 'id' => $last_event_id, 'label' => $label, 'table' => $table );
         }
@@ -59,10 +65,10 @@ function spp_score_correction_shortcode() {
         .sc-btn-apply { background:#c0392b; }
         .sc-btn-apply:hover { background:#a93226; }
         .sc-btn:disabled { opacity:0.5; cursor:not-allowed; }
-        .sc-preview { background:#f0f7ff; border:1px solid #3766AB; border-radius:8px; padding:16px; margin:16px 0; }
+        .sc-preview { background:#f0f7ff; border:1px solid #3766AB; border-radius:8px; padding:16px; margin:16px 0; overflow-x:auto; max-width:100%; }
         .sc-preview h4 { margin:0 0 10px; color:#3766AB; }
         .sc-preview table { width:100%; border-collapse:collapse; font-size:0.88rem; margin-top:10px; }
-        .sc-preview th { background:#3766AB; color:#fff; padding:6px 8px; text-align:left; }
+        .sc-preview th { background:#3766AB; color:#fff !important; padding:6px 8px; text-align:left; }
         .sc-preview td { padding:5px 8px; border-bottom:1px solid #dde7f3; }
         .sc-preview tr:nth-child(even) { background:#e8f0fe; }
         .sc-changed { font-weight:bold; color:#c0392b; }
@@ -72,7 +78,7 @@ function spp_score_correction_shortcode() {
         .sc-msg-err { background:#f8d7da; border:1px solid #dc3545; color:#721c24; }
         .sc-group-table { margin-top:12px; }
         .sc-group-table table { width:100%; border-collapse:collapse; font-size:0.88rem; }
-        .sc-group-table th { background:#4a7c59; color:#fff; padding:6px 8px; text-align:left; }
+        .sc-group-table th { background:#4a7c59; color:#fff !important; padding:6px 8px; text-align:left; }
         .sc-group-table td { padding:5px 8px; border-bottom:1px solid #e0e0e0; }
         .sc-group-table tr:nth-child(even) { background:#f7f7f7; }
         .sc-highlight { background:#fff3cd !important; }
@@ -305,7 +311,7 @@ add_action( 'wp_ajax_spp_sc_load_players', function() {
                 + COALESCE(IF(Game5>=0,Game5,0),0) AS total_score
          FROM {$table}
          WHERE group_id != 99
-         ORDER BY group_id, Rank",
+         ORDER BY first_name ASC, last_name ASC",
         ARRAY_A
     );
 
@@ -348,7 +354,7 @@ add_action( 'wp_ajax_spp_sc_load_group', function() {
     ), ARRAY_A );
 
     $html = '<div class="sc-group-table">';
-    $html .= '<strong>Group ' . $group_id . ' — Current Scores:</strong>';
+    $html .= '<strong>Group ' . $group_id . ' -- Current Scores:</strong>';
     $html .= '<table><thead><tr><th>Player</th><th>RankPrime</th><th>G1</th><th>G2</th><th>G3</th><th>G4</th><th>G5</th><th>Total</th></tr></thead><tbody>';
 
     foreach ( $rows as $r ) {
@@ -364,7 +370,7 @@ add_action( 'wp_ajax_spp_sc_load_group', function() {
         $html .= '<td>' . esc_html( $r['RankPrime'] ) . '</td>';
         for ( $g = 1; $g <= 5; $g++ ) {
             $v = $r["Game{$g}"];
-            $display = ( $v === null || $v === '' ) ? '—' : (int) $v;
+            $display = ( $v === null || $v === '' ) ? '--' : (int) $v;
             $html .= '<td>' . $display . '</td>';
         }
         $html .= '<td><strong>' . $total . '</strong></td>';
@@ -521,7 +527,13 @@ function spp_sc_recalculate( $event_id, $user_id, $game_num, $new_score ) {
     $old_group_ranks = spp_sc_rank_users_with_ties( $old_scores, $current_ranks );
     $new_group_ranks = spp_sc_rank_users_with_ties( $new_scores, $current_ranks );
 
-    $maxrk = count( $members );
+    // maxrk = number of players who actually played (Game1 >= 0)
+    $playing_count = 0;
+    foreach ( $members as $m ) {
+        $g1 = $m['Game1'];
+        if ( $g1 === null || (int) $g1 >= 0 ) $playing_count++;
+    }
+    $maxrk = $playing_count;
 
     // Calculate old and new RankCalc for each group member
     $old_calcs = array();
@@ -556,21 +568,21 @@ function spp_sc_recalculate( $event_id, $user_id, $game_num, $new_score ) {
     }
 
     return array(
-        'group_id'       => $group_id,
-        'members'        => $members,
-        'old_scores'     => $old_scores,
-        'new_scores'     => $new_scores,
+        'group_id'        => $group_id,
+        'members'         => $members,
+        'old_scores'      => $old_scores,
+        'new_scores'      => $new_scores,
         'old_group_ranks' => $old_group_ranks,
         'new_group_ranks' => $new_group_ranks,
-        'old_calcs'      => $old_calcs,
-        'new_calcs'      => $new_calcs,
-        'results_data'   => $results_data,
-        'bonus_max'      => $bonus_max,
-        'bonus_min'      => $bonus_min,
-        'game_col'       => $game_col,
-        'game_num'       => $game_num,
-        'new_score_val'  => (int) $new_score,
-        'target_user'    => $user_id,
+        'old_calcs'       => $old_calcs,
+        'new_calcs'       => $new_calcs,
+        'results_data'    => $results_data,
+        'bonus_max'       => $bonus_max,
+        'bonus_min'       => $bonus_min,
+        'game_col'        => $game_col,
+        'game_num'        => $game_num,
+        'new_score_val'   => (int) $new_score,
+        'target_user'     => $user_id,
     );
 }
 
@@ -600,7 +612,7 @@ add_action( 'wp_ajax_spp_sc_preview', function() {
 
     // Build preview HTML
     $html = '<div class="sc-preview">';
-    $html .= '<h4>Preview — Group ' . $result['group_id'] . '</h4>';
+    $html .= '<h4>Preview -- Group ' . $result['group_id'] . '</h4>';
     $html .= '<table>';
     $html .= '<thead><tr><th>Player</th><th>RankPrime</th><th>Old Score</th><th>New Score</th><th>Old GrpRank</th><th>New GrpRank</th><th>Old RankCalc</th><th>New RankCalc</th><th>Change</th></tr></thead>';
     $html .= '<tbody>';
@@ -612,15 +624,15 @@ add_action( 'wp_ajax_spp_sc_preview', function() {
 
         $old_score = $result['old_scores'][ $uid ];
         $new_score_val = $result['new_scores'][ $uid ];
-        $old_gr = $result['old_group_ranks'][ $uid ] ?? '—';
-        $new_gr = $result['new_group_ranks'][ $uid ] ?? '—';
+        $old_gr = $result['old_group_ranks'][ $uid ] ?? '--';
+        $new_gr = $result['new_group_ranks'][ $uid ] ?? '--';
         $old_rc = $result['old_calcs'][ $uid ];
         $new_rc = $result['new_calcs'][ $uid ];
 
         if ( $old_rc === null ) {
             // NP/NS player
             $html .= '<tr><td>' . esc_html( $name ) . '</td><td>' . $rp . '</td>';
-            $html .= '<td colspan="7" class="sc-same">NP/NS — not affected</td></tr>';
+            $html .= '<td colspan="7" class="sc-same">NP/NS -- not affected</td></tr>';
             continue;
         }
 
@@ -633,7 +645,7 @@ add_action( 'wp_ajax_spp_sc_preview', function() {
         }
 
         $diff = $new_rc - $old_rc;
-        $diff_str = ( $diff == 0 ) ? '—' : ( ( $diff > 0 ? '+' : '' ) . number_format( $diff, 2 ) );
+        $diff_str = ( $diff == 0 ) ? '--' : ( ( $diff > 0 ? '+' : '' ) . number_format( $diff, 2 ) );
 
         $row_highlight = ( $uid === $result['target_user'] ) ? ' class="sc-highlight"' : '';
 
@@ -653,7 +665,7 @@ add_action( 'wp_ajax_spp_sc_preview', function() {
     $html .= '</tbody></table>';
 
     if ( ! $has_changes ) {
-        $html .= '<p class="sc-same" style="margin-top:10px;">No changes — the new score produces the same results.</p>';
+        $html .= '<p class="sc-same" style="margin-top:10px;">No changes -- the new score produces the same results.</p>';
     } else {
         $html .= '<p style="margin-top:10px;color:#c0392b;font-weight:bold;">Click "Apply Changes" to commit. This will update Schedules_Scores, Results_all, Results, Master, and user meta.</p>';
     }
