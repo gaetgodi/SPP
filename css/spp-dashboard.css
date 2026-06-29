@@ -342,6 +342,12 @@ h1.entry-title {
     width: 100% !important;
     max-width: 100% !important;
 }
+/* Fix Player Schedule View row overflow on mobile */
+.et_pb_row.schedview_row {
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+}
 /* =====================================================
    COMPACT MEMBER DIRECTORY
    ===================================================== */
