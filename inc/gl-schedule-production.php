@@ -1,8 +1,11 @@
 <?php
 /* =========================================================
    GL Schedule Production
-   Version: 2.0.2
-   Date: 2026-06-22
+   Version: 2.0.3
+   Date: 2026-06-30
+
+   Changes from 2.0.2
+   - From shuffle groups between time slots to sequence groups between time slots
 
    Changes from 2.0.1:
    - First name in Schedules now includes last name initial
@@ -606,15 +609,30 @@ if (isset($Event) and $Event <> 0) {
     echo " | +demand: " . implode(',', $plus_demand);
     echo " | -demand: " . implode(',', $minus_demand) . "<br>";
 
-    $time_assignments = [];
+    // Build time slot pool interleaved rather than sequential blocks.
+    // This ensures rank-adjacent groups land in different time slots,
+    // making cross-slot player swaps easier during manual adjustments.
+    $time_pool = [];
     $t_index = 0;
     foreach ($active_times as $time) {
         for ($g = 0; $g < $counts[$t_index]; $g++) {
-            $time_assignments[] = $time->T_ID;
+            $time_pool[$t_index][] = $time->T_ID;
         }
         $t_index++;
     }
-    shuffle($time_assignments);
+
+    // Interleave: take one from each slot in round-robin order
+    $time_assignments = [];
+    $max_rounds = max(array_map('count', $time_pool));
+    for ($round = 0; $round < $max_rounds; $round++) {
+        foreach ($time_pool as $slot_times) {
+            if (isset($slot_times[$round])) {
+                $time_assignments[] = $slot_times[$round];
+            }
+        }
+    }
+    // No shuffle — the interleaving IS the structure we want.
+    // Carpool passes will still adjust as needed.
 
     $group_time_map = [];
     for ($g = 0; $g < $groups_needed; $g++) {
