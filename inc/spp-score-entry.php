@@ -14,8 +14,8 @@
  * - Available only while spp_schedule_published = 1.
  * - Paper score sheets + Score Scanner remain the verification layer.
  *
- * Version: 1.3.0
- * Date:    2026-06-16
+ * Version: 1.3.1
+ * Date:    2026-06-30
  *
  * Changes from 1.2.0:
  *   - UX: tap the LOSING team instead of the winning team.
@@ -386,14 +386,26 @@ function spp_score_entry_shortcode() {
                         if (res.success) {
                             savedTag.style.display = 'inline';
                             showMsg(res.data.message, true);
-                            var cur = roundEl.querySelector('.se-current');
-                            if (!cur) {
-                                cur = document.createElement('div');
-                                cur.className = 'se-current';
-                                roundEl.appendChild(cur);
-                            }
-                            cur.textContent = 'Current: Blue ' + res.data.blue + ' -- Red ' + res.data.red;
                             updateStatus(res.data.status);
+                            // Refresh ALL round "Current:" displays from fresh server data
+                            if (res.data.round_scores) {
+                                document.querySelectorAll('.se-round').forEach(function(rEl) {
+                                    var rnd = parseInt(rEl.dataset.round);
+                                    var rs = res.data.round_scores[rnd];
+                                    if (!rs) return;
+                                    var cur = rEl.querySelector('.se-current');
+                                    if (rs.blue !== null && rs.red !== null) {
+                                        if (!cur) {
+                                            cur = document.createElement('div');
+                                            cur.className = 'se-current';
+                                            rEl.appendChild(cur);
+                                        }
+                                        cur.textContent = 'Current: Blue ' + rs.blue + ' -- Red ' + rs.red;
+                                    } else if (cur) {
+                                        cur.textContent = '';
+                                    }
+                                });
+                            }
                         } else {
                             showMsg(res.data || 'Save failed', false);
                         }
@@ -569,10 +581,30 @@ add_action( 'wp_ajax_spp_player_score_entry', function() {
     $set_score( $r['blue'], $blue_score );
     $set_score( $r['red'],  $red_score );
 
+    // Fetch fresh scores for all rounds so the UI can update all "Current:" displays
+    $fresh_players = $wpdb->get_results( $wpdb->prepare(
+        "SELECT user_id, Game1, Game2, Game3, Game4, Game5
+         FROM Schedules WHERE group_id = %d ORDER BY Rank",
+        $group_id
+    ), ARRAY_A );
+
+    $round_scores = array();
+    foreach ( $pairings as $i => $r2 ) {
+        $rnd  = $i + 1;
+        $gcol = 'Game' . $rnd;
+        $bv   = isset( $fresh_players[ $r2['blue'][0] ] ) ? $fresh_players[ $r2['blue'][0] ][ $gcol ] : null;
+        $rv   = isset( $fresh_players[ $r2['red'][0] ]  ) ? $fresh_players[ $r2['red'][0] ][ $gcol ]  : null;
+        $round_scores[ $rnd ] = array(
+            'blue' => ( $bv !== null && $bv !== '' ) ? (int) $bv : null,
+            'red'  => ( $rv !== null && $rv !== '' ) ? (int) $rv : null,
+        );
+    }
+
     wp_send_json_success( array(
-        'message' => "Round {$round} saved: Blue {$blue_score} -- Red {$red_score}.",
-        'blue'    => $blue_score,
-        'red'     => $red_score,
-        'status'  => spp_se_group_status( $group_id ),
+        'message'      => "Round {$round} saved: Blue {$blue_score} -- Red {$red_score}.",
+        'blue'         => $blue_score,
+        'red'          => $red_score,
+        'status'       => spp_se_group_status( $group_id ),
+        'round_scores' => $round_scores,
     ) );
 });
