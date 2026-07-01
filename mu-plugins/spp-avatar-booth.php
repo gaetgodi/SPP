@@ -42,6 +42,25 @@ add_filter('get_avatar_url', function($url, $id_or_email, $args) {
     return $url;
 }, 10, 3);
 
+// Hook into Ultimate Member's avatar system
+add_filter('um_user_avatar_url_filter', function($url, $user_id) {
+    $attachment_id = get_user_meta($user_id, 'spp_custom_avatar', true);
+    if ($attachment_id) {
+        $custom_url = wp_get_attachment_url($attachment_id);
+        if ($custom_url) return $custom_url;
+    }
+    return $url;
+}, 10, 2);
+
+add_filter('um_avatar_default_in_member_directory', function($url, $user_id) {
+    $attachment_id = get_user_meta($user_id, 'spp_custom_avatar', true);
+    if ($attachment_id) {
+        $custom_url = wp_get_attachment_url($attachment_id);
+        if ($custom_url) return $custom_url;
+    }
+    return $url;
+}, 10, 2);
+
 // ════════════════════════
 // 2. REST API — receive and save avatar photo
 // ════════════════════════
