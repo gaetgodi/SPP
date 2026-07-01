@@ -168,8 +168,8 @@ add_shortcode('spp_avatar_booth', function() {
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js" crossorigin="anonymous"></script>
 
     <style>
-        .avb-container { max-width: 800px; margin: 0 auto; font-family: var(--spp-font-body, 'Inter', sans-serif); }
-        .avb-header { display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap; }
+        .avb-container { max-width: 800px; margin: 0 auto; font-family: var(--spp-font-body, 'Inter', sans-serif); text-align: center; }
+        .avb-header { display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap; justify-content: center; text-align: left; }
         .avb-current { width: 80px; height: 80px; border-radius: 50%; border: 3px solid var(--spp-color-primary, #2a7c4f); object-fit: cover; }
         .avb-header h3 { margin: 0; color: var(--spp-color-heading, #1a1a1a); }
         .avb-header p { margin: 0.2rem 0 0; font-size: 0.85rem; color: #666; }
@@ -194,7 +194,7 @@ add_shortcode('spp_avatar_booth', function() {
         .avb-camera-wrap .avb-loading.hidden { display: none; }
 
         /* Controls */
-        .avb-controls { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.8rem; }
+        .avb-controls { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.8rem; justify-content: center; }
         .avb-btn {
             padding: 0.5rem 1.2rem; border: none; border-radius: 6px;
             font-weight: 600; font-size: 0.85rem; cursor: pointer; transition: opacity 0.2s;
@@ -207,7 +207,7 @@ add_shortcode('spp_avatar_booth', function() {
         .avb-btn-muted { background: #999; color: white; }
 
         /* Background selector */
-        .avb-bg-bar { display: flex; gap: 0.3rem; flex-wrap: wrap; margin-bottom: 0.8rem; }
+        .avb-bg-bar { display: flex; gap: 0.3rem; flex-wrap: wrap; margin-bottom: 0.8rem; justify-content: center; }
         .avb-bg-opt {
             width: 40px; height: 28px; border-radius: 4px; cursor: pointer;
             border: 2px solid transparent; transition: border-color 0.2s;
@@ -225,14 +225,14 @@ add_shortcode('spp_avatar_booth', function() {
 
         /* Editor */
         .avb-editor { display: none; margin-top: 0.8rem; }
-        .avb-editor.active { display: block; }
-        .avb-editor-canvas-wrap { position: relative; display: inline-block; }
-        .avb-editor canvas { max-width: 100%; border: 2px solid #c9a84c; border-radius: 4px; }
-        .avb-sliders { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem 1rem; margin-top: 0.8rem; }
+        .avb-editor.active { display: block; text-align: center; }
+        .avb-editor-canvas-wrap { position: relative; display: inline-block; max-width: 100%; }
+        .avb-editor canvas { max-width: 100%; border: 2px solid #c9a84c; border-radius: 4px; display: block; }
+        .avb-sliders { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem 1rem; margin-top: 0.8rem; text-align: left; max-width: 500px; margin-left: auto; margin-right: auto; }
         .avb-slider-label { font-size: 0.75rem; color: #666; display: flex; justify-content: space-between; }
         .avb-slider-label span { font-weight: 600; color: var(--spp-color-primary, #2a7c4f); }
         .avb-sliders input[type="range"] { width: 100%; accent-color: var(--spp-color-primary, #2a7c4f); }
-        .avb-editor-actions { display: flex; gap: 0.5rem; margin-top: 0.8rem; flex-wrap: wrap; }
+        .avb-editor-actions { display: flex; gap: 0.5rem; margin-top: 0.8rem; flex-wrap: wrap; justify-content: center; }
 
         /* Crop */
         .avb-crop-box {
@@ -266,6 +266,11 @@ add_shortcode('spp_avatar_booth', function() {
         @media (max-width: 600px) {
             .avb-sliders { grid-template-columns: 1fr; }
             .avb-camera-wrap { aspect-ratio: 1/1; }
+            .avb-header { flex-direction: column; text-align: center; }
+            .avb-controls { flex-direction: column; align-items: center; }
+            .avb-btn { width: 100%; text-align: center; }
+            .avb-editor-actions { flex-direction: column; }
+            .avb-editor-actions .avb-btn { width: 100%; }
         }
     </style>
 
