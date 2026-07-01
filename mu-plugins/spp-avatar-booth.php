@@ -180,7 +180,8 @@ add_shortcode('spp_avatar_booth', function() {
         /* Camera area */
         .avb-camera-wrap {
             position: relative; background: #111; border-radius: 8px; overflow: hidden;
-            aspect-ratio: 4/3; max-height: 450px; margin-bottom: 0.8rem;
+            aspect-ratio: 4/3; max-height: 450px; margin: 0 auto 0.8rem;
+            max-width: 640px;
         }
         .avb-camera-wrap video { display: none; }
         .avb-camera-wrap canvas { width: 100%; height: 100%; display: block; }
@@ -228,7 +229,7 @@ add_shortcode('spp_avatar_booth', function() {
         .avb-editor.active { display: block; text-align: center; }
         .avb-editor-canvas-wrap { position: relative; display: inline-block; max-width: 100%; }
         .avb-editor canvas { max-width: 100%; border: 2px solid #c9a84c; border-radius: 4px; display: block; }
-        .avb-sliders { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem 1rem; margin-top: 0.8rem; text-align: left; max-width: 500px; margin-left: auto; margin-right: auto; }
+        .avb-sliders { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem 1rem; margin: 0.8rem auto 0; text-align: left; max-width: 500px; }
         .avb-slider-label { font-size: 0.75rem; color: #666; display: flex; justify-content: space-between; }
         .avb-slider-label span { font-weight: 600; color: var(--spp-color-primary, #2a7c4f); }
         .avb-sliders input[type="range"] { width: 100%; accent-color: var(--spp-color-primary, #2a7c4f); }
