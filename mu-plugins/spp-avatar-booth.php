@@ -149,7 +149,38 @@ function spp_avatar_booth_delete($request) {
 }
 
 // ════════════════════════
-// 3. SHORTCODE — [spp_avatar_booth]
+// 3a. SHORTCODE — [spp_user_avatar]
+//     Displays the current user's avatar anywhere.
+//     Attributes: size (px, default 80), link (url to avatar booth page, optional)
+//     Example: [spp_user_avatar size="100" link="/my-account/update-photo/"]
+// ════════════════════════
+add_shortcode('spp_user_avatar', function($atts) {
+    if (!is_user_logged_in()) return '';
+
+    $atts = shortcode_atts([
+        'size' => 80,
+        'link' => '',
+    ], $atts);
+
+    $user = wp_get_current_user();
+    $size = intval($atts['size']);
+    $avatar_url = get_avatar_url($user->ID, ['size' => $size * 2]); // 2x for retina
+    $alt = esc_attr($user->display_name);
+
+    $img = sprintf(
+        '<img src="%s" alt="%s" style="width:%dpx;height:%dpx;border-radius:50%%;object-fit:cover;display:block;margin:0 auto;border:3px solid var(--spp-color-primary,#2a7c4f);" />',
+        esc_url($avatar_url), $alt, $size, $size
+    );
+
+    if (!empty($atts['link'])) {
+        $img = sprintf('<a href="%s" title="Update your photo" style="display:block;text-align:center;">%s</a>', esc_url($atts['link']), $img);
+    }
+
+    return '<div style="text-align:center;margin:0.5rem 0;">' . $img . '</div>';
+});
+
+// ════════════════════════
+// 3b. SHORTCODE — [spp_avatar_booth]
 // ════════════════════════
 add_shortcode('spp_avatar_booth', function() {
     if (!is_user_logged_in()) {
