@@ -76,7 +76,79 @@ add_action('rest_api_init', function() {
         'callback' => 'spp_avatar_booth_delete',
         'permission_callback' => function() { return is_user_logged_in(); },
     ]);
+
+    register_rest_route('spp/v1', '/avatar/email', [
+        'methods' => 'POST',
+        'callback' => 'spp_avatar_booth_email',
+        'permission_callback' => function() { return is_user_logged_in(); },
+    ]);
 });
+
+function spp_avatar_booth_email($request) {
+    $user_id = get_current_user_id();
+    $user = get_userdata($user_id);
+    $attachment_id = get_user_meta($user_id, 'spp_custom_avatar', true);
+
+    if (!$attachment_id) {
+        return new WP_Error('no_avatar', 'No custom avatar to email', ['status' => 400]);
+    }
+    $avatar_url = wp_get_attachment_url($attachment_id);
+    $to = $user->user_email;
+    $name = $user->display_name;
+
+    // Load Brevo config — reuse the PHE70 booth config if present, else check theme
+    $config_paths = [
+        WP_CONTENT_DIR . '/spp-brevo-config.json',
+        get_stylesheet_directory() . '/spp-brevo-config.json',
+    ];
+    $apiKey = ''; $fromEmail = 'noreply@pickleballstouffville.ca'; $fromName = 'Stouffville Pickleball';
+    foreach ($config_paths as $cp) {
+        if (file_exists($cp)) {
+            $cfg = json_decode(file_get_contents($cp), true);
+            if (!empty($cfg['brevo_api_key'])) {
+                $apiKey = $cfg['brevo_api_key'];
+                $fromEmail = $cfg['from_email'] ?? $fromEmail;
+                $fromName = $cfg['from_name'] ?? $fromName;
+                break;
+            }
+        }
+    }
+
+    if (empty($apiKey)) {
+        return new WP_Error('no_config', 'Email not configured (missing spp-brevo-config.json)', ['status' => 500]);
+    }
+
+    $emailData = [
+        'sender' => ['name' => $fromName, 'email' => $fromEmail],
+        'to' => [['email' => $to, 'name' => $name]],
+        'subject' => 'Your Stouffville Pickleball Profile Photo',
+        'htmlContent' => "
+            <div style='font-family:Arial,sans-serif;max-width:600px;margin:0 auto;text-align:center;'>
+                <h2 style='color:#2a7c4f;'>Your Profile Photo</h2>
+                <p style='color:#555;'>Hi {$name},</p>
+                <p style='color:#555;'>Here's a copy of your Stouffville Pickleball profile photo.</p>
+                <img src='{$avatar_url}' alt='Profile Photo' style='max-width:300px;border:3px solid #2a7c4f;border-radius:8px;margin:1rem 0;'/>
+                <p style='color:#888;font-size:0.8em;'>Stouffville Pickleball</p>
+            </div>
+        "
+    ];
+
+    $ch = curl_init('https://api.brevo.com/v3/smtp/email');
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => json_encode($emailData),
+        CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'api-key: ' . $apiKey],
+    ]);
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($httpCode >= 200 && $httpCode < 300) {
+        return ['ok' => true, 'message' => 'Photo emailed to ' . $to];
+    }
+    return new WP_Error('send_failed', 'Email failed to send', ['status' => 500, 'response' => $response]);
+}
 
 function spp_avatar_booth_save($request) {
     $user_id = get_current_user_id();
@@ -398,6 +470,11 @@ add_shortcode('spp_avatar_booth', function() {
         </div>
 
         <div class="avb-status" id="avbStatus"></div>
+
+        <!-- Email me a copy (shown after avatar set) -->
+        <div id="avbEmailRow" style="display:none;text-align:center;margin-top:0.5rem;">
+            <button class="avb-btn avb-btn-gold" onclick="avbEmailAvatar()">📧 Email me a copy</button>
+        </div>
 
         <!-- Remove avatar option -->
         <div style="margin-top:1rem;padding-top:0.8rem;border-top:1px solid #eee;">
@@ -731,6 +808,7 @@ add_shortcode('spp_avatar_booth', function() {
                     document.getElementById('avbEditor').classList.remove('active');
                     cropActive = false;
                     document.getElementById('avbCropBox').style.display = 'none';
+                    document.getElementById('avbEmailRow').style.display = 'block';
                 } else {
                     status.className = 'avb-status error';
                     status.textContent = 'Error: ' + (result.message || 'Unknown error');
@@ -738,6 +816,28 @@ add_shortcode('spp_avatar_booth', function() {
             } catch(e) {
                 status.className = 'avb-status error';
                 status.textContent = 'Failed to save: ' + e.message;
+            }
+        };
+
+        window.avbEmailAvatar = async function() {
+            const status = document.getElementById('avbStatus');
+            status.className = 'avb-status'; status.textContent = 'Sending email...';
+            try {
+                const resp = await fetch('<?php echo esc_js(rest_url('spp/v1/avatar/email')); ?>', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-WP-Nonce': NONCE }
+                });
+                const result = await resp.json();
+                if (result.ok) {
+                    status.className = 'avb-status success';
+                    status.textContent = result.message || 'Photo emailed!';
+                } else {
+                    status.className = 'avb-status error';
+                    status.textContent = 'Email error: ' + (result.message || 'Unknown');
+                }
+            } catch(e) {
+                status.className = 'avb-status error';
+                status.textContent = 'Email failed: ' + e.message;
             }
         };
 
