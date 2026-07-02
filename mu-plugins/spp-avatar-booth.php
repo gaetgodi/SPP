@@ -333,9 +333,9 @@ add_shortcode('spp_avatar_booth', function() {
         .avb-editor-canvas-wrap { position: relative; display: inline-block; max-width: 100%; }
         .avb-editor canvas { max-width: 100%; border: 2px solid #c9a84c; border-radius: 4px; display: block; }
         .avb-sliders { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem 1rem; margin: 0.8rem auto 0; text-align: left; max-width: 500px; }
-        .avb-slider-label { font-size: 0.75rem; color: #666; display: flex; justify-content: space-between; }
-        .avb-slider-label span { font-weight: 600; color: var(--spp-color-primary, #2a7c4f); }
-        .avb-sliders input[type="range"] { width: 100%; accent-color: var(--spp-color-primary, #2a7c4f); }
+        .avb-slider-label { font-size: 0.8rem !important; color: #444 !important; display: flex !important; justify-content: space-between; margin-bottom: 0.2rem; font-weight: 500; }
+        .avb-slider-label span { font-weight: 700; color: var(--spp-color-primary, #2a7c4f) !important; }
+        .avb-sliders input[type="range"] { width: 100%; accent-color: var(--spp-color-primary, #2a7c4f); touch-action: none; height: 24px; }
         .avb-editor-actions { display: flex; gap: 0.5rem; margin-top: 0.8rem; flex-wrap: wrap; justify-content: center; }
 
         /* Crop */
@@ -369,6 +369,7 @@ add_shortcode('spp_avatar_booth', function() {
 
         @media (max-width: 600px) {
             .avb-sliders { grid-template-columns: 1fr; }
+            .avb-slider-label { font-size: 0.85rem !important; }
             .avb-camera-wrap { aspect-ratio: 1/1; }
             .avb-header { flex-direction: column; text-align: center; }
             .avb-controls { flex-direction: column; align-items: center; }
