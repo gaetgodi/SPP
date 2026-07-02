@@ -12,8 +12,18 @@
  *   - rankUsersWithTies(): score desc, current rank as tie-breaker
  *   - setCaclRank(): placement adjustment + score bonus
  *
- * Version: 1.2.0
- * Date:    2026-06-28
+ * Version: 1.3.0
+ * Date:    2026-07-02
+ *
+ * Changes from 1.2.0:
+ *   - Steps 3 and 4: split SET @r=0 and UPDATE into separate
+ *     $wpdb->query() calls. Multi-statement SQL is silently
+ *     truncated by wpdb, leaving @r=NULL and producing wrong
+ *     ordinal ranks for everyone (confirmed: caused rank 12
+ *     instead of 31 after a score correction).
+ *   - Step 6: replaced direct Master UPDATE with
+ *     [cmruncode name='Create membership table'] to properly
+ *     refresh both membership and Master tables.
  *
  * Changes from 1.1.0:
  *   - Full width layout, no max-width constraint.
@@ -759,15 +769,21 @@ add_action( 'wp_ajax_spp_sc_apply', function() {
     }
 
     // 3. Re-rank the entire event in Results_all (ordinal Rank column)
+    // NOTE: SET and UPDATE must be separate $wpdb->query() calls --
+    // multi-statement SQL is silently truncated to the first statement
+    // only, leaving @r=NULL and producing wrong ranks for everyone.
+    $wpdb->query( "SET @r=0" );
     $wpdb->query(
-        "SET @r=0; UPDATE Results_all SET Rank = (@r:=@r+1)
+        "UPDATE Results_all SET Rank = (@r:=@r+1)
          WHERE event_id = {$event_id}
          ORDER BY CAST(RankOverride AS DECIMAL(6,2)) ASC, RankPrev ASC"
     );
 
-    // 4. Re-rank Results table
+    // 4. Re-rank Results table (no re-sort needed -- RankOverride already
+    // correct from step 2; just assign sequential ordinal integers)
+    $wpdb->query( "SET @r=0" );
     $wpdb->query(
-        "SET @r=0; UPDATE Results SET Rank = (@r:=@r+1)
+        "UPDATE Results SET Rank = (@r:=@r+1)
          ORDER BY CAST(RankOverride AS DECIMAL(6,2)) ASC, RankPrev ASC"
     );
 
@@ -779,10 +795,8 @@ add_action( 'wp_ajax_spp_sc_apply', function() {
          WHERE um.meta_key = 'Rank'"
     );
 
-    // 6. Update Master table
-    $wpdb->query(
-        "UPDATE Master m JOIN Results r ON m.user_id = r.user_id SET m.Rank = r.Rank"
-    );
+    // 6. Refresh membership and Master tables
+    echo do_shortcode( "[cmruncode name='Create membership table']" );
 
     $msg = 'Score correction applied successfully.';
     if ( ! empty( $changes ) ) {
