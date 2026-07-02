@@ -329,10 +329,10 @@ add_shortcode('spp_avatar_booth', function() {
 
         /* Editor */
         .avb-editor { display: none; margin-top: 0.8rem; }
-        .avb-editor.active { display: block; text-align: center; }
+        .avb-editor.active { display: block; text-align: center; width: 100%; }
         .avb-editor-canvas-wrap { position: relative; display: inline-block; max-width: 100%; }
         .avb-editor canvas { max-width: 100%; border: 2px solid #c9a84c; border-radius: 4px; display: block; }
-        .avb-sliders { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem 1rem; margin: 0.8rem auto 0; text-align: left; max-width: 500px; }
+        .avb-sliders { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem 1rem; margin: 0.8rem auto 0; text-align: left; max-width: 500px; width: 100%; padding: 0 0.5rem; box-sizing: border-box; }
         .avb-slider-label { font-size: 0.8rem !important; color: #444 !important; display: flex !important; justify-content: space-between; margin-bottom: 0.2rem; font-weight: 500; }
         .avb-slider-label span { font-weight: 700; color: var(--spp-color-primary, #2a7c4f) !important; }
         .avb-sliders input[type="range"] { width: 100%; accent-color: var(--spp-color-primary, #2a7c4f); touch-action: none; height: 24px; }
@@ -341,16 +341,17 @@ add_shortcode('spp_avatar_booth', function() {
         /* Crop */
         .avb-crop-box {
             position: absolute; border: 2px dashed #c9a84c; cursor: move;
-            min-width: 50px; min-height: 50px; display: none;
+            min-width: 50px; min-height: 50px; display: none; touch-action: none;
         }
         .avb-crop-handle {
-            position: absolute; width: 12px; height: 12px;
-            background: #c9a84c; border: 2px solid #1a1a1a; border-radius: 2px;
+            position: absolute; width: 20px; height: 20px;
+            background: #c9a84c; border: 2px solid #1a1a1a; border-radius: 3px;
+            touch-action: none;
         }
-        .avb-crop-handle.tl { top: -6px; left: -6px; cursor: nw-resize; }
-        .avb-crop-handle.tr { top: -6px; right: -6px; cursor: ne-resize; }
-        .avb-crop-handle.bl { bottom: -6px; left: -6px; cursor: sw-resize; }
-        .avb-crop-handle.br { bottom: -6px; right: -6px; cursor: se-resize; }
+        .avb-crop-handle.tl { top: -10px; left: -10px; cursor: nw-resize; }
+        .avb-crop-handle.tr { top: -10px; right: -10px; cursor: ne-resize; }
+        .avb-crop-handle.bl { bottom: -10px; left: -10px; cursor: sw-resize; }
+        .avb-crop-handle.br { bottom: -10px; right: -10px; cursor: se-resize; }
 
         .avb-countdown {
             position: absolute; inset: 0; display: none; align-items: center;
@@ -434,7 +435,7 @@ add_shortcode('spp_avatar_booth', function() {
 
         <!-- Editor (shown after capture) -->
         <div class="avb-editor" id="avbEditor">
-            <h4 style="margin:0 0 0.5rem;color:var(--spp-color-heading,#1a1a1a);">Adjust Your Photo</h4>
+            <h4 style="margin:0 0 0.5rem;color:var(--spp-color-heading,#1a1a1a);text-align:center;">Adjust Your Photo</h4>
             <div class="avb-editor-canvas-wrap">
                 <canvas id="avbEditorCanvas"></canvas>
                 <div class="avb-crop-box" id="avbCropBox">
@@ -739,17 +740,28 @@ add_shortcode('spp_avatar_booth', function() {
             const box = document.getElementById('avbCropBox');
             const ec = document.getElementById('avbEditorCanvas');
 
+            function getPoint(e) {
+                if (e.touches && e.touches.length) return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+                return { x: e.clientX, y: e.clientY };
+            }
+
             function onDown(e) {
                 e.preventDefault();
+                e.stopPropagation();
                 const pos = e.target.dataset?.pos;
-                cropStart = { mx: e.clientX, my: e.clientY, ...cropRect };
+                const pt = getPoint(e);
+                cropStart = { mx: pt.x, my: pt.y, ...cropRect };
                 cropDragging = pos || 'move';
                 document.addEventListener('mousemove', onMove);
                 document.addEventListener('mouseup', onUp);
+                document.addEventListener('touchmove', onMove, { passive: false });
+                document.addEventListener('touchend', onUp);
             }
             function onMove(e) {
                 if (!cropDragging) return;
-                const dx = e.clientX - cropStart.mx, dy = e.clientY - cropStart.my;
+                e.preventDefault();
+                const pt = getPoint(e);
+                const dx = pt.x - cropStart.mx, dy = pt.y - cropStart.my;
                 const rect = ec.getBoundingClientRect();
                 if (cropDragging === 'move') {
                     cropRect.x = Math.max(0, Math.min(rect.width - cropRect.w, cropStart.x + dx));
@@ -770,10 +782,17 @@ add_shortcode('spp_avatar_booth', function() {
                 }
                 avbPositionCrop();
             }
-            function onUp() { cropDragging = null; document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); }
+            function onUp() {
+                cropDragging = null;
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+                document.removeEventListener('touchmove', onMove);
+                document.removeEventListener('touchend', onUp);
+            }
 
             box.onmousedown = onDown;
-            box.querySelectorAll('.avb-crop-handle').forEach(h => h.onmousedown = onDown);
+            box.ontouchstart = onDown;
+            box.querySelectorAll('.avb-crop-handle').forEach(h => { h.onmousedown = onDown; h.ontouchstart = onDown; });
         }
 
         // ── Save Avatar ──
