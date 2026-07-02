@@ -329,13 +329,29 @@ add_shortcode('spp_avatar_booth', function() {
 
         /* Editor */
         .avb-editor { display: none; margin-top: 0.8rem; }
-        .avb-editor.active { display: block; text-align: center; width: 100%; }
+        .avb-editor.active { display: block; text-align: center; width: 100%; max-width: 100%; overflow: hidden; box-sizing: border-box; }
         .avb-editor-canvas-wrap { position: relative; display: inline-block; max-width: 100%; }
         .avb-editor canvas { max-width: 100%; border: 2px solid #c9a84c; border-radius: 4px; display: block; }
         .avb-sliders { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem 1rem; margin: 0.8rem auto 0; text-align: left; max-width: 500px; width: 100%; padding: 0 0.5rem; box-sizing: border-box; }
-        .avb-slider-label { font-size: 0.8rem !important; color: #444 !important; display: flex !important; justify-content: space-between; margin-bottom: 0.2rem; font-weight: 500; }
+        .avb-sliders > div { min-width: 0; }
+        .avb-slider-label { font-size: 0.8rem !important; color: #333 !important; display: flex !important; justify-content: space-between; margin-bottom: 0.3rem; font-weight: 600; }
         .avb-slider-label span { font-weight: 700; color: var(--spp-color-primary, #2a7c4f) !important; }
-        .avb-sliders input[type="range"] { width: 100%; accent-color: var(--spp-color-primary, #2a7c4f); touch-action: none; height: 24px; }
+        .avb-sliders input[type="range"] {
+            width: 100%; touch-action: none; height: 8px;
+            -webkit-appearance: none; appearance: none;
+            background: #d0d0d0; border-radius: 5px; outline: none; margin: 6px 0 12px;
+        }
+        .avb-sliders input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none;
+            width: 24px; height: 24px; border-radius: 50%;
+            background: var(--spp-color-primary, #2a7c4f); cursor: pointer;
+            border: 2px solid white; box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+        }
+        .avb-sliders input[type="range"]::-moz-range-thumb {
+            width: 24px; height: 24px; border-radius: 50%;
+            background: var(--spp-color-primary, #2a7c4f); cursor: pointer;
+            border: 2px solid white; box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+        }
         .avb-editor-actions { display: flex; gap: 0.5rem; margin-top: 0.8rem; flex-wrap: wrap; justify-content: center; }
 
         /* Crop */
@@ -464,7 +480,7 @@ add_shortcode('spp_avatar_booth', function() {
                 </div>
             </div>
             <div class="avb-editor-actions">
-                <button class="avb-btn avb-btn-gold" onclick="avbToggleCrop()">✂ Crop</button>
+                <button class="avb-btn avb-btn-gold" id="avbCropBtn" onclick="avbToggleCrop()">✂ Crop</button>
                 <button class="avb-btn avb-btn-muted" onclick="avbResetEditor()">↺ Reset</button>
                 <button class="avb-btn avb-btn-primary" onclick="avbSetAvatar()">✓ Set as My Avatar</button>
                 <button class="avb-btn avb-btn-muted" onclick="avbCancelEdit()">Cancel</button>
@@ -708,19 +724,51 @@ add_shortcode('spp_avatar_booth', function() {
 
         // ── Crop ──
         window.avbToggleCrop = function() {
-            cropActive = !cropActive;
             const box = document.getElementById('avbCropBox');
-            if (cropActive) {
+            const cropBtn = document.getElementById('avbCropBtn');
+            if (!cropActive) {
+                // Turn crop ON — show the frame
+                cropActive = true;
                 const ec = document.getElementById('avbEditorCanvas');
                 const rect = ec.getBoundingClientRect();
-                cropRect = { x: rect.width * 0.2, y: rect.height * 0.15, w: rect.width * 0.6, h: rect.height * 0.7 };
+                cropRect = { x: rect.width * 0.15, y: rect.height * 0.1, w: rect.width * 0.7, h: rect.height * 0.8 };
                 avbPositionCrop();
                 box.style.display = 'block';
                 avbInitCropDrag();
+                cropBtn.textContent = '✓ Apply Crop';
+                cropBtn.classList.remove('avb-btn-gold');
+                cropBtn.classList.add('avb-btn-primary');
             } else {
+                // Apply the crop — bake it into editorOriginal
+                avbApplyCrop();
+                cropActive = false;
                 box.style.display = 'none';
+                cropBtn.textContent = '✂ Crop';
+                cropBtn.classList.remove('avb-btn-primary');
+                cropBtn.classList.add('avb-btn-gold');
             }
         };
+
+        function avbApplyCrop() {
+            const ec = document.getElementById('avbEditorCanvas');
+            const rect = ec.getBoundingClientRect();
+            const scaleX = ec.width / rect.width, scaleY = ec.height / rect.height;
+            const cx = Math.round(cropRect.x * scaleX), cy = Math.round(cropRect.y * scaleY);
+            const cw = Math.round(cropRect.w * scaleX), ch = Math.round(cropRect.h * scaleY);
+
+            const cropped = document.createElement('canvas');
+            cropped.width = cw; cropped.height = ch;
+            cropped.getContext('2d').drawImage(ec, cx, cy, cw, ch, 0, 0, cw, ch);
+
+            // Make the cropped result the new base image, reset sliders
+            const img = new Image();
+            img.onload = () => {
+                editorOriginal = img;
+                avbResetSliders();
+                avbRenderEditor();
+            };
+            img.src = cropped.toDataURL('image/png');
+        }
 
         function avbPositionCrop() {
             const box = document.getElementById('avbCropBox');
@@ -797,20 +845,19 @@ add_shortcode('spp_avatar_booth', function() {
 
         // ── Save Avatar ──
         window.avbSetAvatar = async function() {
-            const ec = document.getElementById('avbEditorCanvas');
-            let saveCanvas = ec;
-
+            // If crop frame is still active, apply it first
             if (cropActive) {
-                const rect = ec.getBoundingClientRect();
-                const scaleX = ec.width / rect.width, scaleY = ec.height / rect.height;
-                const cx = Math.round(cropRect.x * scaleX), cy = Math.round(cropRect.y * scaleY);
-                const cw = Math.round(cropRect.w * scaleX), ch = Math.round(cropRect.h * scaleY);
-                saveCanvas = document.createElement('canvas');
-                saveCanvas.width = cw; saveCanvas.height = ch;
-                saveCanvas.getContext('2d').drawImage(ec, cx, cy, cw, ch, 0, 0, cw, ch);
+                avbApplyCrop();
+                cropActive = false;
+                document.getElementById('avbCropBox').style.display = 'none';
+                const cropBtn = document.getElementById('avbCropBtn');
+                cropBtn.textContent = '✂ Crop';
+                cropBtn.classList.remove('avb-btn-primary');
+                cropBtn.classList.add('avb-btn-gold');
+                await new Promise(r => setTimeout(r, 100)); // let render complete
             }
-
-            const dataURL = saveCanvas.toDataURL('image/png');
+            const ec = document.getElementById('avbEditorCanvas');
+            const dataURL = ec.toDataURL('image/png');
             const status = document.getElementById('avbStatus');
             status.className = 'avb-status'; status.textContent = 'Saving avatar...';
 
