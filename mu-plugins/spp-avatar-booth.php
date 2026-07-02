@@ -168,20 +168,20 @@ add_shortcode('spp_avatar_booth', function() {
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js" crossorigin="anonymous"></script>
 
     <style>
-        .avb-container { max-width: 800px; margin: 0 auto; font-family: var(--spp-font-body, 'Inter', sans-serif); text-align: center; }
+        .avb-container { max-width: 800px; margin: 0 auto !important; font-family: var(--spp-font-body, 'Inter', sans-serif); text-align: center; width: 100%; padding: 0 1rem; box-sizing: border-box; }
         .avb-header { display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap; justify-content: center; text-align: left; }
         .avb-current { width: 80px; height: 80px; border-radius: 50%; border: 3px solid var(--spp-color-primary, #2a7c4f); object-fit: cover; }
         .avb-header h3 { margin: 0; color: var(--spp-color-heading, #1a1a1a); }
         .avb-header p { margin: 0.2rem 0 0; font-size: 0.85rem; color: #666; }
-        .avb-status { font-size: 0.85rem; padding: 0.5rem 0; color: #666; min-height: 1.5em; }
+        .avb-status { font-size: 0.85rem; padding: 0.5rem 0; color: #666; min-height: 1.5em; text-align: center; }
         .avb-status.success { color: var(--spp-color-primary, #2a7c4f); font-weight: 600; }
         .avb-status.error { color: #c92a2a; }
 
         /* Camera area */
         .avb-camera-wrap {
             position: relative; background: #111; border-radius: 8px; overflow: hidden;
-            aspect-ratio: 4/3; max-height: 450px; margin: 0 auto 0.8rem;
-            max-width: 640px;
+            aspect-ratio: 4/3; max-height: 450px; margin: 0 auto 0.8rem !important;
+            max-width: 640px; width: 100%; box-sizing: border-box;
         }
         .avb-camera-wrap video { display: none; }
         .avb-camera-wrap canvas { width: 100%; height: 100%; display: block; }
@@ -195,7 +195,7 @@ add_shortcode('spp_avatar_booth', function() {
         .avb-camera-wrap .avb-loading.hidden { display: none; }
 
         /* Controls */
-        .avb-controls { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.8rem; justify-content: center; }
+        .avb-controls { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0 auto 0.8rem !important; justify-content: center; max-width: 640px; width: 100%; }
         .avb-btn {
             padding: 0.5rem 1.2rem; border: none; border-radius: 6px;
             font-weight: 600; font-size: 0.85rem; cursor: pointer; transition: opacity 0.2s;
@@ -208,7 +208,7 @@ add_shortcode('spp_avatar_booth', function() {
         .avb-btn-muted { background: #999; color: white; }
 
         /* Background selector */
-        .avb-bg-bar { display: flex; gap: 0.3rem; flex-wrap: wrap; margin-bottom: 0.8rem; justify-content: center; }
+        .avb-bg-bar { display: flex; gap: 0.3rem; flex-wrap: wrap; margin: 0 auto 0.8rem !important; justify-content: center; max-width: 640px; }
         .avb-bg-opt {
             width: 40px; height: 28px; border-radius: 4px; cursor: pointer;
             border: 2px solid transparent; transition: border-color 0.2s;
