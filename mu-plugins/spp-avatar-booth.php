@@ -330,11 +330,11 @@ add_shortcode('spp_avatar_booth', function() {
         /* Editor */
         .avb-editor { display: none; margin-top: 0.8rem; }
         .avb-editor.active { display: block; text-align: center; width: 100%; max-width: 100%; overflow: hidden; box-sizing: border-box; }
-        .avb-editor-canvas-wrap { position: relative; display: inline-block; max-width: 100%; }
+        .avb-editor-canvas-wrap { position: relative; display: inline-block; max-width: 100%; margin: 0 auto; }
         .avb-editor canvas { max-width: 100% !important; width: auto; height: auto; border: 2px solid #c9a84c; border-radius: 4px; display: block; box-sizing: border-box; }
-        .avb-sliders { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem 1rem; margin: 0.8rem auto 0; text-align: left; max-width: 500px; width: 100%; padding: 0 0.5rem; box-sizing: border-box; }
+        .avb-sliders { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem 1rem; margin: 0.8rem auto 0; text-align: center; max-width: 500px; width: 100%; padding: 0 0.5rem; box-sizing: border-box; }
         .avb-sliders > div { min-width: 0; }
-        .avb-slider-label { font-size: 0.8rem !important; color: #333 !important; display: flex !important; justify-content: space-between; margin-bottom: 0.3rem; font-weight: 600; }
+        .avb-slider-label { font-size: 0.8rem !important; color: #333 !important; display: flex !important; justify-content: center; gap: 0.4rem; margin-bottom: 0.3rem; font-weight: 600; text-align: center; }
         .avb-slider-label span { font-weight: 700; color: var(--spp-color-primary, #2a7c4f) !important; }
         .avb-sliders input[type="range"] {
             width: 100%; touch-action: none; height: 8px;
@@ -792,14 +792,11 @@ add_shortcode('spp_avatar_booth', function() {
 
         function avbPositionCrop() {
             const box = document.getElementById('avbCropBox');
-            const ec = document.getElementById('avbEditorCanvas');
-            const wrap = ec.parentElement;
-            const ecRect = ec.getBoundingClientRect();
-            const wrapRect = wrap.getBoundingClientRect();
-            const offX = ecRect.left - wrapRect.left;
-            const offY = ecRect.top - wrapRect.top;
-            box.style.left = (offX + cropRect.x) + 'px';
-            box.style.top = (offY + cropRect.y) + 'px';
+            // Crop box is absolutely positioned inside .avb-editor-canvas-wrap,
+            // which wraps the canvas tightly. Position directly against cropRect
+            // (which is in displayed-canvas pixels, matching the wrap size).
+            box.style.left = cropRect.x + 'px';
+            box.style.top = cropRect.y + 'px';
             box.style.width = cropRect.w + 'px';
             box.style.height = cropRect.h + 'px';
         }
