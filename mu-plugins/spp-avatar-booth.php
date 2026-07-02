@@ -751,7 +751,7 @@ add_shortcode('spp_avatar_booth', function() {
                 cropActive = true;
                 const ec = document.getElementById('avbEditorCanvas');
                 const rect = ec.getBoundingClientRect();
-                cropRect = { x: rect.width * 0.15, y: rect.height * 0.1, w: rect.width * 0.7, h: rect.height * 0.8 };
+                cropRect = { x: rect.width * 0.25, y: rect.height * 0.2, w: rect.width * 0.5, h: rect.height * 0.55 };
                 avbPositionCrop();
                 box.style.display = 'block';
                 avbInitCropDrag();
