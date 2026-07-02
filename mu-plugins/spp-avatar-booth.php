@@ -331,7 +331,7 @@ add_shortcode('spp_avatar_booth', function() {
         .avb-editor { display: none; margin-top: 0.8rem; }
         .avb-editor.active { display: block; text-align: center; width: 100%; max-width: 100%; overflow: hidden; box-sizing: border-box; }
         .avb-editor-canvas-wrap { position: relative; display: inline-block; max-width: 100%; }
-        .avb-editor canvas { max-width: 100%; border: 2px solid #c9a84c; border-radius: 4px; display: block; }
+        .avb-editor canvas { max-width: 100% !important; width: auto; height: auto; border: 2px solid #c9a84c; border-radius: 4px; display: block; box-sizing: border-box; }
         .avb-sliders { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem 1rem; margin: 0.8rem auto 0; text-align: left; max-width: 500px; width: 100%; padding: 0 0.5rem; box-sizing: border-box; }
         .avb-sliders > div { min-width: 0; }
         .avb-slider-label { font-size: 0.8rem !important; color: #333 !important; display: flex !important; justify-content: space-between; margin-bottom: 0.3rem; font-weight: 600; }
@@ -700,21 +700,41 @@ add_shortcode('spp_avatar_booth', function() {
             const warmth = parseInt(document.getElementById('avbSliderWarmth').value);
             const exposure = parseInt(document.getElementById('avbSliderExposure').value);
 
-            const bVal = 1 + bright / 100;
-            const cVal = 1 + contrast / 100;
-            const eVal = 1 + exposure / 50;
-
-            ectx.filter = 'brightness(' + (bVal * eVal) + ') contrast(' + cVal + ')';
+            // Draw the original first
             ectx.drawImage(editorOriginal, 0, 0);
-            ectx.filter = 'none';
 
-            if (warmth !== 0) {
+            // Only manipulate pixels if any adjustment is non-zero
+            if (bright !== 0 || contrast !== 0 || warmth !== 0 || exposure !== 0) {
                 const imageData = ectx.getImageData(0, 0, ec.width, ec.height);
                 const data = imageData.data;
+
+                // Precompute adjustment factors
+                const brightAdd = bright * 1.28;            // -128..+128
+                const expFactor = 1 + exposure / 100;       // 0..2 multiplier
+                const cFactor = (259 * (contrast + 255)) / (255 * (259 - contrast)); // standard contrast formula
                 const w = warmth / 100;
+
                 for (let i = 0; i < data.length; i += 4) {
-                    if (w > 0) { data[i] = Math.min(255, data[i] + w * 30); data[i+2] = Math.max(0, data[i+2] - w * 20); }
-                    else { data[i] = Math.max(0, data[i] + w * 20); data[i+2] = Math.min(255, data[i+2] - w * 30); }
+                    let r = data[i], g = data[i+1], b = data[i+2];
+
+                    // Exposure (multiplicative)
+                    r *= expFactor; g *= expFactor; b *= expFactor;
+
+                    // Brightness (additive)
+                    r += brightAdd; g += brightAdd; b += brightAdd;
+
+                    // Contrast
+                    r = cFactor * (r - 128) + 128;
+                    g = cFactor * (g - 128) + 128;
+                    b = cFactor * (b - 128) + 128;
+
+                    // Warmth (shift red/blue)
+                    if (w > 0) { r += w * 30; b -= w * 20; }
+                    else { r += w * 20; b -= w * 30; }
+
+                    data[i]   = r < 0 ? 0 : r > 255 ? 255 : r;
+                    data[i+1] = g < 0 ? 0 : g > 255 ? 255 : g;
+                    data[i+2] = b < 0 ? 0 : b > 255 ? 255 : b;
                 }
                 ectx.putImageData(imageData, 0, 0);
             }
