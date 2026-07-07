@@ -97,6 +97,7 @@ function spp_is_ladder_admin() {
    with exceptions for member-facing pages.
    ========================================================= */
 add_action('template_redirect', function() {
+    if (defined('DOING_AJAX') && DOING_AJAX) return;
     if (!is_page()) return;
     if (spp_is_admin_or_editor()) return;
 
