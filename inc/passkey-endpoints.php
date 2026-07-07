@@ -165,11 +165,9 @@ add_action( 'wp_ajax_nopriv_spp_passkey_verify_auth', function() {
     wp_set_auth_cookie( $resolved_user_id, $remember );
     do_action( 'wp_login', $user->user_login, $user );
 
-    // Return redirect URL — same logic as WP login
-    $redirect_to = apply_filters( 'login_redirect', admin_url(), '', $user );
-    if ( ! current_user_can( 'manage_options' ) ) {
-        $redirect_to = home_url();
-    }
+    // Redirect to home page — matches UM login behavior for this site.
+    // Admins can access wp-admin directly if needed.
+    $redirect_to = home_url();
 
     wp_send_json_success( [
         'message'     => 'Authenticated successfully.',
