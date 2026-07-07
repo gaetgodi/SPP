@@ -327,9 +327,14 @@ function spp_passkey_profile_script(): void {
                 .then(function(res) {
                     if (!res.success) throw new Error(res.data.message || 'Failed to get options.');
                     var opts = decodeCreationOptions(res.data);
-
+console.log('Raw options from server:', JSON.stringify(res.data));
                     // Step 2: prompt device for passkey
-                    return navigator.credentials.create({ publicKey: opts });
+    console.log('Creating passkey with options:', JSON.stringify(opts, (key, val) => {
+    if (val instanceof ArrayBuffer) return '[ArrayBuffer:' + val.byteLength + 'bytes]';
+    if (val instanceof Uint8Array) return '[Uint8Array:' + val.length + 'bytes]';
+    return val;
+}));
+return navigator.credentials.create({ publicKey: opts });
                 })
                 .then(function(cred) {
                     // Step 3: prompt for device name
