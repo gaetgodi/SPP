@@ -373,9 +373,8 @@ function spp_passkey_verify_authentication( array $response, int $user_id = 0 ):
         }
 
         // Find the credential in our DB by credential ID
-        $credential_id_b64 = spp_passkey_base64url_encode(
-            spp_passkey_base64url_decode( $public_key_credential->id )
-        );
+        // PublicKeyCredential exposes rawId (binary) not id (base64url string)
+        $credential_id_b64 = spp_passkey_base64url_encode( $public_key_credential->rawId );
 
         $row = $wpdb->get_row( $wpdb->prepare(
             "SELECT * FROM " . SPP_PASSKEY_TABLE . " WHERE credential_id = %s",
