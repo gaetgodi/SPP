@@ -330,8 +330,8 @@ function spp_passkey_profile_script(): void {
 
                     // Step 2: prompt device for passkey
     
-));
-return navigator.credentials.create({ publicKey: opts });
+// Step 2: prompt device for passkey
+                    return navigator.credentials.create({ publicKey: opts });
                 })
                 .then(function(cred) {
                     // Step 3: prompt for device name
