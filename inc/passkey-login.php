@@ -152,7 +152,8 @@ function spp_passkey_login_button(): void {
         var usernameInput = document.getElementById('user_login')
                          || document.getElementById('um-login-id')
                          || document.querySelector('[name="username"]')
-                         || document.querySelector('[name="log"]');
+                         || document.querySelector('[name="log"]')
+                         || document.querySelector('[id^="username-"]');
 
         if (usernameInput) {
             var checkTimeout = null;
@@ -234,7 +235,8 @@ function spp_passkey_login_button(): void {
             var loginInput = document.getElementById('user_login')          // WP login
                           || document.getElementById('um-login-id')         // UM login
                           || document.querySelector('[name="username"]')     // generic
-                          || document.querySelector('[name="log"]');         // WP legacy
+                          || document.querySelector('[name="log"]')          // WP legacy
+                          || document.querySelector('[id^="username-"]');    // UM dynamic ID
             return loginInput ? loginInput.value.trim() : '';
         }
 
