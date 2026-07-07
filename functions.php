@@ -51,6 +51,7 @@ require_once get_stylesheet_directory() . '/inc/spp-switch-players.php';
 require_once get_stylesheet_directory() . '/inc/passkey-server.php';
 require_once get_stylesheet_directory() . '/inc/passkey-endpoints.php';
 require_once get_stylesheet_directory() . '/inc/passkey-profile.php';
+require_once get_stylesheet_directory() . '/inc/passkey-login.php';
 
 add_filter('template_include', function($template) {
     if (is_singular('tribe_events')) {
