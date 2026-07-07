@@ -43,6 +43,7 @@ add_action( 'um_access_check_global_settings', function() {
     $passkey_actions = [
         'spp_passkey_auth_options',
         'spp_passkey_verify_auth',
+        'spp_passkey_has_passkey',
     ];
     if ( in_array( $action, $passkey_actions, true ) ) {
         $access_obj = UM()->access();
@@ -108,6 +109,37 @@ add_action( 'wp_ajax_nopriv_spp_passkey_verify_auth', function() {
     if ( ! check_ajax_referer( SPP_PASSKEY_NONCE_AUTH, 'nonce', false ) ) {
         wp_send_json_error( [ 'message' => 'Invalid nonce.' ], 403 );
     }
+/**
+ * Check if a username has any passkeys registered.
+ * Lightweight endpoint — returns bool only, no challenge issued.
+ * Used by the login form to decide whether to show the passkey button.
+ *
+ * POST params:
+ *   nonce    — spp_passkey_auth nonce
+ *   username — WP username or email
+ */
+add_action( 'wp_ajax_nopriv_spp_passkey_has_passkey', function() {
+    if ( ! check_ajax_referer( SPP_PASSKEY_NONCE_AUTH, 'nonce', false ) ) {
+        wp_send_json_error( [ 'message' => 'Invalid nonce.' ], 403 );
+    }
+
+    $username = sanitize_text_field( $_POST['username'] ?? '' );
+    if ( ! $username ) {
+        wp_send_json_success( [ 'has_passkey' => false ] );
+    }
+
+    $user = get_user_by( 'login', $username )
+         ?: get_user_by( 'email', $username );
+
+    if ( ! $user ) {
+        // Don't reveal whether username exists
+        wp_send_json_success( [ 'has_passkey' => false ] );
+    }
+
+    wp_send_json_success( [
+        'has_passkey' => spp_passkey_user_has_passkey( $user->ID ),
+    ] );
+} );
 
     $response_json = stripslashes( $_POST['response'] ?? '' );
     if ( ! $response_json ) {

@@ -145,20 +145,48 @@ function spp_passkey_login_button(): void {
             return;
         }
 
-        // Check if platform authenticator is available (Face ID, Touch ID, Windows Hello)
-        if (PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable) {
-            PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()
-                .then(function(available) {
-                    btn.disabled = !available;
-                    if (!available) {
-                        statusEl.textContent = 'No passkey authenticator found on this device.';
-                    }
-                })
-                .catch(function() {
-                    btn.disabled = false; // fail open — let them try
-                });
-        } else {
-            btn.disabled = false;
+        // Hide button initially — only show when username has a registered passkey
+        btn.style.display = 'none';
+
+        // Watch username field for changes
+        var usernameInput = document.getElementById('user_login')
+                         || document.getElementById('um-login-id')
+                         || document.querySelector('[name="username"]')
+                         || document.querySelector('[name="log"]');
+
+        if (usernameInput) {
+            var checkTimeout = null;
+            usernameInput.addEventListener('input', function() {
+                clearTimeout(checkTimeout);
+                var username = usernameInput.value.trim();
+                if (!username) {
+                    btn.style.display = 'none';
+                    setStatus('', '');
+                    return;
+                }
+                // Debounce — wait 600ms after typing stops
+                checkTimeout = setTimeout(function() {
+                    var data = new FormData();
+                    data.append('action', 'spp_passkey_has_passkey');
+                    data.append('nonce', nonce);
+                    data.append('username', username);
+                    fetch(ajaxUrl, { method:'POST', body:data, credentials:'same-origin' })
+                        .then(function(r) { return r.json(); })
+                        .then(function(res) {
+                            if (res.success && res.data.has_passkey) {
+                                btn.style.display = 'inline-flex';
+                                btn.disabled = false;
+                                setStatus('', '');
+                            } else {
+                                btn.style.display = 'none';
+                                setStatus('', '');
+                            }
+                        })
+                        .catch(function() {
+                            btn.style.display = 'none';
+                        });
+                }, 600);
+            });
         }
 
         // ── Utilities ─────────────────────────────────────────────────────────
