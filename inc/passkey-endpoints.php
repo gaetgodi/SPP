@@ -31,7 +31,23 @@ define( 'SPP_PASSKEY_NONCE_AUTH', 'spp_passkey_auth' );
 define( 'SPP_PASSKEY_NONCE_REG',  'spp_passkey_reg'  );
 define( 'SPP_PASSKEY_NONCE_MGT',  'spp_passkey_mgt'  );
 // ─────────────────────────────────────────────────────────────────────────────
-
+// ── Bypass UM access restriction for passkey AJAX endpoints ──────────────────
+// UM's template_redirect() runs at priority 1000 and redirects all
+// unauthenticated admin-ajax.php requests to the login page because
+// is_admin() returns false in the AJAX context. We remove UM's hook
+// for our specific nopriv passkey actions only.
+add_action( 'wp', function() {
+    if ( ! defined( 'DOING_AJAX' ) || ! DOING_AJAX ) return;
+    $action = $_POST['action'] ?? $_GET['action'] ?? '';
+    $passkey_actions = [
+        'spp_passkey_auth_options',
+        'spp_passkey_verify_auth',
+    ];
+    if ( in_array( $action, $passkey_actions, true ) ) {
+        remove_action( 'template_redirect', array( UM()->access(), 'template_redirect' ), 1000 );
+    }
+}, 1 );
+// ─────────────────────────────────────────────────────────────────────────────
 // ============================================================================
 // UNAUTHENTICATED ENDPOINTS — login flow
 // ============================================================================
