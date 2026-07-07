@@ -122,6 +122,9 @@ add_filter( 'um_user_permissions_filter', function( $permissions, $user_id ) {
 }, 10, 2 );
 
 add_action( 'admin_init', function() {
+    // Skip during AJAX requests — admin_init fires for admin-ajax.php too
+    // since WP_ADMIN is defined there, but we must not redirect AJAX calls.
+    if ( defined( 'DOING_AJAX' ) && DOING_AJAX ) return;
     if ( ! current_user_can( 'publish_posts' ) && ! current_user_can( 'manage_options' ) ) {
         wp_redirect( home_url() );
         exit;
