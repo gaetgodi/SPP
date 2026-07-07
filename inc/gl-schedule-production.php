@@ -1150,7 +1150,7 @@ if (isset($Event) and $Event <> 0) {
     $wpdb->query("RENAME TABLE tmp TO $Schedules");
     $wpdb->query("ALTER TABLE $Schedules ADD PRIMARY KEY(user_id)");
     $wpdb->query("ALTER TABLE $Schedules DROP Score");
-    $wpdb->query("ALTER TABLE $Schedules ADD Score int GENERATED ALWAYS AS (Game1+Game2+Game3+Game4+Game5)");
+    $wpdb->query("ALTER TABLE $Schedules ADD Score int GENERATED ALWAYS AS (COALESCE(Game1,0)+COALESCE(Game2,0)+COALESCE(Game3,0)+COALESCE(Game4,0)+COALESCE(Game5,0))");
     $wpdb->query("ALTER TABLE $Schedules ADD RankPrime varchar(3)");
     $wpdb->query("UPDATE $Schedules SET RankPrime = Rank");
     for ($x = 1; $x <= 5; $x++) {
