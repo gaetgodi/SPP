@@ -115,8 +115,8 @@ function spp_passkey_login_button(): void {
     </style>
 
     <div class="spp-pk-login-wrap" id="spp-pk-login-wrap">
-        <div class="spp-pk-login-divider">or</div>
-        <button type="button" class="spp-pk-login-btn" id="spp-pk-login-btn" disabled>
+        <div class="spp-pk-login-divider" id="spp-pk-login-divider" style="display:none;">or</div>
+        <button type="button" class="spp-pk-login-btn" id="spp-pk-login-btn" disabled style="display:none;">
             <span class="spp-pk-login-btn-icon">&#128273;</span>
             Sign in with Passkey
         </button>
@@ -176,6 +176,8 @@ function spp_passkey_login_button(): void {
                             if (res.success && res.data.has_passkey) {
                                 btn.style.display = 'inline-flex';
                                 btn.disabled = false;
+                                var divider = document.getElementById('spp-pk-login-divider');
+                                if (divider) divider.style.display = '';
                                 setStatus('', '');
                             } else {
                                 btn.style.display = 'none';
