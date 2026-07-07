@@ -45,18 +45,15 @@ $spp_passkey_ajax_actions = [
     'spp_passkey_has_passkey',
 ];
 
-// Primary bypass — remove UM template_redirect for our AJAX actions
-add_action( 'plugins_loaded', function() use ( $spp_passkey_ajax_actions ) {
+// Primary bypass — remove UM template_redirect for passkey AJAX actions
+// Must run after UM registers its hooks (plugins_loaded priority 1)
+// but before template_redirect fires.
+add_action( 'init', function() use ( $spp_passkey_ajax_actions ) {
     if ( ! defined( 'DOING_AJAX' ) || ! DOING_AJAX ) return;
     $action = $_POST['action'] ?? $_GET['action'] ?? '';
     if ( ! in_array( $action, $spp_passkey_ajax_actions, true ) ) return;
-    // Hook into um_access (fires after UM initializes its access object)
-    // so UM()->access() is available when we call remove_action.
-    add_action( 'um_access', function() {
-        remove_action( 'template_redirect', [ UM()->access(), 'template_redirect' ], 1000 );
-    }, 1 );
-}, 99 );
-
+    remove_action( 'template_redirect', [ UM()->access(), 'template_redirect' ], 1000 );
+}, 10 );
 // Secondary bypass — Reflection fallback via um_access_check_global_settings
 add_action( 'um_access_check_global_settings', function() use ( $spp_passkey_ajax_actions ) {
     if ( ! defined( 'DOING_AJAX' ) || ! DOING_AJAX ) return;
