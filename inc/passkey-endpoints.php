@@ -45,15 +45,18 @@ $spp_passkey_ajax_actions = [
     'spp_passkey_has_passkey',
 ];
 
-// Primary bypass — remove UM template_redirect for passkey AJAX actions
-// Must run after UM registers its hooks (plugins_loaded priority 1)
-// but before template_redirect fires.
-add_action( 'init', function() use ( $spp_passkey_ajax_actions ) {
+// Primary bypass — remove UM template_redirect for our AJAX actions
+add_action( 'plugins_loaded', function() use ( $spp_passkey_ajax_actions ) {
     if ( ! defined( 'DOING_AJAX' ) || ! DOING_AJAX ) return;
     $action = $_POST['action'] ?? $_GET['action'] ?? '';
     if ( ! in_array( $action, $spp_passkey_ajax_actions, true ) ) return;
-    remove_action( 'template_redirect', [ UM()->access(), 'template_redirect' ], 1000 );
-}, 10 );
+    // Hook into um_access (fires after UM initializes its access object)
+    // so UM()->access() is available when we call remove_action.
+    add_action( 'um_access', function() {
+        remove_action( 'template_redirect', [ UM()->access(), 'template_redirect' ], 1000 );
+    }, 1 );
+}, 99 );
+
 // Secondary bypass — Reflection fallback via um_access_check_global_settings
 add_action( 'um_access_check_global_settings', function() use ( $spp_passkey_ajax_actions ) {
     if ( ! defined( 'DOING_AJAX' ) || ! DOING_AJAX ) return;
@@ -171,6 +174,38 @@ add_action( 'wp_ajax_nopriv_spp_passkey_verify_auth', function() {
     wp_send_json_success( [
         'message'     => 'Authenticated successfully.',
         'redirect_to' => $redirect_to,
+    ] );
+} );
+
+/**
+ * Check if a username has any passkeys registered.
+ * Lightweight endpoint — returns bool only, no challenge issued.
+ * Used by the login form to decide whether to show the passkey button.
+ *
+ * POST params:
+ *   nonce    — spp_passkey_auth nonce
+ *   username — WP username or email
+ */
+add_action( 'wp_ajax_nopriv_spp_passkey_has_passkey', function() {
+    if ( ! check_ajax_referer( SPP_PASSKEY_NONCE_AUTH, 'nonce', false ) ) {
+        wp_send_json_error( [ 'message' => 'Invalid nonce.' ], 403 );
+    }
+
+    $username = sanitize_text_field( $_POST['username'] ?? '' );
+    if ( ! $username ) {
+        wp_send_json_success( [ 'has_passkey' => false ] );
+    }
+
+    $user = get_user_by( 'login', $username )
+         ?: get_user_by( 'email', $username );
+
+    if ( ! $user ) {
+        // Don't reveal whether username exists
+        wp_send_json_success( [ 'has_passkey' => false ] );
+    }
+
+    wp_send_json_success( [
+        'has_passkey' => spp_passkey_user_has_passkey( $user->ID ),
     ] );
 } );
 
