@@ -33,18 +33,10 @@ define( 'SPP_PASSKEY_NONCE_MGT',  'spp_passkey_mgt'  );
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── Bypass UM access restriction for passkey AJAX endpoints ──────────────────
-// UM's template_redirect() runs at priority 1000 and redirects all
-// unauthenticated admin-ajax.php requests to the login page because
-// is_admin() returns false in the AJAX context. We remove UM's hook
-// for our specific nopriv passkey actions only.
-add_action( 'wp', function() {
-    if ( ! defined( 'DOING_AJAX' ) || ! DOING_AJAX ) return;
-    $action = $_POST['action'] ?? $_GET['action'] ?? '';
-    $passkey// ── Bypass UM access restriction for passkey AJAX endpoints ──────────────────
 // UM's um_access_check_global_settings redirects unauthenticated requests
 // when accessible=2 because isset($post->ID) is false for AJAX requests,
 // preventing exclude_uris from working. We hook into the action that fires
-// just before the global check and set allow_access directly.
+// just before the global check and set allow_access directly via Reflection.
 add_action( 'um_access_check_global_settings', function() {
     if ( ! defined( 'DOING_AJAX' ) || ! DOING_AJAX ) return;
     $action = $_POST['action'] ?? $_GET['action'] ?? '';
@@ -53,22 +45,14 @@ add_action( 'um_access_check_global_settings', function() {
         'spp_passkey_verify_auth',
     ];
     if ( in_array( $action, $passkey_actions, true ) ) {
-        // Access the allow_access property via reflection and set it to true
         $access_obj = UM()->access();
         $ref = new ReflectionProperty( get_class( $access_obj ), 'allow_access' );
         $ref->setAccessible( true );
         $ref->setValue( $access_obj, true );
     }
 }, 1 );
-// ─────────────────────────────────────────────────────────────────────────────_actions = [
-        'spp_passkey_auth_options',
-        'spp_passkey_verify_auth',
-    ];
-    if ( in_array( $action, $passkey_actions, true ) ) {
-        remove_action( 'template_redirect', array( UM()->access(), 'template_redirect' ), 1000 );
-    }
-}, 1 );
 // ─────────────────────────────────────────────────────────────────────────────
+
 // ============================================================================
 // UNAUTHENTICATED ENDPOINTS — login flow
 // ============================================================================
