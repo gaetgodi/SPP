@@ -33,24 +33,39 @@ define( 'SPP_PASSKEY_NONCE_MGT',  'spp_passkey_mgt'  );
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── Bypass UM access restriction for passkey AJAX endpoints ──────────────────
-// UM's um_access_check_global_settings redirects unauthenticated requests
-// when accessible=2 because isset($post->ID) is false for AJAX requests,
-// preventing exclude_uris from working. We hook into the action that fires
-// just before the global check and set allow_access directly via Reflection.
-add_action( 'um_access_check_global_settings', function() {
+// UM's template_redirect() redirects unauthenticated AJAX requests because
+// is_front_page() returns true in AJAX context, triggering a login redirect
+// before our handlers run. We remove UM's template_redirect hook entirely
+// for our specific AJAX actions via plugins_loaded (after UM initializes).
+// The um_access_check_global_settings hook is kept as a secondary bypass.
+
+$spp_passkey_ajax_actions = [
+    'spp_passkey_auth_options',
+    'spp_passkey_verify_auth',
+    'spp_passkey_has_passkey',
+];
+
+// Primary bypass — remove UM template_redirect for our AJAX actions
+add_action( 'plugins_loaded', function() use ( $spp_passkey_ajax_actions ) {
     if ( ! defined( 'DOING_AJAX' ) || ! DOING_AJAX ) return;
     $action = $_POST['action'] ?? $_GET['action'] ?? '';
-    $passkey_actions = [
-        'spp_passkey_auth_options',
-        'spp_passkey_verify_auth',
-        'spp_passkey_has_passkey',
-    ];
-    if ( in_array( $action, $passkey_actions, true ) ) {
-        $access_obj = UM()->access();
-        $ref = new ReflectionProperty( get_class( $access_obj ), 'allow_access' );
-        $ref->setAccessible( true );
-        $ref->setValue( $access_obj, true );
-    }
+    if ( ! in_array( $action, $spp_passkey_ajax_actions, true ) ) return;
+    // Hook into um_access (fires after UM initializes its access object)
+    // so UM()->access() is available when we call remove_action.
+    add_action( 'um_access', function() {
+        remove_action( 'template_redirect', [ UM()->access(), 'template_redirect' ], 1000 );
+    }, 1 );
+}, 99 );
+
+// Secondary bypass — Reflection fallback via um_access_check_global_settings
+add_action( 'um_access_check_global_settings', function() use ( $spp_passkey_ajax_actions ) {
+    if ( ! defined( 'DOING_AJAX' ) || ! DOING_AJAX ) return;
+    $action = $_POST['action'] ?? $_GET['action'] ?? '';
+    if ( ! in_array( $action, $spp_passkey_ajax_actions, true ) ) return;
+    $access_obj = UM()->access();
+    $ref = new ReflectionProperty( get_class( $access_obj ), 'allow_access' );
+    $ref->setAccessible( true );
+    $ref->setValue( $access_obj, true );
 }, 1 );
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -109,37 +124,6 @@ add_action( 'wp_ajax_nopriv_spp_passkey_verify_auth', function() {
     if ( ! check_ajax_referer( SPP_PASSKEY_NONCE_AUTH, 'nonce', false ) ) {
         wp_send_json_error( [ 'message' => 'Invalid nonce.' ], 403 );
     }
-/**
- * Check if a username has any passkeys registered.
- * Lightweight endpoint — returns bool only, no challenge issued.
- * Used by the login form to decide whether to show the passkey button.
- *
- * POST params:
- *   nonce    — spp_passkey_auth nonce
- *   username — WP username or email
- */
-add_action( 'wp_ajax_nopriv_spp_passkey_has_passkey', function() {
-    if ( ! check_ajax_referer( SPP_PASSKEY_NONCE_AUTH, 'nonce', false ) ) {
-        wp_send_json_error( [ 'message' => 'Invalid nonce.' ], 403 );
-    }
-
-    $username = sanitize_text_field( $_POST['username'] ?? '' );
-    if ( ! $username ) {
-        wp_send_json_success( [ 'has_passkey' => false ] );
-    }
-
-    $user = get_user_by( 'login', $username )
-         ?: get_user_by( 'email', $username );
-
-    if ( ! $user ) {
-        // Don't reveal whether username exists
-        wp_send_json_success( [ 'has_passkey' => false ] );
-    }
-
-    wp_send_json_success( [
-        'has_passkey' => spp_passkey_user_has_passkey( $user->ID ),
-    ] );
-} );
 
     $response_json = stripslashes( $_POST['response'] ?? '' );
     if ( ! $response_json ) {
