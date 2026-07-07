@@ -36,7 +36,7 @@ define( 'SPP_PASSKEY_NONCE_MGT',  'spp_passkey_mgt'  );
 // unauthenticated admin-ajax.php requests to the login page because
 // is_admin() returns false in the AJAX context. We remove UM's hook
 // for our specific nopriv passkey actions only.
-add_action( 'wp', function() {
+add_action( 'init', function() {
     if ( ! defined( 'DOING_AJAX' ) || ! DOING_AJAX ) return;
     $action = $_POST['action'] ?? $_GET['action'] ?? '';
     $passkey_actions = [
