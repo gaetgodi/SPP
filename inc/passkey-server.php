@@ -93,7 +93,8 @@ add_action( 'after_setup_theme', 'spp_passkey_create_table' );
 function spp_passkey_serializer(): SerializerInterface {
     static $serializer = null;
     if ( $serializer === null ) {
-        $serializer = WebauthnSerializerFactory::create();
+        $factory    = new WebauthnSerializerFactory();
+        $serializer = $factory->create();
     }
     return $serializer;
 }
