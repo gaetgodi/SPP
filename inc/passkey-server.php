@@ -35,6 +35,7 @@ use Webauthn\PublicKeyCredentialParameters;
 use Webauthn\PublicKeyCredentialDescriptor;
 use Webauthn\CredentialRecord;
 use Webauthn\Denormalizer\WebauthnSerializerFactory;
+use Webauthn\AttestationStatement\AttestationStatementSupportManager;
 use Symfony\Component\Serializer\SerializerInterface;
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -93,8 +94,9 @@ add_action( 'after_setup_theme', 'spp_passkey_create_table' );
 function spp_passkey_serializer(): SerializerInterface {
     static $serializer = null;
     if ( $serializer === null ) {
-        $factory    = new WebauthnSerializerFactory();
-        $serializer = $factory->create();
+        $attestation_manager = \Webauthn\AttestationStatement\AttestationStatementSupportManager::create();
+        $factory             = new WebauthnSerializerFactory( $attestation_manager );
+        $serializer          = $factory->create();
     }
     return $serializer;
 }
