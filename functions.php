@@ -183,3 +183,22 @@ add_action( 'template_redirect', function() {
         exit;
     }
 });
+// ── Add Passkeys tab to UM Account page ───────────────────────────────────────
+add_filter( 'um_account_page_default_tabs_hook', function( $tabs ) {
+    $tabs['passkeys'] = array(
+        'icon'       => 'um-faicon-key',
+        'title'      => 'Passkeys',
+        'custom'     => true,
+        'show_button'=> false,
+    );
+    return $tabs;
+}, 100 );
+
+add_filter( 'um_account_tab__passkeys', function( $info ) {
+    $info[40] = array(
+        'title'       => 'Passkeys',
+        'description' => do_shortcode( '[spp_passkey_profile]' ),
+    );
+    return $info;
+}, 100 );
+// ─────────────────────────────────────────────────────────────────────────────
