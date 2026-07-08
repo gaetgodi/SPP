@@ -194,11 +194,7 @@ add_filter( 'um_account_page_default_tabs_hook', function( $tabs ) {
     return $tabs;
 }, 100 );
 
-add_filter( 'um_account_tab__passkeys', function( $info ) {
-    $info[40] = array(
-        'title'       => 'Passkeys',
-        'description' => do_shortcode( '[spp_passkey_profile]' ),
-    );
-    return $info;
-}, 100 );
+add_filter( 'um_account_content_hook_passkeys', function( $output, $shortcode_args ) {
+    return do_shortcode( '[spp_passkey_profile]' );
+}, 10, 2 );
 // ─────────────────────────────────────────────────────────────────────────────
