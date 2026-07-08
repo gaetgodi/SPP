@@ -246,7 +246,7 @@ function spp_passkey_login_button(): void {
                     if (err === 'no_passkey') return;
                     btn.disabled = false;
                     if (err && err.name === 'NotAllowedError') {
-                        setStatus('Passkey prompt was cancelled or timed out.', 'error');
+                        setStatus('No passkey found on this device. Use your password to log in, then add a passkey for this device from your Account page.', 'error');
                     } else if (err && err.name === 'SecurityError') {
                         setStatus('Security error \u2014 please use HTTPS.', 'error');
                     } else {
