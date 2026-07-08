@@ -13,8 +13,13 @@
  * embedding in a Divi page or UM account tab, plus hooks into the
  * standard WP profile screen for admin use.
  *
- * Version: 1.0.0
- * Date:    2026-07-07
+ * Version: 1.1.0
+ * Date:    2026-07-08
+ *
+ * Changes from 1.0.0:
+ *   - Added type="button" to all buttons to prevent UM form submission
+ *     when passkey profile is rendered inside a UM account tab.
+ *   - Added e.preventDefault() to list click handlers.
  */
 
 defined( 'ABSPATH' ) || exit;
@@ -133,13 +138,13 @@ function spp_passkey_profile_render( array $credentials ): void {
                             </div>
                             <div class="spp-pk-rename-form" id="spp-pk-rename-<?php echo esc_attr( $cred->id ); ?>">
                                 <input type="text" value="<?php echo esc_attr( $cred->device_name ?: '' ); ?>" maxlength="100" placeholder="Device name">
-                                <button class="spp-pk-rename-save" data-id="<?php echo esc_attr( $cred->id ); ?>">Save</button>
-                                <button class="spp-pk-rename-cancel" data-id="<?php echo esc_attr( $cred->id ); ?>">Cancel</button>
+                                <button type="button" class="spp-pk-rename-save" data-id="<?php echo esc_attr( $cred->id ); ?>">Save</button>
+                                <button type="button" class="spp-pk-rename-cancel" data-id="<?php echo esc_attr( $cred->id ); ?>">Cancel</button>
                             </div>
                         </div>
                         <div class="spp-pk-actions">
-                            <button class="spp-pk-btn spp-pk-btn-rename" data-action="rename" data-id="<?php echo esc_attr( $cred->id ); ?>">Rename</button>
-                            <button class="spp-pk-btn spp-pk-btn-delete" data-action="delete" data-id="<?php echo esc_attr( $cred->id ); ?>">Delete</button>
+                            <button type="button" class="spp-pk-btn spp-pk-btn-rename" data-action="rename" data-id="<?php echo esc_attr( $cred->id ); ?>">Rename</button>
+                            <button type="button" class="spp-pk-btn spp-pk-btn-delete" data-action="delete" data-id="<?php echo esc_attr( $cred->id ); ?>">Delete</button>
                         </div>
                     </li>
                 <?php endforeach; ?>
@@ -294,13 +299,13 @@ function spp_passkey_profile_script(): void {
                         '<div class="spp-pk-meta">Added ' + escHtml(cred.created_at) + ' &middot; Last used: ' + escHtml(cred.last_used) + '</div>' +
                         '<div class="spp-pk-rename-form" id="spp-pk-rename-' + cred.id + '" style="display:none;">' +
                             '<input type="text" value="' + escAttr(cred.device_name) + '" maxlength="100" placeholder="Device name">' +
-                            '<button class="spp-pk-rename-save" data-id="' + cred.id + '">Save</button>' +
-                            '<button class="spp-pk-rename-cancel" data-id="' + cred.id + '">Cancel</button>' +
+                            '<button type="button" class="spp-pk-rename-save" data-id="' + cred.id + '">Save</button>' +
+                            '<button type="button" class="spp-pk-rename-cancel" data-id="' + cred.id + '">Cancel</button>' +
                         '</div>' +
                     '</div>' +
                     '<div class="spp-pk-actions">' +
-                        '<button class="spp-pk-btn spp-pk-btn-rename" data-action="rename" data-id="' + cred.id + '">Rename</button>' +
-                        '<button class="spp-pk-btn spp-pk-btn-delete" data-action="delete" data-id="' + cred.id + '">Delete</button>' +
+                        '<button type="button" class="spp-pk-btn spp-pk-btn-rename" data-action="rename" data-id="' + cred.id + '">Rename</button>' +
+                        '<button type="button" class="spp-pk-btn spp-pk-btn-delete" data-action="delete" data-id="' + cred.id + '">Delete</button>' +
                     '</div>';
                 list.appendChild(li);
             });
@@ -329,8 +334,6 @@ function spp_passkey_profile_script(): void {
                     var opts = decodeCreationOptions(res.data);
 
                     // Step 2: prompt device for passkey
-    
-// Step 2: prompt device for passkey
                     return navigator.credentials.create({ publicKey: opts });
                 })
                 .then(function(cred) {
@@ -375,6 +378,7 @@ function spp_passkey_profile_script(): void {
         list.addEventListener('click', function(e) {
             var btn = e.target.closest('[data-action]');
             if (!btn) return;
+            e.preventDefault(); // prevent UM form submission when inside account tab
 
             var id     = parseInt(btn.dataset.id, 10);
             var action = btn.dataset.action;
@@ -409,6 +413,7 @@ function spp_passkey_profile_script(): void {
 
         // ── Rename save/cancel (event delegation) ─────────────────────────────
         list.addEventListener('click', function(e) {
+            e.preventDefault(); // prevent UM form submission when inside account tab
             var saveBtn   = e.target.closest('.spp-pk-rename-save');
             var cancelBtn = e.target.closest('.spp-pk-rename-cancel');
 
