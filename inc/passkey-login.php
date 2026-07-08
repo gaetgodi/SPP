@@ -2,8 +2,15 @@
 /**
  * SPP Passkey Login
  *
- * Version: 1.1.0
- * Date:    2026-07-07
+ * Version: 1.2.0
+ * Date:    2026-07-08
+ *
+ * Changes from 1.1.0:
+ *   - Added hint text below button: "Only works on devices where you've
+ *     set up a passkey." Shown alongside the button to set expectations
+ *     for users who have passkeys on other devices.
+ *   - NotAllowedError message reverted to "cancelled or timed out" —
+ *     the device-specific hint handles the UX before the error occurs.
  *
  * Changes from 1.0.0:
  *   - Button hidden by default, only shown after username entered and
@@ -51,6 +58,7 @@ function spp_passkey_login_button(): void {
         .spp-pk-login-btn:hover { background: #3766AB; }
         .spp-pk-login-btn:disabled { background: #aaa; cursor: not-allowed; }
         .spp-pk-login-btn-icon { font-size: 20px; line-height: 1; }
+        .spp-pk-login-hint { font-size: 11px; color: #aaa; margin-top: 4px; display: none; }
         .spp-pk-login-status { margin-top: 8px; font-size: 13px; min-height: 18px; color: #555; }
         .spp-pk-login-status.error { color: #c0392b; }
         .spp-pk-login-status.success { color: #27ae60; }
@@ -63,6 +71,9 @@ function spp_passkey_login_button(): void {
             <span class="spp-pk-login-btn-icon">&#128273;</span>
             Sign in with Passkey
         </button>
+        <div class="spp-pk-login-hint" id="spp-pk-login-hint">
+            Only works on devices where you've set up a passkey.
+        </div>
         <div class="spp-pk-login-status" id="spp-pk-login-status"></div>
         <div class="spp-pk-login-not-supported" id="spp-pk-login-not-supported">
             Passkeys not supported in this browser.
@@ -77,6 +88,7 @@ function spp_passkey_login_button(): void {
 
         var btn      = document.getElementById('spp-pk-login-btn');
         var divider  = document.getElementById('spp-pk-login-divider');
+        var hint     = document.getElementById('spp-pk-login-hint');
         var statusEl = document.getElementById('spp-pk-login-status');
         var noSupp   = document.getElementById('spp-pk-login-not-supported');
 
@@ -95,11 +107,13 @@ function spp_passkey_login_button(): void {
             btn.style.display = 'inline-flex';
             btn.disabled = false;
             if (divider) divider.style.display = '';
+            if (hint) hint.style.display = 'block';
         }
         function hideBtn() {
             btn.style.display = 'none';
             btn.disabled = true;
             if (divider) divider.style.display = 'none';
+            if (hint) hint.style.display = 'none';
             setStatus('', '');
         }
         function base64urlToBuffer(b64) {
@@ -246,7 +260,7 @@ function spp_passkey_login_button(): void {
                     if (err === 'no_passkey') return;
                     btn.disabled = false;
                     if (err && err.name === 'NotAllowedError') {
-                        setStatus('No passkey found on this device. Use your password to log in, then add a passkey for this device from your Account page.', 'error');
+                        setStatus('Passkey prompt was cancelled or timed out.', 'error');
                     } else if (err && err.name === 'SecurityError') {
                         setStatus('Security error \u2014 please use HTTPS.', 'error');
                     } else {
