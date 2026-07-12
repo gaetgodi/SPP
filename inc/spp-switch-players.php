@@ -15,8 +15,13 @@
  * personalized group table + pairings, with a "Your group has been
  * updated" banner instead of "You are playing tonight!".
  *
- * Version: 1.0.0
- * Date:    2026-07-06
+ * Version: 1.1.0
+ * Date:    2026-07-12
+ *
+ * Changes from 1.0.0:
+ *   - Notifications only sent when spp_schedule_published = 1.
+ *     Pre-publish switches are silent — swap happens but no emails
+ *     go to players or convenor.
  */
 
 defined( 'ABSPATH' ) || exit;
@@ -303,6 +308,15 @@ function spp_switch_players_shortcode() {
                     $name2 = $sched2['first_name'] . ' ' . $sched2['last_name'];
                     echo '<div class="sp-msg-ok">&#10003; Players swapped successfully: '
                         . esc_html( $name1 ) . ' &#8596; ' . esc_html( $name2 ) . '</div>';
+
+                    // ── Only notify if schedule has been published ────────────
+                    $schedule_published = (int) get_option( 'spp_schedule_published', 0 );
+                    if ( ! $schedule_published ) {
+                        echo '<p style="color:#555;font-size:14px;">Players not notified — schedule has not been published yet.</p>';
+                        echo '<p><a href="' . esc_url( $_SERVER['REQUEST_URI'] ) . '">&#8592; Make another switch</a></p>';
+                        echo '</div>';
+                        return ob_get_clean();
+                    }
 
                     // ── Fetch updated groups ──────────────────────────────────
                     $gid1 = $sched2['group_id']; // pl1 is now in group 2
