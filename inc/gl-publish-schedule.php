@@ -67,7 +67,8 @@ function gl_publish_schedule_run() {
 
     // ── Get event date + convenor details from gl_event_occurrences ───────────────
     $occ = $wpdb->get_row( $wpdb->prepare(
-        "SELECT o.title, o.event_date, m.first_name AS convenor_first_name,
+        "SELECT o.title, o.event_date, m.user_id AS convenor_user_id,
+                m.first_name AS convenor_first_name,
                 m.last_name AS convenor_last_name, m.user_phone AS convenor_phone,
                 m.user_email AS convenor_email
          FROM {$prefix}gl_event_occurrences o
@@ -359,9 +360,9 @@ function gl_publish_schedule_run() {
     // ── Determine recipients based on email mode ──────────────────────────────────
     if ( $email_mode === 'trial' ) {
         $master_players = array( array(
-            'user_id'    => 0,
-            'first_name' => '',
-            'last_name'  => '',
+            'user_id'    => (int) $occ['convenor_user_id'],
+            'first_name' => $occ['convenor_first_name'],
+            'last_name'  => $occ['convenor_last_name'],
             'user_email' => $convenor_email,
         ) );
         $is_trial = true;
@@ -384,7 +385,7 @@ function gl_publish_schedule_run() {
         $header = $build_header();
         $footer = $build_footer();
 
-        if ( ! $is_trial && isset($user_group[$uid]) ) {
+        if ( isset($user_group[$uid]) ) {
             $gid      = $user_group[$uid];
             $players  = $groups[$gid];
             $pairings = count($players) >= 5 ? $pairings_5 : $pairings_4;
