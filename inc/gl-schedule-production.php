@@ -156,6 +156,7 @@ if (get_option('spp_schedule_published', 0) && !get_option('spp_results_posted',
         echo '<form method="post">';
         wp_nonce_field('spp_reschedule_confirm', 'spp_reschedule_nonce');
         echo '<input type="hidden" name="spp_force_reschedule" value="1">';
+echo '<input type="hidden" name="PBEvent" value="' . esc_attr($Event) . '">';
         echo '<button type="submit" onclick="return confirm(\'This will discard the current published schedule and produce a new one. Continue?\')">Yes, discard and create a new schedule</button>';
         echo '</form>';
         return;
