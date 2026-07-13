@@ -235,49 +235,77 @@ function spp_run_schedule_check() {
     // -------------------------------------------------------
     // TRAVEL TIME CONFLICT REPORT
     // -------------------------------------------------------
-    echo "<br><strong>Travel Time Conflict Report:</strong><br>";
+   echo "<br><strong>Travel Time Conflict Report:</strong><br>";
 
-    $remaining_530 = (int) $wpdb->get_var( "
-        SELECT COUNT(DISTINCT group_id) FROM $Schedules
+    $violations_530 = $wpdb->get_results("
+        SELECT group_id, first_name, last_name FROM $Schedules
         WHERE time_id = 1 AND group_id != 99
         AND travel REGEXP '^-[ ]?5:30'
-    " );
-    $remaining_750 = (int) $wpdb->get_var( "
-        SELECT COUNT(DISTINCT group_id) FROM $Schedules
+        ORDER BY group_id
+    ", ARRAY_A);
+    $remaining_530 = count(array_unique(array_column($violations_530, 'group_id')));
+
+    $violations_750 = $wpdb->get_results("
+        SELECT group_id, first_name, last_name FROM $Schedules
         WHERE time_id = 3 AND group_id != 99
         AND travel REGEXP '^-[ ]?7:50'
-    " );
-    $remaining_plus530 = (int) $wpdb->get_var( "
-        SELECT COUNT(DISTINCT group_id) FROM $Schedules
+        ORDER BY group_id
+    ", ARRAY_A);
+    $remaining_750 = count(array_unique(array_column($violations_750, 'group_id')));
+
+    $violations_plus530 = $wpdb->get_results("
+        SELECT group_id, first_name, last_name FROM $Schedules
         WHERE time_id != 1 AND group_id != 99
         AND (travel LIKE '+5:30%' OR travel REGEXP '^[+]?5:30[^0-9]')
-    " );
+        ORDER BY group_id
+    ", ARRAY_A);
+    $remaining_plus530 = count(array_unique(array_column($violations_plus530, 'group_id')));
 
-    if ( $remaining_530 === 0 ) echo "✓ No -5:30 conflicts remaining.<br>";
-    else echo "⚠ $remaining_530 group(s) still have -5:30 players at 5:30pm — manual swap needed.<br>";
+    if ($remaining_530 === 0) echo "✓ No -5:30 conflicts remaining.<br>";
+    else {
+        echo "⚠ $remaining_530 group(s) still have -5:30 players at 5:30pm — manual swap needed:<br>";
+        foreach ($violations_530 as $v) echo "&nbsp;&nbsp;&nbsp;Group {$v['group_id']}: {$v['first_name']} {$v['last_name']}<br>";
+    }
 
-    if ( $remaining_750 === 0 ) echo "✓ No -7:50 conflicts remaining.<br>";
-    else echo "⚠ $remaining_750 group(s) still have -7:50 players at 7:50pm — manual swap needed.<br>";
+    if ($remaining_750 === 0) echo "✓ No -7:50 conflicts remaining.<br>";
+    else {
+        echo "⚠ $remaining_750 group(s) still have -7:50 players at 7:50pm — manual swap needed:<br>";
+        foreach ($violations_750 as $v) echo "&nbsp;&nbsp;&nbsp;Group {$v['group_id']}: {$v['first_name']} {$v['last_name']}<br>";
+    }
 
-    $remaining_plus640 = (int) $wpdb->get_var( "
-        SELECT COUNT(DISTINCT group_id) FROM $Schedules
+    $violations_plus640 = $wpdb->get_results("
+        SELECT group_id, first_name, last_name FROM $Schedules
         WHERE time_id != 2 AND group_id != 99
         AND travel LIKE '+6:40%'
-    " );
-    $remaining_plus750 = (int) $wpdb->get_var( "
-        SELECT COUNT(DISTINCT group_id) FROM $Schedules
+        ORDER BY group_id
+    ", ARRAY_A);
+    $remaining_plus640 = count(array_unique(array_column($violations_plus640, 'group_id')));
+
+    $violations_plus750 = $wpdb->get_results("
+        SELECT group_id, first_name, last_name FROM $Schedules
         WHERE time_id != 3 AND group_id != 99
         AND travel LIKE '+7:50%'
-    " );
+        ORDER BY group_id
+    ", ARRAY_A);
+    $remaining_plus750 = count(array_unique(array_column($violations_plus750, 'group_id')));
 
-    if ( $remaining_plus530 === 0 ) echo "✓ All +5:30 players are at 5:30pm.<br>";
-    else echo "⚠ $remaining_plus530 group(s) still have +5:30 players not at 5:30pm — manual swap needed.<br>";
+    if ($remaining_plus530 === 0) echo "✓ All +5:30 players are at 5:30pm.<br>";
+    else {
+        echo "⚠ $remaining_plus530 group(s) still have +5:30 players not at 5:30pm — manual swap needed:<br>";
+        foreach ($violations_plus530 as $v) echo "&nbsp;&nbsp;&nbsp;Group {$v['group_id']}: {$v['first_name']} {$v['last_name']}<br>";
+    }
 
-    if ( $remaining_plus640 === 0 ) echo "✓ All +6:40 players are at 6:40pm.<br>";
-    else echo "⚠ $remaining_plus640 group(s) still have +6:40 players not at 6:40pm — manual swap needed.<br>";
+    if ($remaining_plus640 === 0) echo "✓ All +6:40 players are at 6:40pm.<br>";
+    else {
+        echo "⚠ $remaining_plus640 group(s) still have +6:40 players not at 6:40pm — manual swap needed:<br>";
+        foreach ($violations_plus640 as $v) echo "&nbsp;&nbsp;&nbsp;Group {$v['group_id']}: {$v['first_name']} {$v['last_name']}<br>";
+    }
 
-    if ( $remaining_plus750 === 0 ) echo "✓ All +7:50 players are at 7:50pm.<br>";
-    else echo "⚠ $remaining_plus750 group(s) still have +7:50 players not at 7:50pm — manual swap needed.<br>";
+    if ($remaining_plus750 === 0) echo "✓ All +7:50 players are at 7:50pm.<br>";
+    else {
+        echo "⚠ $remaining_plus750 group(s) still have +7:50 players not at 7:50pm — manual swap needed:<br>";
+        foreach ($violations_plus750 as $v) echo "&nbsp;&nbsp;&nbsp;Group {$v['group_id']}: {$v['first_name']} {$v['last_name']}<br>";
+    }
 
     // CARPOOL REPORT (priority-aware score check)
     $cp_score = $carpool_score();
