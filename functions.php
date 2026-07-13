@@ -44,6 +44,7 @@ require_once get_stylesheet_directory() . '/inc/score-scanner.php';
 require_once get_stylesheet_directory() . '/inc/spp-blog-reminder.php';
 require_once get_stylesheet_directory() . '/inc/spp-blog-system.php';
 require_once get_stylesheet_directory() . '/inc/gl-schedule-production.php';
+require_once get_stylesheet_directory() . '/inc/gl-publish-schedule.php';
 require_once get_stylesheet_directory() . '/inc/spp-schedule-admin.php';
 require_once get_stylesheet_directory() . '/inc/spp-score-entry.php';
 require_once get_stylesheet_directory() . '/inc/spp-score-correction.php';
