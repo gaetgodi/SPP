@@ -174,7 +174,8 @@ echo '<input type="hidden" name="PBEvent" value="' . esc_attr($Event) . '">';
         }
     }
 
-    echo '<p style="color:#c0392b;font-weight:bold;">Bypassing publish/results guard -- producing a new schedule.</p>';
+   echo '<p style="color:#c0392b;font-weight:bold;">Bypassing publish/results guard -- producing a new schedule.</p>';
+    update_option('spp_schedule_published', 0);
 }
 $schedules_prev = "SchedulesPrev$Event";
 // Need to run this to refresh travel fields
