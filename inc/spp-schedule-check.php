@@ -44,6 +44,18 @@ function spp_run_schedule_check() {
     }
 
     // -------------------------------------------------------
+    // EVENT IDENTIFICATION (confirms which event is being checked)
+    // -------------------------------------------------------
+    $occ = $wpdb->get_row( $wpdb->prepare(
+        "SELECT title, event_date FROM {$wpdb->prefix}gl_event_occurrences WHERE id = %d",
+        $event
+    ), ARRAY_A );
+
+    $event_label = $occ
+        ? esc_html( $occ['title'] ) . ' — ' . esc_html( date( 'F j, Y', strtotime( $occ['event_date'] ) ) )
+        : 'Event ' . $event . ' (title/date not found in gl_event_occurrences)';
+
+    // -------------------------------------------------------
     // TIME SLOTS
     // -------------------------------------------------------
     $active_times = $wpdb->get_results( "SELECT T_ID FROM Times WHERE Active = 1 ORDER BY T_ID" );
@@ -132,7 +144,28 @@ function spp_run_schedule_check() {
     };
 
     echo '<div class="spp-schedule-check">';
-    echo '<p><strong>Schedule Validation Report</strong> — event ' . esc_html( $event ) . '</p>';
+    echo '<p><strong>Schedule Validation Report</strong> — ' . $event_label . ' (event ID ' . esc_html( $event ) . ')</p>';
+
+    // -------------------------------------------------------
+    // PUBLISH / RESULTS RISK WARNING
+    // -------------------------------------------------------
+    if ( get_option( 'spp_schedule_published', 0 ) && ! get_option( 'spp_results_posted', 0 ) ) {
+        $scores_entered = (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM $Schedules
+             WHERE group_id != 99
+               AND (Game1 IS NOT NULL OR Game2 IS NOT NULL OR Game3 IS NOT NULL
+                    OR Game4 IS NOT NULL OR Game5 IS NOT NULL)"
+        );
+        if ( $scores_entered > 0 ) {
+            echo '<p style="color:#c0392b;font-weight:bold;">⚠ This schedule is published, results have not been posted, '
+               . 'and ' . $scores_entered . ' player(s) already have scores entered. Publish results before running '
+               . 'Schedule Production again — a new run would be blocked, but manual edits here could still conflict '
+               . 'with unpublished score data.</p>';
+        } else {
+            echo '<p style="color:#c0392b;font-weight:bold;">⚠ This schedule is published and results have not been '
+               . 'posted yet, though no scores have been entered against it.</p>';
+        }
+    }
 
     // -------------------------------------------------------
     // CARPOOL ADJACENCY REPORT
