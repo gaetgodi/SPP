@@ -128,8 +128,52 @@ if (!isset($Event) || !$Event) { echo '<p class="gl-error">No event selected. Pl
 // GUARD: Block if published schedule awaiting results
 // -------------------------------------------------------
 if (get_option('spp_schedule_published', 0) && !get_option('spp_results_posted', 0)) {
-    echo '<p class="gl-error" style="color:#c0392b;font-weight:bold;">Cannot produce a new schedule: the published schedule\'s results have not been posted yet. Publish results first.</p>';
-    return;
+
+    // Hard stop, no bypass: real scores are already on the board.
+    // Overwriting Schedules now would silently discard game data.
+    $scores_entered = (int) $wpdb->get_var(
+        "SELECT COUNT(*) FROM Schedules
+         WHERE group_id != 99
+           AND (Game1 IS NOT NULL OR Game2 IS NOT NULL OR Game3 IS NOT NULL
+                OR Game4 IS NOT NULL OR Game5 IS NOT NULL)"
+    );
+
+    if ($scores_entered > 0) {
+        echo '<p class="gl-error" style="color:#c0392b;font-weight:bold;">Cannot produce a new schedule: '
+           . $scores_entered . ' player(s) already have scores entered against the current schedule, '
+           . 'and results have not been posted yet. Publish results first (or use Score Correction) '
+           . 'before running Schedule Production again.</p>';
+        return;
+    }
+
+    // No scores entered yet -- safe to offer a bypass, but confirm first.
+    $bypass_confirmed = isset($_POST['spp_force_reschedule'])
+        && wp_verify_nonce($_POST['spp_reschedule_nonce'] ?? '', 'spp_reschedule_confirm');
+
+    if (!$bypass_confirmed) {
+        echo '<p class="gl-error" style="color:#c0392b;font-weight:bold;">The current schedule is published and results have not been posted yet, '
+           . 'though no scores have been entered against it.</p>';
+        echo '<form method="post">';
+        wp_nonce_field('spp_reschedule_confirm', 'spp_reschedule_nonce');
+        echo '<input type="hidden" name="spp_force_reschedule" value="1">';
+        echo '<button type="submit" onclick="return confirm(\'This will discard the current published schedule and produce a new one. Continue?\')">Yes, discard and create a new schedule</button>';
+        echo '</form>';
+        return;
+    }
+
+    // Confirmed -- back up Results before proceeding, just in case.
+    $results_table_exists = $wpdb->get_var("SHOW TABLES LIKE 'Results'");
+    if ($results_table_exists) {
+        $results_rows = (int) $wpdb->get_var("SELECT COUNT(*) FROM Results");
+        if ($results_rows > 0) {
+            $backup_table = "Results_backup_{$Event}_" . date('Ymd_His');
+            $wpdb->query("CREATE TABLE `$backup_table` LIKE Results");
+            $wpdb->query("INSERT INTO `$backup_table` SELECT * FROM Results");
+            echo "Backed up $results_rows existing Results row(s) to <code>$backup_table</code> before proceeding.<br>";
+        }
+    }
+
+    echo '<p style="color:#c0392b;font-weight:bold;">Bypassing publish/results guard -- producing a new schedule.</p>';
 }
 $schedules_prev = "SchedulesPrev$Event";
 // Need to run this to refresh travel fields
