@@ -1,9 +1,12 @@
 <?php
 /* =========================================================
    GL Publish Schedule
-   Version: 1.2.2
+   Version: 1.2.3
    Date: 2026-07-13
    Based on: Publish Schedule 2.4
+
+   Changes from 1.2.2
+   - convenor emergency-contact addition
 
    Changes from 1.2.1:
    - Added note to personalized group email for players on
@@ -62,7 +65,11 @@ function gl_publish_schedule_run() {
 
     // ── GL EVENTS: get event date from gl_event_occurrences ──────────────────────
     $occ = $wpdb->get_row( $wpdb->prepare(
-        "SELECT title, event_date FROM {$prefix}gl_event_occurrences WHERE id = %d",
+        "SELECT o.title, o.event_date, m.first_name AS convenor_first_name,
+                m.last_name AS convenor_last_name, m.user_phone AS convenor_phone
+         FROM {$prefix}gl_event_occurrences o
+         LEFT JOIN membership m ON m.user_id = COALESCE(o.convenor_id, 2193)
+         WHERE o.id = %d",
         $Event
     ), ARRAY_A );
 
@@ -71,9 +78,11 @@ function gl_publish_schedule_run() {
         return;
     }
 
-    $date  = date_format( date_create( $occ['event_date'] ), 'F d, Y' );
-    $name  = $occ['title'];
-    $title = "Schedule for " . $occ['title'] . " - $date";
+    $date            = date_format( date_create( $occ['event_date'] ), 'F d, Y' );
+    $name            = $occ['title'];
+    $title           = "Schedule for " . $occ['title'] . " - $date";
+    $convenor_name   = trim( $occ['convenor_first_name'] . ' ' . $occ['convenor_last_name'] );
+    $convenor_phone  = $occ['convenor_phone'];
     // ─────────────────────────────────────────────────────────────────────────────
 
     // -------------------------------------------------------
@@ -217,13 +226,22 @@ function gl_publish_schedule_run() {
 </html>';
     };
 
-    $build_group_table = function($players, $pairings, $my_user_id) {
+    $build_group_table = function($players, $pairings, $my_user_id) use ($convenor_name, $convenor_phone) {
         $player0 = $players[0];
 
         $html = '
   <tr>
     <td style="padding:16px 24px 8px 24px;">
-      <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:red;">You are playing tonight!</p>
+      <p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:red;">You are playing tonight!</p>';
+
+        if ( $convenor_name && $convenor_phone ) {
+            $html .= '
+      <p style="margin:0 0 8px 0;font-size:13px;color:#555;">
+        <strong style="color:#c0392b;">Emergency</strong> schedule change? Call ' . esc_html($convenor_name) . ' at ' . esc_html($convenor_phone) . '.
+      </p>';
+        }
+
+        $html .= '
       <div style="background:#2c3e50;color:#ffffff;padding:8px 12px;border-radius:6px 6px 0 0;font-weight:bold;font-size:15px;margin-bottom:0;">
         ' . esc_html($player0['GP_name']) . ' &mdash; ' . esc_html($player0['Crt_name']) . ' &mdash; ' . esc_html($player0['T_desc']) . '
       </div>';
