@@ -324,14 +324,14 @@ function spp_sa2_action_selector() {
     echo '<input type="hidden" name="spp_sa_action" value="add">';
     echo '<input type="hidden" name="spp_sa_stage" value="propose">';
     $roster_uids = array_column( $players, 'user_id' );
-    $master_members = $wpdb->get_results(
-        "SELECT user_id, first_name, last_name FROM Master ORDER BY last_name, first_name",
+    $all_members = $wpdb->get_results(
+        "SELECT user_id, first_name, last_name FROM membership WHERE user_email != '' ORDER BY last_name, first_name",
         ARRAY_A
     );
-    echo '<div class="box"><strong>Last-minute add</strong> -- add a member who was not originally scheduled.<br><br>';
+    echo '<div class="box"><strong>Last-minute add</strong> -- add any club member who was not originally scheduled.<br><br>';
     echo '<select name="spp_sa_add_uid" required>';
     echo '<option value="">-- select member --</option>';
-    foreach ( $master_members as $m ) {
+    foreach ( $all_members as $m ) {
         if ( in_array( (int) $m['user_id'], $roster_uids, true ) ) continue; // already scheduled
         echo '<option value="' . (int) $m['user_id'] . '">' . esc_html( $m['last_name'] . ', ' . $m['first_name'] ) . '</option>';
     }
@@ -628,6 +628,69 @@ function spp_sa2_dropout_undo() {
    direct, permanent correction to Master + usermeta, usable
    anytime (not only during a last-minute add).
    ========================================================= */
+
+/**
+ * Fetch first/last/phone/email/travel for a user_id regardless of whether
+ * they're currently in Master (a ladder-registered player) or only in the
+ * broader membership roster. Master is preferred when present since it's
+ * the authoritative source for currently-active ladder players; otherwise
+ * falls back to membership + Travel usermeta.
+ */
+function spp_sa2_get_member_info( $uid ) {
+    global $wpdb;
+
+    $row = $wpdb->get_row( $wpdb->prepare(
+        "SELECT first_name, last_name, user_phone, user_email, travel FROM Master WHERE user_id = %d", $uid
+    ), ARRAY_A );
+    if ( $row ) return $row;
+
+    $row = $wpdb->get_row( $wpdb->prepare(
+        "SELECT first_name, last_name, user_phone, user_email FROM membership WHERE user_id = %d", $uid
+    ), ARRAY_A );
+    if ( ! $row ) {
+        $wp_user = get_userdata( $uid );
+        $row = array(
+            'first_name' => $wp_user ? $wp_user->first_name : '',
+            'last_name'  => $wp_user ? $wp_user->last_name : '',
+            'user_phone' => '',
+            'user_email' => $wp_user ? $wp_user->user_email : '',
+        );
+    }
+    $row['travel'] = $wpdb->get_var( $wpdb->prepare(
+        "SELECT meta_value FROM {$wpdb->prefix}usermeta WHERE user_id = %d AND meta_key = 'Travel'", $uid
+    ) ) ?: '';
+    return $row;
+}
+
+/**
+ * Make sure $uid has a Master row before they get scheduled -- everything
+ * downstream (group_accepts_player, spp_run_schedule_check, notify) JOINs
+ * Schedules to Master, so a scheduled player with no Master row would
+ * silently vanish from every one of those. Inserts if missing, otherwise
+ * just updates Rank/Ladder on the existing row.
+ */
+function spp_sa2_ensure_master_row( $uid, $rank ) {
+    global $wpdb;
+
+    $exists = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM Master WHERE user_id = %d", $uid ) );
+
+    if ( $exists ) {
+        $wpdb->update( 'Master', array( 'Rank' => $rank, 'Ladder' => 'Yes' ), array( 'user_id' => $uid ) );
+        return;
+    }
+
+    $info = spp_sa2_get_member_info( $uid );
+    $wpdb->insert( 'Master', array(
+        'user_id'    => $uid,
+        'first_name' => $info['first_name'],
+        'last_name'  => $info['last_name'],
+        'user_phone' => $info['user_phone'],
+        'travel'     => $info['travel'] ?? '',
+        'user_email' => $info['user_email'],
+        'Ladder'     => 'Yes',
+        'Rank'       => $rank,
+    ) );
+}
 
 function spp_sa2_rank_flow( $stage ) {
     if ( $stage === 'propose' ) {
@@ -990,7 +1053,7 @@ function spp_sa2_add_propose( $carpool_rank_tolerance ) {
         return;
     }
 
-    $member = $wpdb->get_row( $wpdb->prepare( "SELECT first_name, last_name FROM Master WHERE user_id = %d", $uid ), ARRAY_A );
+    $member = spp_sa2_get_member_info( $uid );
     $suggestion = spp_sa2_suggest_rank( $uid );
 
     echo '<h3>Last-Minute Add -- Rank</h3>';
@@ -1015,7 +1078,7 @@ function spp_sa2_add_propose_placement( $carpool_rank_tolerance ) {
     $uid  = (int) ( $_POST['spp_sa_add_uid'] ?? 0 );
     $rank = (int) ( $_POST['spp_sa_add_rank'] ?? 0 );
 
-    $member = $wpdb->get_row( $wpdb->prepare( "SELECT first_name, last_name, travel FROM Master WHERE user_id = %d", $uid ), ARRAY_A );
+    $member = spp_sa2_get_member_info( $uid );
 
     $best = spp_sa2_find_best_group( $uid, $rank, $member['travel'], null, array(), $carpool_rank_tolerance );
 
@@ -1065,15 +1128,17 @@ function spp_sa2_add_apply( $carpool_rank_tolerance ) {
 
     $backup_table = spp_sa2_backup_schedules( 'add' );
 
-    // Permanently update the rank on Master + usermeta, same as the
-    // official RandomRanks / Create-membership-table cycle.
-    $wpdb->update( 'Master', array( 'Rank' => $rank ), array( 'user_id' => $uid ) );
+    // Ensure Master has a row for this player (INSERT if this is their
+    // first time on the ladder, UPDATE if they're already there) -- a
+    // plain UPDATE would silently do nothing for a brand-new member, and
+    // everything downstream (checks, notify) JOINs Schedules to Master.
+    spp_sa2_ensure_master_row( $uid, $rank );
     $wpdb->query( $wpdb->prepare( "DELETE FROM {$wpdb->prefix}usermeta WHERE user_id = %d AND meta_key = 'Rank'", $uid ) );
     $wpdb->query( $wpdb->prepare( "INSERT INTO {$wpdb->prefix}usermeta (user_id, meta_key, meta_value) VALUES (%d, 'Rank', %d)", $uid, $rank ) );
     $wpdb->query( $wpdb->prepare( "DELETE FROM {$wpdb->prefix}usermeta WHERE user_id = %d AND meta_key = 'Ladder'", $uid ) );
     $wpdb->query( $wpdb->prepare( "INSERT INTO {$wpdb->prefix}usermeta (user_id, meta_key, meta_value) VALUES (%d, 'Ladder', 'Yes')", $uid ) );
 
-    $member = $wpdb->get_row( $wpdb->prepare( "SELECT first_name, last_name, user_phone FROM Master WHERE user_id = %d", $uid ), ARRAY_A );
+    $member = spp_sa2_get_member_info( $uid );
 
     $wpdb->insert( 'Schedules', array(
         'user_id'    => $uid,
