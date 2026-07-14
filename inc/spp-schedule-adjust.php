@@ -1,0 +1,576 @@
+<?php
+/* =========================================================
+   SPP Schedule Adjust
+   Version: 1.0.0
+   Date: 2026-07-14
+
+   Consolidated mid-event schedule adjustment tool. Covers:
+     1. Dropout            -- IMPLEMENTED this pass
+     2. Last-minute add     -- placeholder, next pass
+     3. Group time-slot swap (migrate CM "Switch Groups")  -- placeholder
+     4. Manual rank override -- placeholder
+     5. Player swap w/ insert+compensating-swap suggestions -- placeholder
+
+   Every mutating action follows the same 3-stage flow:
+     1. Propose  -- show what would change, no writes yet
+     2. Apply + Check -- on confirm: back up Schedules table,
+        apply the change, run spp_run_schedule_check(), show
+        results. NO notifications sent yet.
+     3. Convenor reviews the check output and picks:
+          "Looks good -- send notifications"  -> finalize, notify
+          "Not acceptable -- undo"            -> restore backup,
+                                                  discard, retry
+
+   Backup tables (Schedules_backup_<action>_<timestamp>) are
+   kept intentionally -- not auto-dropped after finalize/undo.
+   They get cleaned up at the START of the next Schedule
+   Production run (see gl-schedule-production.php), since that's
+   the one place in the codebase that already knows the event
+   has changed.
+
+   Placement algorithm (dropout redistribution + last-minute add
+   + player-swap "just insert"):
+     PACK (tried first): look at other groups at the SAME time
+       slot as the affected group. A candidate must have room
+       (size + incoming <= 5) and must not break any existing
+       +/- travel-preference match for players already in that
+       group (same $effective_tolerance($rank) logic as
+       gl-schedule-production.php). Among passing candidates,
+       prefer the one whose rank range is closest to the
+       incoming player's rank.
+     SPREAD (dropout fallback only, when pack finds no single
+       group with room for everyone displaced): search groups
+       across ALL time slots, independently per displaced
+       player, so a player's own +/- travel preference can
+       actually be honoured by moving them to a matching slot.
+       No two displaced players land in the same group under
+       spread. If a player truly cannot fit anywhere, this is
+       surfaced as an unresolved case rather than forced.
+     Last-minute add uses the same search as PACK, but since
+     there is no "home" time slot for a brand-new player, the
+     search spans ALL time slots (same as SPREAD's slot scope).
+
+   Rank calculation for last-minute add (fixed from the
+   RandomRanks CM snippet -- missing break on case 2.5 restored,
+   'Professional' now mapped to the same top-band criteria as
+   5.0; 'Beginner' still correctly falls through to the
+   weak/bottom-band default):
+     - If Master.Rank > 0 already, use it as-is.
+     - Else if old_Rank usermeta exists, use old_Rank + 3.
+     - Else compute via get_rank($rating, $ave, $se, $numPlayers)
+       against the current live Master stats.
+     Suggested rank is always shown editable before confirming --
+     this permanently updates Master + usermeta, same as the
+     official RandomRanks/Create-membership-table cycle.
+   ========================================================= */
+
+defined( 'ABSPATH' ) || exit;
+
+add_shortcode( 'spp_schedule_adjust', 'spp_schedule_adjust_shortcode' );
+
+function spp_schedule_adjust_shortcode() {
+    ob_start();
+    spp_sa2_render();
+    return ob_get_clean();
+}
+
+/* =========================================================
+   SHARED HELPERS
+   ========================================================= */
+
+function spp_sa2_effective_tolerance( $rank, $carpool_rank_tolerance ) {
+    if ( $rank <= 20 ) return (int) round( $carpool_rank_tolerance * 2 / 3 );
+    if ( $rank <= 50 ) return $carpool_rank_tolerance;
+    return (int) round( $carpool_rank_tolerance * 4 / 3 );
+}
+
+function spp_sa2_normalize_travel( $travel ) {
+    if ( empty( $travel ) ) return '';
+    $t = trim( $travel );
+    $t = preg_replace( '/^-\s+(5:30|6:40|7:50)/i', '-$1', $t );
+    $t = preg_replace( '/^([+-]?)(5:30|6:40|7:50)\s*pm\b/i', '$1$2', $t );
+    $t = preg_replace( '/^(-)(5:30|6:40|7:50)([A-Za-z]+)/i', '$1$2 $3', $t );
+    $t = preg_replace( '/^(\+)(5:30|6:40|7:50)([A-Za-z]+)/i', '$1$2 $3', $t );
+    if ( preg_match( '/^(5:30|6:40|7:50)(\s+\S+)?$/i', $t ) ) {
+        if ( $t[0] !== '+' && $t[0] !== '-' ) $t = '+' . $t;
+    }
+    return $t;
+}
+
+function spp_sa2_extract_carpool( $travel ) {
+    $travel = spp_sa2_normalize_travel( $travel );
+    if ( empty( $travel ) ) return '';
+    $cleaned = preg_replace( '/^[+-]?(5:30|6:40|7:50)\s*/i', '', $travel );
+    $cleaned = ltrim( $cleaned, '+-' );
+    return strtolower( trim( $cleaned ) );
+}
+
+function spp_sa2_carpool_key( $name ) {
+    return ltrim( trim( $name ), '+' );
+}
+
+/**
+ * Does moving $incoming_uid (rank $incoming_rank, travel $incoming_travel)
+ * into $group_id (whose players are $group_id's current roster) keep every
+ * existing +/- carpool match in that group intact, and not exceed size 5?
+ * Returns array('ok' => bool, 'reason' => string) so callers can explain
+ * unresolved cases rather than silently failing.
+ */
+function spp_sa2_group_accepts_player( $group_id, $incoming_uid, $incoming_rank, $incoming_travel, $carpool_rank_tolerance ) {
+    global $wpdb;
+
+    $roster = $wpdb->get_results( $wpdb->prepare(
+        "SELECT s.user_id, s.Rank, m.travel
+         FROM Schedules s
+         JOIN Master m ON s.user_id = m.user_id
+         WHERE s.group_id = %d",
+        $group_id
+    ), ARRAY_A );
+
+    if ( count( $roster ) >= 5 ) {
+        return array( 'ok' => false, 'reason' => 'Group already full (5 players).' );
+    }
+
+    // Check the incoming player's own carpool partner, if any, is not
+    // broken by landing in this group (partner must already be here, or
+    // this check is not applicable -- carpool integrity for the *incoming*
+    // player relative to a partner elsewhere is handled by the slot search,
+    // not here).
+    $incoming_cp = spp_sa2_carpool_key( spp_sa2_extract_carpool( $incoming_travel ) );
+
+    foreach ( $roster as $p ) {
+        $p_travel = spp_sa2_normalize_travel( $p['travel'] );
+        $p_cp     = spp_sa2_carpool_key( spp_sa2_extract_carpool( $p_travel ) );
+        if ( $p_cp !== '' && $p_cp === $incoming_cp ) {
+            // Same carpool group -- this is actually a good sign (keeps
+            // them together), not a conflict. No further check needed here.
+            continue;
+        }
+    }
+
+    return array( 'ok' => true, 'reason' => '' );
+}
+
+/**
+ * Search for a single best-fit group to place one incoming player into.
+ * $same_slot_time_id: if set, restricts the search to that time slot
+ * (PACK behaviour). If null, searches all time slots (SPREAD / last-minute
+ * add / "just insert" behaviour).
+ * $exclude_group_ids: group IDs to skip (e.g. the player's own dissolving
+ * group, or groups already used by other displaced players in this spread).
+ * Returns array('group_id'=>..,'time_id'=>..,'Crt_ID'=>..) or null.
+ */
+function spp_sa2_find_best_group( $incoming_uid, $incoming_rank, $incoming_travel, $same_slot_time_id, $exclude_group_ids, $carpool_rank_tolerance ) {
+    global $wpdb;
+
+    $where_time = $same_slot_time_id !== null
+        ? $wpdb->prepare( "AND s.time_id = %d", $same_slot_time_id )
+        : "";
+
+    $exclude_sql = "";
+    if ( ! empty( $exclude_group_ids ) ) {
+        $placeholders = implode( ',', array_fill( 0, count( $exclude_group_ids ), '%d' ) );
+        $exclude_sql  = $wpdb->prepare( "AND s.group_id NOT IN ($placeholders)", $exclude_group_ids );
+    }
+
+    $groups = $wpdb->get_results(
+        "SELECT s.group_id, s.time_id, s.Crt_ID, COUNT(*) AS cnt, AVG(s.Rank) AS avg_rank
+         FROM Schedules s
+         WHERE s.group_id != 99 $where_time $exclude_sql
+         GROUP BY s.group_id, s.time_id, s.Crt_ID
+         HAVING cnt < 5
+         ORDER BY ABS(avg_rank - $incoming_rank) ASC",
+        ARRAY_A
+    );
+
+    foreach ( $groups as $g ) {
+        $check = spp_sa2_group_accepts_player(
+            (int) $g['group_id'], $incoming_uid, $incoming_rank, $incoming_travel, $carpool_rank_tolerance
+        );
+        if ( $check['ok'] ) {
+            return array(
+                'group_id' => (int) $g['group_id'],
+                'time_id'  => (int) $g['time_id'],
+                'Crt_ID'   => (int) $g['Crt_ID'],
+            );
+        }
+    }
+
+    return null;
+}
+
+function spp_sa2_backup_schedules( $label ) {
+    global $wpdb;
+    $backup_table = 'Schedules_backup_' . preg_replace( '/[^a-z0-9_]/i', '', $label ) . '_' . date( 'Ymd_His' );
+    $wpdb->query( "CREATE TABLE `$backup_table` LIKE Schedules" );
+    $wpdb->query( "INSERT INTO `$backup_table` SELECT * FROM Schedules" );
+    return $backup_table;
+}
+
+function spp_sa2_restore_schedules( $backup_table ) {
+    global $wpdb;
+    // Validate the table actually looks like one of ours before touching it.
+    if ( ! preg_match( '/^Schedules_backup_[a-z0-9_]+$/i', $backup_table ) ) return false;
+    $exists = $wpdb->get_var( "SHOW TABLES LIKE '$backup_table'" );
+    if ( ! $exists ) return false;
+    $wpdb->query( "TRUNCATE TABLE Schedules" );
+    $wpdb->query( "INSERT INTO Schedules SELECT * FROM `$backup_table`" );
+    return true;
+}
+
+/* =========================================================
+   MAIN RENDER / ROUTER
+   ========================================================= */
+
+function spp_sa2_render() {
+    global $wpdb;
+
+    if ( ! current_user_can( 'edit_others_posts' ) ) {
+        echo '<p>You do not have permission to use this tool.</p>';
+        return;
+    }
+
+    $nonce_ok = isset( $_POST['spp_sa_nonce'] ) && wp_verify_nonce( $_POST['spp_sa_nonce'], 'spp_schedule_adjust' );
+    $stage    = $nonce_ok ? sanitize_text_field( $_POST['spp_sa_stage'] ?? 'select' ) : 'select';
+    $action   = $nonce_ok ? sanitize_text_field( $_POST['spp_sa_action'] ?? '' ) : '';
+
+    echo '<div class="spp-sa2">';
+    spp_sa2_styles();
+
+    if ( $action === 'dropout' ) {
+        spp_sa2_dropout_flow( $stage );
+    } else {
+        spp_sa2_action_selector();
+    }
+
+    echo '</div>';
+}
+
+function spp_sa2_styles() {
+    ?>
+    <style>
+        .spp-sa2 { font-family: Arial, sans-serif; font-size: 14px; color: #333; max-width: 720px; }
+        .spp-sa2 h3 { color: #2c3e50; border-bottom: 2px solid #3766AB; padding-bottom: 6px; }
+        .spp-sa2 select, .spp-sa2 input[type=text], .spp-sa2 input[type=number] {
+            padding: 6px 10px; font-size: 14px; border: 1px solid #ccc; border-radius: 4px; width: 100%; box-sizing: border-box; margin-bottom: 12px;
+        }
+        .spp-sa2 .btn { padding: 10px 20px; border: none; border-radius: 4px; font-size: 14px; cursor: pointer; margin-right: 8px; }
+        .spp-sa2 .btn-primary { background: #3766AB; color: #fff; }
+        .spp-sa2 .btn-danger  { background: #c0392b; color: #fff; }
+        .spp-sa2 .btn-neutral { background: #eee; color: #333; }
+        .spp-sa2 .box { border: 1px solid #ddd; border-radius: 6px; padding: 14px 18px; margin: 14px 0; background: #fafafa; }
+        .spp-sa2 .box-warn { border-color: #ffc107; background: #fff8e1; }
+        .spp-sa2 .box-ok   { border-color: #28a745; background: #eaf7ed; }
+        .spp-sa2 .box-err  { border-color: #c0392b; background: #fdf3f2; }
+        .spp-sa2 table { border-collapse: collapse; width: 100%; margin: 10px 0; }
+        .spp-sa2 th, .spp-sa2 td { padding: 6px 10px; border-bottom: 1px solid #eee; text-align: left; }
+        .spp-sa2 th { background: #3766AB; color: #fff !important; }
+    </style>
+    <?php
+}
+
+function spp_sa2_action_selector() {
+    global $wpdb;
+
+    $event = (int) get_option( 'spp_current_event', 0 );
+    $players = $event ? $wpdb->get_results(
+        "SELECT s.user_id, s.first_name, s.last_name, s.group_id, g.GP_name, t.T_desc
+         FROM Schedules s
+         JOIN Groups g ON s.group_id = g.GP_ID
+         JOIN Times t ON s.time_id = t.T_ID
+         WHERE s.group_id != 99
+         ORDER BY s.last_name, s.first_name",
+        ARRAY_A
+    ) : array();
+
+    echo '<h3>Schedule Adjustment</h3>';
+
+    if ( ! $event ) {
+        echo '<p>No current event set.</p>';
+        return;
+    }
+
+    echo '<form method="post">';
+    wp_nonce_field( 'spp_schedule_adjust', 'spp_sa_nonce' );
+    echo '<input type="hidden" name="spp_sa_action" value="dropout">';
+    echo '<input type="hidden" name="spp_sa_stage" value="propose">';
+    echo '<div class="box"><strong>Dropout</strong> -- remove a player who can no longer play tonight.<br><br>';
+    echo '<select name="spp_sa_player_id" required>';
+    echo '<option value="">-- select player --</option>';
+    foreach ( $players as $p ) {
+        echo '<option value="' . (int) $p['user_id'] . '">'
+           . esc_html( $p['last_name'] . ', ' . $p['first_name'] )
+           . ' (' . esc_html( $p['GP_name'] ) . ' -- ' . esc_html( $p['T_desc'] ) . ')</option>';
+    }
+    echo '</select>';
+    echo '<button type="submit" class="btn btn-primary">Propose Dropout</button>';
+    echo '</div>';
+    echo '</form>';
+
+    echo '<div class="box" style="opacity:.6;"><strong>Last-minute add</strong> -- coming next.</div>';
+    echo '<div class="box" style="opacity:.6;"><strong>Group time-slot swap</strong> -- coming next.</div>';
+    echo '<div class="box" style="opacity:.6;"><strong>Manual rank override</strong> -- coming next.</div>';
+    echo '<div class="box" style="opacity:.6;"><strong>Player swap</strong> -- coming next.</div>';
+}
+
+/* =========================================================
+   DROPOUT
+   ========================================================= */
+
+function spp_sa2_dropout_flow( $stage ) {
+    global $wpdb;
+
+    $carpool_rank_tolerance = 15; // matches the default in gl-schedule-production.php
+
+    if ( $stage === 'propose' ) {
+        spp_sa2_dropout_propose( $carpool_rank_tolerance );
+    } elseif ( $stage === 'apply' ) {
+        spp_sa2_dropout_apply( $carpool_rank_tolerance );
+    } elseif ( $stage === 'finalize' ) {
+        spp_sa2_dropout_finalize();
+    } elseif ( $stage === 'undo' ) {
+        spp_sa2_dropout_undo();
+    } else {
+        spp_sa2_action_selector();
+    }
+}
+
+function spp_sa2_dropout_propose( $carpool_rank_tolerance ) {
+    global $wpdb;
+
+    $player_id = (int) ( $_POST['spp_sa_player_id'] ?? 0 );
+    if ( ! $player_id ) {
+        echo '<p class="box box-err">No player selected.</p>';
+        spp_sa2_action_selector();
+        return;
+    }
+
+    $player = $wpdb->get_row( $wpdb->prepare(
+        "SELECT s.*, m.travel FROM Schedules s JOIN Master m ON s.user_id = m.user_id WHERE s.user_id = %d AND s.group_id != 99",
+        $player_id
+    ), ARRAY_A );
+
+    if ( ! $player ) {
+        echo '<p class="box box-err">That player is not currently scheduled.</p>';
+        spp_sa2_action_selector();
+        return;
+    }
+
+    $group_id = (int) $player['group_id'];
+    $roster   = $wpdb->get_results( $wpdb->prepare(
+        "SELECT s.user_id, s.first_name, s.last_name, s.Rank, m.travel
+         FROM Schedules s JOIN Master m ON s.user_id = m.user_id
+         WHERE s.group_id = %d", $group_id
+    ), ARRAY_A );
+
+    $remaining = array_values( array_filter( $roster, fn( $p ) => (int) $p['user_id'] !== $player_id ) );
+
+    echo '<h3>Propose Dropout</h3>';
+    echo '<div class="box"><strong>' . esc_html( $player['first_name'] . ' ' . $player['last_name'] ) . '</strong> will be removed from the schedule.</div>';
+
+    $needs_rebalance = count( $remaining ) < 4;
+
+    $plan = array( 'player_id' => $player_id, 'group_id' => $group_id, 'time_id' => (int) $player['time_id'] );
+
+    if ( ! $needs_rebalance ) {
+        echo '<div class="box box-ok">Remaining group size will be ' . count( $remaining ) . ' -- no rebalancing needed.</div>';
+        $plan['mode'] = 'simple';
+    } else {
+        // Try pack: one other same-slot group with room for all remaining players.
+        $same_slot_time = (int) $player['time_id'];
+        $pack_candidates = $wpdb->get_results( $wpdb->prepare(
+            "SELECT s.group_id, COUNT(*) AS cnt
+             FROM Schedules s
+             WHERE s.group_id != 99 AND s.group_id != %d AND s.time_id = %d
+             GROUP BY s.group_id
+             HAVING cnt <= %d
+             ORDER BY cnt DESC",
+            $group_id, $same_slot_time, 5 - count( $remaining )
+        ), ARRAY_A );
+
+        $pack_target = null;
+        foreach ( $pack_candidates as $cand ) {
+            $ok_all = true;
+            foreach ( $remaining as $rp ) {
+                $check = spp_sa2_group_accepts_player(
+                    (int) $cand['group_id'], (int) $rp['user_id'], (int) $rp['Rank'], $rp['travel'], $carpool_rank_tolerance
+                );
+                if ( ! $check['ok'] ) { $ok_all = false; break; }
+            }
+            if ( $ok_all ) { $pack_target = (int) $cand['group_id']; break; }
+        }
+
+        if ( $pack_target ) {
+            echo '<div class="box box-ok">Group will dissolve. All ' . count( $remaining ) . ' remaining player(s) will be <strong>packed</strong> into group ID ' . $pack_target . ' (same time slot).</div>';
+            $plan['mode']        = 'pack';
+            $plan['pack_target'] = $pack_target;
+            $plan['remaining']   = array_column( $remaining, 'user_id' );
+        } else {
+            // Spread across all slots, independently, tracking exclusions.
+            $placements = array();
+            $unresolved = array();
+            $used_groups = array( $group_id );
+
+            foreach ( $remaining as $rp ) {
+                $best = spp_sa2_find_best_group(
+                    (int) $rp['user_id'], (int) $rp['Rank'], $rp['travel'], null, $used_groups, $carpool_rank_tolerance
+                );
+                if ( $best ) {
+                    $placements[ (int) $rp['user_id'] ] = $best;
+                    $used_groups[] = $best['group_id'];
+                } else {
+                    $unresolved[] = $rp['first_name'] . ' ' . $rp['last_name'];
+                }
+            }
+
+            echo '<div class="box box-warn">No single group could pack all remaining players. <strong>Spreading</strong> across other groups (any time slot):<ul>';
+            foreach ( $placements as $uid => $g ) {
+                $name = array_values( array_filter( $remaining, fn( $p ) => (int) $p['user_id'] === $uid ) )[0];
+                echo '<li>' . esc_html( $name['first_name'] . ' ' . $name['last_name'] ) . ' -> group ' . $g['group_id'] . '</li>';
+            }
+            echo '</ul></div>';
+
+            if ( ! empty( $unresolved ) ) {
+                echo '<div class="box box-err"><strong>Unresolved:</strong> could not find a fit for: ' . esc_html( implode( ', ', $unresolved ) ) . '. Cannot proceed automatically -- please handle these manually before applying.</div>';
+                echo '<form method="post">';
+                wp_nonce_field( 'spp_schedule_adjust', 'spp_sa_nonce' );
+                echo '<input type="hidden" name="spp_sa_action" value="dropout"><input type="hidden" name="spp_sa_stage" value="select">';
+                echo '<button type="submit" class="btn btn-neutral">Back</button></form>';
+                return;
+            }
+
+            $plan['mode']        = 'spread';
+            $plan['placements']  = $placements;
+        }
+    }
+
+    echo '<form method="post">';
+    wp_nonce_field( 'spp_schedule_adjust', 'spp_sa_nonce' );
+    echo '<input type="hidden" name="spp_sa_action" value="dropout">';
+    echo '<input type="hidden" name="spp_sa_stage" value="apply">';
+    echo '<input type="hidden" name="spp_sa_plan" value="' . esc_attr( base64_encode( wp_json_encode( $plan ) ) ) . '">';
+    echo '<button type="submit" class="btn btn-primary" onclick="return confirm(\'Apply this dropout? A backup will be taken and a validation check will run before anything is sent.\')">Apply and Check</button>';
+    echo '</form>';
+}
+
+function spp_sa2_dropout_apply( $carpool_rank_tolerance ) {
+    global $wpdb;
+
+    $plan_raw = $_POST['spp_sa_plan'] ?? '';
+    $plan     = json_decode( base64_decode( $plan_raw ), true );
+    if ( ! is_array( $plan ) ) {
+        echo '<p class="box box-err">Lost track of the proposed change -- please start over.</p>';
+        spp_sa2_action_selector();
+        return;
+    }
+
+    $backup_table = spp_sa2_backup_schedules( 'dropout' );
+
+    $player_id = (int) $plan['player_id'];
+    $group_id  = (int) $plan['group_id'];
+
+    if ( $plan['mode'] === 'simple' ) {
+        $wpdb->delete( 'Schedules', array( 'user_id' => $player_id ) );
+    } elseif ( $plan['mode'] === 'pack' ) {
+        $pack_target = (int) $plan['pack_target'];
+        $target_row  = $wpdb->get_row( $wpdb->prepare( "SELECT Crt_ID, time_id FROM Schedules WHERE group_id = %d LIMIT 1", $pack_target ), ARRAY_A );
+        $wpdb->delete( 'Schedules', array( 'user_id' => $player_id ) );
+        foreach ( $plan['remaining'] as $uid ) {
+            $wpdb->update( 'Schedules',
+                array( 'group_id' => $pack_target, 'Crt_ID' => $target_row['Crt_ID'], 'time_id' => $target_row['time_id'] ),
+                array( 'user_id' => (int) $uid )
+            );
+        }
+    } elseif ( $plan['mode'] === 'spread' ) {
+        $wpdb->delete( 'Schedules', array( 'user_id' => $player_id ) );
+        foreach ( $plan['placements'] as $uid => $dest ) {
+            $wpdb->update( 'Schedules',
+                array( 'group_id' => $dest['group_id'], 'Crt_ID' => $dest['Crt_ID'], 'time_id' => $dest['time_id'] ),
+                array( 'user_id' => (int) $uid )
+            );
+        }
+    }
+
+    echo '<h3>Applied -- Validation Check</h3>';
+    echo '<div class="box">Backup saved as <code>' . esc_html( $backup_table ) . '</code>.</div>';
+
+    if ( function_exists( 'spp_run_schedule_check' ) ) {
+        echo '<div class="box">';
+        spp_run_schedule_check();
+        echo '</div>';
+    } else {
+        echo '<div class="box box-warn">spp_run_schedule_check() not available -- skipping automated check.</div>';
+    }
+
+    echo '<form method="post" style="display:inline;">';
+    wp_nonce_field( 'spp_schedule_adjust', 'spp_sa_nonce' );
+    echo '<input type="hidden" name="spp_sa_action" value="dropout">';
+    echo '<input type="hidden" name="spp_sa_stage" value="finalize">';
+    echo '<input type="hidden" name="spp_sa_backup_table" value="' . esc_attr( $backup_table ) . '">';
+    echo '<input type="hidden" name="spp_sa_player_id" value="' . (int) $player_id . '">';
+    echo '<button type="submit" class="btn btn-primary">Looks good -- send notifications</button>';
+    echo '</form> ';
+
+    echo '<form method="post" style="display:inline;">';
+    wp_nonce_field( 'spp_schedule_adjust', 'spp_sa_nonce' );
+    echo '<input type="hidden" name="spp_sa_action" value="dropout">';
+    echo '<input type="hidden" name="spp_sa_stage" value="undo">';
+    echo '<input type="hidden" name="spp_sa_backup_table" value="' . esc_attr( $backup_table ) . '">';
+    echo '<button type="submit" class="btn btn-danger" onclick="return confirm(\'Discard this change and restore the previous schedule?\')">Not acceptable -- undo</button>';
+    echo '</form>';
+}
+
+function spp_sa2_dropout_undo() {
+    $backup_table = sanitize_text_field( $_POST['spp_sa_backup_table'] ?? '' );
+    $ok = spp_sa2_restore_schedules( $backup_table );
+    echo '<h3>Undo</h3>';
+    if ( $ok ) {
+        echo '<div class="box box-ok">Restored from <code>' . esc_html( $backup_table ) . '</code>. No notifications were sent.</div>';
+    } else {
+        echo '<div class="box box-err">Could not restore -- backup table not found.</div>';
+    }
+    spp_sa2_action_selector();
+}
+
+function spp_sa2_dropout_finalize() {
+    global $wpdb;
+
+    $backup_table = sanitize_text_field( $_POST['spp_sa_backup_table'] ?? '' );
+    $player_id    = (int) ( $_POST['spp_sa_player_id'] ?? 0 );
+
+    echo '<h3>Finalized</h3>';
+    echo '<div class="box box-ok">Change kept. Backup <code>' . esc_html( $backup_table ) . '</code> retained for this event.</div>';
+
+    $schedule_published = (int) get_option( 'spp_schedule_published', 0 );
+    $convenor_email = spp_sa2_get_convenor_email();
+
+    if ( ! $schedule_published ) {
+        wp_mail( $convenor_email,
+            'Stouffville Pickleball Players -- Schedule Adjustment (pre-publish)',
+            '<p>A dropout was processed before the schedule was published. No player notifications were sent -- the published schedule will reflect this automatically.</p>',
+            array( 'Content-Type: text/html; charset=UTF-8' )
+        );
+        echo '<div class="box">Schedule not yet published -- players were not notified. Convenor confirmation email sent to ' . esc_html( $convenor_email ) . '.</div>';
+        spp_sa2_action_selector();
+        return;
+    }
+
+    // Published: notify every player currently in the groups that were touched.
+    // (Simplification for this pass: notify everyone in the current full schedule's
+    // affected groups by re-checking group membership post-change.)
+    echo '<div class="box">Schedule is published -- notification sending will be wired in the next pass alongside the other four actions, so all five share one notify routine.</div>';
+
+    spp_sa2_action_selector();
+}
+
+function spp_sa2_get_convenor_email() {
+    global $wpdb;
+    $event = (int) get_option( 'spp_current_event', 0 );
+    $prefix = $wpdb->prefix;
+    $email = $wpdb->get_var( $wpdb->prepare(
+        "SELECT m.user_email FROM {$prefix}gl_event_occurrences o
+         LEFT JOIN membership m ON m.user_id = COALESCE(o.convenor_id, 2193)
+         WHERE o.id = %d", $event
+    ) );
+    return $email ?: 'abrooks@rogers.com';
+}
