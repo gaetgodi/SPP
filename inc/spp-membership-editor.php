@@ -113,7 +113,15 @@ function spp_membership_editor_render() {
         .mem-search input { padding: 6px 10px; font-size: 14px; width: 260px; border: 1px solid #ccc; border-radius: 4px; }
         .mem-table { border-collapse: collapse; width: 100%; }
         .mem-table th, .mem-table td { padding: 6px 10px; border-bottom: 1px solid #eee; text-align: left; }
-        .mem-table th { background: #3766AB; color: #fff; cursor: pointer; user-select: none; white-space: nowrap; }
+        .mem-table th, .mem-table th a, .mem-table th:visited {
+            background: #3766AB; color: #ffffff !important; cursor: pointer; user-select: none; white-space: nowrap;
+        }
+        .mem-suggest {
+            position: absolute; z-index: 9999; background: #fff; border: 1px solid #3766AB;
+            border-radius: 0 0 4px 4px; max-height: 200px; overflow-y: auto; box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }
+        .mem-suggest-item { padding: 6px 10px; cursor: pointer; font-size: 14px; }
+        .mem-suggest-item:hover { background: #fff3cd; }
         .mem-table th.sorted-asc::after  { content: " \25B2"; }
         .mem-table th.sorted-desc::after { content: " \25BC"; }
         .mem-table tr:nth-child(even) { background: #f9f9f9; }
@@ -239,20 +247,7 @@ function spp_membership_editor_render() {
                 input = document.createElement('input');
                 input.type = 'text';
                 input.value = original;
-                if (travelOpts.length) {
-                    var listId = 'mem_travel_list';
-                    if (!document.getElementById(listId)) {
-                        var dl = document.createElement('datalist');
-                        dl.id = listId;
-                        travelOpts.forEach(function(t) {
-                            var opt = document.createElement('option');
-                            opt.value = t;
-                            dl.appendChild(opt);
-                        });
-                        document.body.appendChild(dl);
-                    }
-                    input.setAttribute('list', listId);
-                }
+                input.autocomplete = 'off';
             } else {
                 input = document.createElement('input');
                 input.type = 'text';
@@ -264,12 +259,52 @@ function spp_membership_editor_render() {
             input.focus();
             if (input.select) input.select();
 
+            var suggestBox = null;
+            if (field === 'travel' && travelOpts.length) {
+                suggestBox = document.createElement('div');
+                suggestBox.className = 'mem-suggest';
+                document.body.appendChild(suggestBox);
+
+                function positionSuggest() {
+                    var r = input.getBoundingClientRect();
+                    suggestBox.style.left  = (r.left + window.scrollX) + 'px';
+                    suggestBox.style.top   = (r.bottom + window.scrollY) + 'px';
+                    suggestBox.style.width = Math.max(r.width, 140) + 'px';
+                }
+
+                function renderSuggest() {
+                    var q = input.value.toLowerCase();
+                    var matches = travelOpts.filter(function(o) { return o.toLowerCase().indexOf(q) !== -1; });
+                    if (!matches.length) { suggestBox.style.display = 'none'; return; }
+                    suggestBox.innerHTML = '';
+                    matches.forEach(function(o) {
+                        var item = document.createElement('div');
+                        item.className = 'mem-suggest-item';
+                        item.textContent = o;
+                        item.addEventListener('mousedown', function(e) {
+                            e.preventDefault();
+                            input.value = o;
+                            suggestBox.style.display = 'none';
+                            finish(true);
+                        });
+                        suggestBox.appendChild(item);
+                    });
+                    positionSuggest();
+                    suggestBox.style.display = 'block';
+                }
+
+                input.addEventListener('focus', renderSuggest);
+                input.addEventListener('input', renderSuggest);
+                renderSuggest();
+            }
+
             var finished = false;
             function finish(save) {
                 if (finished) return;
                 finished = true;
                 var newVal = input.value;
                 cell.removeChild(input);
+                if (suggestBox && suggestBox.parentNode) suggestBox.parentNode.removeChild(suggestBox);
                 if (save && newVal !== original) {
                     cell.textContent = newVal;
                     saveField(cell, newVal);
@@ -278,7 +313,9 @@ function spp_membership_editor_render() {
                 }
             }
 
-            input.addEventListener('blur', function() { finish(true); });
+            input.addEventListener('blur', function() {
+                setTimeout(function() { finish(true); }, 150);
+            });
             input.addEventListener('keydown', function(e) {
                 if (e.key === 'Enter') { e.preventDefault(); finish(true); }
                 if (e.key === 'Escape') { e.preventDefault(); finish(false); }
