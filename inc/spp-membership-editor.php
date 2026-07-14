@@ -114,6 +114,12 @@ function spp_membership_editor_render() {
         .mem-search input { padding: 6px 10px; font-size: 14px; width: 260px; border: 1px solid #ccc; border-radius: 4px; }
         .mem-table { border-collapse: collapse; width: 100%; }
         .mem-table th, .mem-table td { padding: 6px 10px; border-bottom: 1px solid #eee; text-align: left; }
+        @media (max-width: 600px) {
+            .mem-editor { font-size: 12px; }
+            .mem-table th, .mem-table td { padding: 4px 6px; font-size: 12px; }
+            .mem-cell { min-width: 40px; }
+            .mem-search input { width: 100%; max-width: 220px; }
+        }
         .mem-table th, .mem-table th a, .mem-table th:visited {
             background: #3766AB; color: #ffffff !important; cursor: pointer; user-select: none; white-space: nowrap;
         }
