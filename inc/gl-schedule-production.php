@@ -128,8 +128,54 @@ if (!isset($Event) || !$Event) { echo '<p class="gl-error">No event selected. Pl
 // GUARD: Block if published schedule awaiting results
 // -------------------------------------------------------
 if (get_option('spp_schedule_published', 0) && !get_option('spp_results_posted', 0)) {
-    echo '<p class="gl-error" style="color:#c0392b;font-weight:bold;">Cannot produce a new schedule: the published schedule\'s results have not been posted yet. Publish results first.</p>';
-    return;
+
+    // Hard stop, no bypass: real scores are already on the board.
+    // Overwriting Schedules now would silently discard game data.
+    $scores_entered = (int) $wpdb->get_var(
+        "SELECT COUNT(*) FROM Schedules
+         WHERE group_id != 99
+           AND (Game1 IS NOT NULL OR Game2 IS NOT NULL OR Game3 IS NOT NULL
+                OR Game4 IS NOT NULL OR Game5 IS NOT NULL)"
+    );
+
+    if ($scores_entered > 0) {
+        echo '<p class="gl-error" style="color:#c0392b;font-weight:bold;">Cannot produce a new schedule: '
+           . $scores_entered . ' player(s) already have scores entered against the current schedule, '
+           . 'and results have not been posted yet. Publish results first (or use Score Correction) '
+           . 'before running Schedule Production again.</p>';
+        return;
+    }
+
+    // No scores entered yet -- safe to offer a bypass, but confirm first.
+    $bypass_confirmed = isset($_POST['spp_force_reschedule'])
+        && wp_verify_nonce($_POST['spp_reschedule_nonce'] ?? '', 'spp_reschedule_confirm');
+
+    if (!$bypass_confirmed) {
+        echo '<p class="gl-error" style="color:#c0392b;font-weight:bold;">The current schedule is published and results have not been posted yet, '
+           . 'though no scores have been entered against it.</p>';
+        echo '<form method="post">';
+        wp_nonce_field('spp_reschedule_confirm', 'spp_reschedule_nonce');
+        echo '<input type="hidden" name="spp_force_reschedule" value="1">';
+echo '<input type="hidden" name="PBEvent" value="' . esc_attr($Event) . '">';
+        echo '<button type="submit" onclick="return confirm(\'This will discard the current published schedule and produce a new one. Continue?\')">Yes, discard and create a new schedule</button>';
+        echo '</form>';
+        return;
+    }
+
+    // Confirmed -- back up Results before proceeding, just in case.
+    $results_table_exists = $wpdb->get_var("SHOW TABLES LIKE 'Results'");
+    if ($results_table_exists) {
+        $results_rows = (int) $wpdb->get_var("SELECT COUNT(*) FROM Results");
+        if ($results_rows > 0) {
+            $backup_table = "Results_backup_{$Event}_" . date('Ymd_His');
+            $wpdb->query("CREATE TABLE `$backup_table` LIKE Results");
+            $wpdb->query("INSERT INTO `$backup_table` SELECT * FROM Results");
+            echo "Backed up $results_rows existing Results row(s) to <code>$backup_table</code> before proceeding.<br>";
+        }
+    }
+
+   echo '<p style="color:#c0392b;font-weight:bold;">Bypassing publish/results guard -- producing a new schedule.</p>';
+    update_option('spp_schedule_published', 0);
 }
 $schedules_prev = "SchedulesPrev$Event";
 // Need to run this to refresh travel fields
@@ -1150,7 +1196,7 @@ if (isset($Event) and $Event <> 0) {
     $wpdb->query("RENAME TABLE tmp TO $Schedules");
     $wpdb->query("ALTER TABLE $Schedules ADD PRIMARY KEY(user_id)");
     $wpdb->query("ALTER TABLE $Schedules DROP Score");
-    $wpdb->query("ALTER TABLE $Schedules ADD Score int GENERATED ALWAYS AS (Game1+Game2+Game3+Game4+Game5)");
+    $wpdb->query("ALTER TABLE $Schedules ADD Score int GENERATED ALWAYS AS (COALESCE(Game1,0)+COALESCE(Game2,0)+COALESCE(Game3,0)+COALESCE(Game4,0)+COALESCE(Game5,0))");
     $wpdb->query("ALTER TABLE $Schedules ADD RankPrime varchar(3)");
     $wpdb->query("UPDATE $Schedules SET RankPrime = Rank");
     for ($x = 1; $x <= 5; $x++) {
@@ -2185,50 +2231,77 @@ if (isset($Event) and $Event <> 0) {
     // -------------------------------------------------------
     // FINAL VIOLATION REPORT
     // -------------------------------------------------------
-    echo "<br><strong>Travel Time Conflict Report:</strong><br>";
+   echo "<br><strong>Travel Time Conflict Report:</strong><br>";
 
-    $remaining_530 = (int)$wpdb->get_var("
-        SELECT COUNT(DISTINCT group_id) FROM $Schedules 
+    $violations_530 = $wpdb->get_results("
+        SELECT group_id, first_name, last_name FROM $Schedules
         WHERE time_id = 1 AND group_id != 99
         AND travel REGEXP '^-[ ]?5:30'
-    ");
-    $remaining_750 = (int)$wpdb->get_var("
-        SELECT COUNT(DISTINCT group_id) FROM $Schedules 
+        ORDER BY group_id
+    ", ARRAY_A);
+    $remaining_530 = count(array_unique(array_column($violations_530, 'group_id')));
+
+    $violations_750 = $wpdb->get_results("
+        SELECT group_id, first_name, last_name FROM $Schedules
         WHERE time_id = 3 AND group_id != 99
         AND travel REGEXP '^-[ ]?7:50'
-    ");
-    $remaining_plus530 = (int)$wpdb->get_var("
-        SELECT COUNT(DISTINCT group_id) FROM $Schedules 
+        ORDER BY group_id
+    ", ARRAY_A);
+    $remaining_750 = count(array_unique(array_column($violations_750, 'group_id')));
+
+    $violations_plus530 = $wpdb->get_results("
+        SELECT group_id, first_name, last_name FROM $Schedules
         WHERE time_id != 1 AND group_id != 99
         AND (travel LIKE '+5:30%' OR travel REGEXP '^[+]?5:30[^0-9]')
-    ");
+        ORDER BY group_id
+    ", ARRAY_A);
+    $remaining_plus530 = count(array_unique(array_column($violations_plus530, 'group_id')));
 
     if ($remaining_530 === 0) echo "✓ No -5:30 conflicts remaining.<br>";
-    else echo "⚠ $remaining_530 group(s) still have -5:30 players at 5:30pm — manual swap needed.<br>";
+    else {
+        echo "⚠ $remaining_530 group(s) still have -5:30 players at 5:30pm — manual swap needed:<br>";
+        foreach ($violations_530 as $v) echo "&nbsp;&nbsp;&nbsp;Group {$v['group_id']}: {$v['first_name']} {$v['last_name']}<br>";
+    }
 
     if ($remaining_750 === 0) echo "✓ No -7:50 conflicts remaining.<br>";
-    else echo "⚠ $remaining_750 group(s) still have -7:50 players at 7:50pm — manual swap needed.<br>";
+    else {
+        echo "⚠ $remaining_750 group(s) still have -7:50 players at 7:50pm — manual swap needed:<br>";
+        foreach ($violations_750 as $v) echo "&nbsp;&nbsp;&nbsp;Group {$v['group_id']}: {$v['first_name']} {$v['last_name']}<br>";
+    }
 
-    $remaining_plus640 = (int)$wpdb->get_var("
-        SELECT COUNT(DISTINCT group_id) FROM $Schedules
+    $violations_plus640 = $wpdb->get_results("
+        SELECT group_id, first_name, last_name FROM $Schedules
         WHERE time_id != 2 AND group_id != 99
         AND travel LIKE '+6:40%'
-    ");
-    $remaining_plus750 = (int)$wpdb->get_var("
-        SELECT COUNT(DISTINCT group_id) FROM $Schedules
+        ORDER BY group_id
+    ", ARRAY_A);
+    $remaining_plus640 = count(array_unique(array_column($violations_plus640, 'group_id')));
+
+    $violations_plus750 = $wpdb->get_results("
+        SELECT group_id, first_name, last_name FROM $Schedules
         WHERE time_id != 3 AND group_id != 99
         AND travel LIKE '+7:50%'
-    ");
+        ORDER BY group_id
+    ", ARRAY_A);
+    $remaining_plus750 = count(array_unique(array_column($violations_plus750, 'group_id')));
 
     if ($remaining_plus530 === 0) echo "✓ All +5:30 players are at 5:30pm.<br>";
-    else echo "⚠ $remaining_plus530 group(s) still have +5:30 players not at 5:30pm — manual swap needed.<br>";
+    else {
+        echo "⚠ $remaining_plus530 group(s) still have +5:30 players not at 5:30pm — manual swap needed:<br>";
+        foreach ($violations_plus530 as $v) echo "&nbsp;&nbsp;&nbsp;Group {$v['group_id']}: {$v['first_name']} {$v['last_name']}<br>";
+    }
 
     if ($remaining_plus640 === 0) echo "✓ All +6:40 players are at 6:40pm.<br>";
-    else echo "⚠ $remaining_plus640 group(s) still have +6:40 players not at 6:40pm — manual swap needed.<br>";
+    else {
+        echo "⚠ $remaining_plus640 group(s) still have +6:40 players not at 6:40pm — manual swap needed:<br>";
+        foreach ($violations_plus640 as $v) echo "&nbsp;&nbsp;&nbsp;Group {$v['group_id']}: {$v['first_name']} {$v['last_name']}<br>";
+    }
 
     if ($remaining_plus750 === 0) echo "✓ All +7:50 players are at 7:50pm.<br>";
-    else echo "⚠ $remaining_plus750 group(s) still have +7:50 players not at 7:50pm — manual swap needed.<br>";
-
+    else {
+        echo "⚠ $remaining_plus750 group(s) still have +7:50 players not at 7:50pm — manual swap needed:<br>";
+        foreach ($violations_plus750 as $v) echo "&nbsp;&nbsp;&nbsp;Group {$v['group_id']}: {$v['first_name']} {$v['last_name']}<br>";
+    }
     // CARPOOL REPORT
     $cp_score = $carpool_score();
     if ($cp_score === 0) {

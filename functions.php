@@ -44,8 +44,16 @@ require_once get_stylesheet_directory() . '/inc/score-scanner.php';
 require_once get_stylesheet_directory() . '/inc/spp-blog-reminder.php';
 require_once get_stylesheet_directory() . '/inc/spp-blog-system.php';
 require_once get_stylesheet_directory() . '/inc/gl-schedule-production.php';
+require_once get_stylesheet_directory() . '/inc/gl-publish-schedule.php';
 require_once get_stylesheet_directory() . '/inc/spp-schedule-admin.php';
 require_once get_stylesheet_directory() . '/inc/spp-score-entry.php';
+require_once get_stylesheet_directory() . '/inc/spp-score-correction.php';
+require_once get_stylesheet_directory() . '/inc/spp-switch-players.php';
+require_once get_stylesheet_directory() . '/inc/passkey-server.php';
+require_once get_stylesheet_directory() . '/inc/passkey-endpoints.php';
+require_once get_stylesheet_directory() . '/inc/passkey-profile.php';
+require_once get_stylesheet_directory() . '/inc/passkey-login.php';
+require_once get_stylesheet_directory() . '/inc/spp-schedule-check.php';
 require_once get_stylesheet_directory() . '/inc/spp-membership-editor.php';
 
 add_filter('template_include', function($template) {
@@ -92,6 +100,7 @@ function spp_is_ladder_admin() {
    with exceptions for member-facing pages.
    ========================================================= */
 add_action('template_redirect', function() {
+    if (defined('DOING_AJAX') && DOING_AJAX) return;
     if (!is_page()) return;
     if (spp_is_admin_or_editor()) return;
 

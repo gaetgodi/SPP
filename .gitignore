@@ -1,0 +1,12 @@
+# Composer dependencies — installed per-server via composer install
+vendor/
+composer.lock
+
+# OS and editor artifacts
+.DS_Store
+Thumbs.db
+*.log
+
+# VS Code workspace files (server-specific)
+*.code-workspace
+diff.txt
