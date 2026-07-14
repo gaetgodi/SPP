@@ -116,8 +116,8 @@ function spp_membership_editor_render() {
         .mem-table th, .mem-table td { padding: 6px 10px; border-bottom: 1px solid #eee; text-align: left; }
         @media (max-width: 600px) {
             .mem-editor { font-size: 12px; }
-            .mem-table th, .mem-table td { padding: 4px 6px; font-size: 12px; }
-            .mem-cell { min-width: 40px; }
+            .mem-table th, .mem-table td { padding: 1px !important; font-size: 12px; }
+            .mem-cell { min-width: 20px; }
             .mem-search input { width: 100%; max-width: 220px; }
         }
         .mem-table th, .mem-table th a, .mem-table th:visited {
