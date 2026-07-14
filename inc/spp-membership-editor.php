@@ -105,7 +105,7 @@ function spp_membership_editor_render() {
     $nonce = wp_create_nonce( 'spp_membership_editor' );
     ?>
     <style>
-        .mem-editor { font-family: Arial, sans-serif; font-size: 14px; color: #333.mem-editor { font-family: Arial, sans-serif; font-size: 14px; color: #333; padding: 0 20px !important; box-sizing: border-box !important; }; padding: 0 20px; box-sizing: border-box; }
+        .mem-editor { font-family: Arial, sans-serif; font-size: 14px; color: #333; padding: 0 20px !important; box-sizing: border-box !important; }
         .mem-editor input[type=text], .mem-editor input[list], .mem-editor select {
             padding: 3px 6px; font-size: 14px; border: 1px solid #3766AB; border-radius: 3px; width: 100%; box-sizing: border-box;
         }
