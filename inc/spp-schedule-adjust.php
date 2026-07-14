@@ -239,6 +239,8 @@ function spp_sa2_render() {
 
     if ( $action === 'dropout' ) {
         spp_sa2_dropout_flow( $stage );
+    } elseif ( $action === 'add' ) {
+        spp_sa2_add_flow( $stage );
     } else {
         spp_sa2_action_selector();
     }
@@ -307,7 +309,27 @@ function spp_sa2_action_selector() {
     echo '</div>';
     echo '</form>';
 
-    echo '<div class="box" style="opacity:.6;"><strong>Last-minute add</strong> -- coming next.</div>';
+    echo '<form method="post">';
+    wp_nonce_field( 'spp_schedule_adjust', 'spp_sa_nonce' );
+    echo '<input type="hidden" name="spp_sa_action" value="add">';
+    echo '<input type="hidden" name="spp_sa_stage" value="propose">';
+    $roster_uids = array_column( $players, 'user_id' );
+    $master_members = $wpdb->get_results(
+        "SELECT user_id, first_name, last_name FROM Master ORDER BY last_name, first_name",
+        ARRAY_A
+    );
+    echo '<div class="box"><strong>Last-minute add</strong> -- add a member who was not originally scheduled.<br><br>';
+    echo '<select name="spp_sa_add_uid" required>';
+    echo '<option value="">-- select member --</option>';
+    foreach ( $master_members as $m ) {
+        if ( in_array( (int) $m['user_id'], $roster_uids, true ) ) continue; // already scheduled
+        echo '<option value="' . (int) $m['user_id'] . '">' . esc_html( $m['last_name'] . ', ' . $m['first_name'] ) . '</option>';
+    }
+    echo '</select>';
+    echo '<button type="submit" class="btn btn-primary">Propose Add</button>';
+    echo '</div>';
+    echo '</form>';
+
     echo '<div class="box" style="opacity:.6;"><strong>Group time-slot swap</strong> -- coming next.</div>';
     echo '<div class="box" style="opacity:.6;"><strong>Manual rank override</strong> -- coming next.</div>';
     echo '<div class="box" style="opacity:.6;"><strong>Player swap</strong> -- coming next.</div>';
@@ -374,7 +396,8 @@ function spp_sa2_dropout_propose( $carpool_rank_tolerance ) {
 
     if ( ! $needs_rebalance ) {
         echo '<div class="box box-ok">Remaining group size will be ' . count( $remaining ) . ' -- no rebalancing needed.</div>';
-        $plan['mode'] = 'simple';
+        $plan['mode']            = 'simple';
+        $plan['affected_groups'] = array( $group_id );
     } else {
         // Try pack: one other same-slot group with room for all remaining players.
         $same_slot_time = (int) $player['time_id'];
@@ -402,9 +425,10 @@ function spp_sa2_dropout_propose( $carpool_rank_tolerance ) {
 
         if ( $pack_target ) {
             echo '<div class="box box-ok">Group will dissolve. All ' . count( $remaining ) . ' remaining player(s) will be <strong>packed</strong> into group ID ' . $pack_target . ' (same time slot).</div>';
-            $plan['mode']        = 'pack';
-            $plan['pack_target'] = $pack_target;
-            $plan['remaining']   = array_column( $remaining, 'user_id' );
+            $plan['mode']            = 'pack';
+            $plan['pack_target']     = $pack_target;
+            $plan['remaining']       = array_column( $remaining, 'user_id' );
+            $plan['affected_groups'] = array( $group_id, $pack_target );
         } else {
             // Spread across all slots, independently, tracking exclusions.
             $placements = array();
@@ -439,8 +463,9 @@ function spp_sa2_dropout_propose( $carpool_rank_tolerance ) {
                 return;
             }
 
-            $plan['mode']        = 'spread';
-            $plan['placements']  = $placements;
+            $plan['mode']            = 'spread';
+            $plan['placements']      = $placements;
+            $plan['affected_groups'] = array_merge( array( $group_id ), array_map( fn( $d ) => $d['group_id'], $placements ) );
         }
     }
 
@@ -508,6 +533,7 @@ function spp_sa2_dropout_apply( $carpool_rank_tolerance ) {
     echo '<input type="hidden" name="spp_sa_stage" value="finalize">';
     echo '<input type="hidden" name="spp_sa_backup_table" value="' . esc_attr( $backup_table ) . '">';
     echo '<input type="hidden" name="spp_sa_player_id" value="' . (int) $player_id . '">';
+    echo '<input type="hidden" name="spp_sa_affected_groups" value="' . esc_attr( implode( ',', array_map( 'intval', $plan['affected_groups'] ) ) ) . '">';
     echo '<button type="submit" class="btn btn-primary">Looks good -- send notifications</button>';
     echo '</form> ';
 
@@ -532,6 +558,275 @@ function spp_sa2_dropout_undo() {
     spp_sa2_action_selector();
 }
 
+/* =========================================================
+   RANK CALCULATION (fixed RandomRanks get_rank(), plus the
+   old_Rank+bias fallback and current-Master-stats lookup)
+   ========================================================= */
+
+function spp_sa2_get_rank( $rating, $ave, $se, $num ) {
+    switch ( $rating ) {
+        case 2:
+            $max = $num;
+            $min = $ave + 6 * $se;
+            break;
+        case 2.5:
+            $max = $ave + 8 * $se;
+            $min = $ave + 6 * $se;
+            break;
+        case 3:
+            $max = $ave + 4 * $se;
+            $min = $ave + 2 * $se;
+            break;
+        case 3.5:
+            $max = $ave + $se;
+            $min = $ave - 2 * $se;
+            break;
+        case 4:
+            $max = $ave - 2.5 * $se;
+            $min = $ave - 4 * $se;
+            break;
+        case 4.5:
+            $max = $ave - 4.5 * $se;
+            $min = $ave - 6 * $se;
+            break;
+        case 5:
+        case 'Professional':
+            $max = $ave - 6.5 * $se;
+            $min = $ave - 8 * $se;
+            break;
+        default: // 'Beginner' and anything unrecognized -> weak/bottom band
+            $max = $num - 10;
+            $min = $num - 20;
+    }
+    $r = rand( (int) round( $min ), (int) round( $max ) );
+    return min( $num, max( 5, $r ) );
+}
+
+/**
+ * Suggest a rank for $uid. Returns array('rank'=>int, 'source'=>string)
+ * where source explains where the number came from, for display.
+ */
+function spp_sa2_suggest_rank( $uid ) {
+    global $wpdb;
+
+    $current = (int) $wpdb->get_var( $wpdb->prepare( "SELECT Rank FROM Master WHERE user_id = %d", $uid ) );
+    if ( $current > 0 ) {
+        return array( 'rank' => $current, 'source' => 'existing rank on record' );
+    }
+
+    $old_rank = $wpdb->get_var( $wpdb->prepare(
+        "SELECT meta_value FROM {$wpdb->prefix}usermeta WHERE user_id = %d AND meta_key = 'old_Rank'", $uid
+    ) );
+    if ( $old_rank !== null ) {
+        return array( 'rank' => (int) $old_rank + 3, 'source' => 'returning player (old rank + 3)' );
+    }
+
+    $stats = $wpdb->get_row(
+        "SELECT AVG(Rank) AS ave, STDDEV_SAMP(Rank)/SQRT(COUNT(*)) AS se, COUNT(*) AS numplayers
+         FROM Master WHERE Rank > 0", ARRAY_A
+    );
+    $rating = $wpdb->get_var( $wpdb->prepare(
+        "SELECT meta_value FROM {$wpdb->prefix}usermeta WHERE user_id = %d AND meta_key = 'Rating'", $uid
+    ) ) ?: '3';
+
+    $rank = spp_sa2_get_rank( $rating, round( $stats['ave'] ), $stats['se'], (int) $stats['numplayers'] );
+    return array( 'rank' => $rank, 'source' => "calculated from Rating ({$rating}) against current ladder stats" );
+}
+
+/* =========================================================
+   LAST-MINUTE ADD
+   ========================================================= */
+
+function spp_sa2_add_flow( $stage ) {
+    $carpool_rank_tolerance = 15;
+
+    if ( $stage === 'propose' ) {
+        spp_sa2_add_propose( $carpool_rank_tolerance );
+    } elseif ( $stage === 'propose_placement' ) {
+        spp_sa2_add_propose_placement( $carpool_rank_tolerance );
+    } elseif ( $stage === 'apply' ) {
+        spp_sa2_add_apply( $carpool_rank_tolerance );
+    } elseif ( $stage === 'finalize' ) {
+        spp_sa2_add_finalize();
+    } elseif ( $stage === 'undo' ) {
+        spp_sa2_add_undo();
+    } else {
+        spp_sa2_action_selector();
+    }
+}
+
+// Stage 1: pick the member -> show suggested rank, editable, before we search placement.
+function spp_sa2_add_propose( $carpool_rank_tolerance ) {
+    global $wpdb;
+
+    $uid = (int) ( $_POST['spp_sa_add_uid'] ?? 0 );
+    if ( ! $uid ) {
+        echo '<p class="box box-err">No member selected.</p>';
+        spp_sa2_action_selector();
+        return;
+    }
+
+    $member = $wpdb->get_row( $wpdb->prepare( "SELECT first_name, last_name FROM Master WHERE user_id = %d", $uid ), ARRAY_A );
+    $suggestion = spp_sa2_suggest_rank( $uid );
+
+    echo '<h3>Last-Minute Add -- Rank</h3>';
+    echo '<div class="box">Adding <strong>' . esc_html( $member['first_name'] . ' ' . $member['last_name'] ) . '</strong>.<br>';
+    echo 'Suggested rank: <strong>' . (int) $suggestion['rank'] . '</strong> (' . esc_html( $suggestion['source'] ) . ')</div>';
+
+    echo '<form method="post">';
+    wp_nonce_field( 'spp_schedule_adjust', 'spp_sa_nonce' );
+    echo '<input type="hidden" name="spp_sa_action" value="add">';
+    echo '<input type="hidden" name="spp_sa_stage" value="propose_placement">';
+    echo '<input type="hidden" name="spp_sa_add_uid" value="' . (int) $uid . '">';
+    echo '<label>Rank to use (edit if needed):</label>';
+    echo '<input type="number" name="spp_sa_add_rank" value="' . (int) $suggestion['rank'] . '" min="1" required>';
+    echo '<button type="submit" class="btn btn-primary">Find a placement</button>';
+    echo '</form>';
+}
+
+// Stage 2: search all time slots for best-fit group, show the proposal.
+function spp_sa2_add_propose_placement( $carpool_rank_tolerance ) {
+    global $wpdb;
+
+    $uid  = (int) ( $_POST['spp_sa_add_uid'] ?? 0 );
+    $rank = (int) ( $_POST['spp_sa_add_rank'] ?? 0 );
+
+    $member = $wpdb->get_row( $wpdb->prepare( "SELECT first_name, last_name, travel FROM Master WHERE user_id = %d", $uid ), ARRAY_A );
+
+    $best = spp_sa2_find_best_group( $uid, $rank, $member['travel'], null, array(), $carpool_rank_tolerance );
+
+    echo '<h3>Last-Minute Add -- Placement</h3>';
+
+    if ( ! $best ) {
+        echo '<div class="box box-err">No group has room for <strong>' . esc_html( $member['first_name'] . ' ' . $member['last_name'] ) . '</strong> at rank ' . (int) $rank . ' without breaking a carpool match or exceeding 5 players. Cannot proceed automatically.</div>';
+        $back_form = true;
+    } else {
+        $group_desc = $wpdb->get_row( $wpdb->prepare(
+            "SELECT g.GP_name, t.T_desc FROM Groups g, Times t
+             WHERE g.GP_ID = %d AND t.T_ID = %d", $best['group_id'], $best['time_id']
+        ), ARRAY_A );
+        echo '<div class="box box-ok">Best fit: <strong>' . esc_html( $group_desc['GP_name'] ?? ('Group ' . $best['group_id']) )
+           . '</strong> at ' . esc_html( $group_desc['T_desc'] ?? '' ) . '.</div>';
+
+        echo '<form method="post">';
+        wp_nonce_field( 'spp_schedule_adjust', 'spp_sa_nonce' );
+        echo '<input type="hidden" name="spp_sa_action" value="add">';
+        echo '<input type="hidden" name="spp_sa_stage" value="apply">';
+        echo '<input type="hidden" name="spp_sa_add_uid" value="' . (int) $uid . '">';
+        echo '<input type="hidden" name="spp_sa_add_rank" value="' . (int) $rank . '">';
+        echo '<input type="hidden" name="spp_sa_add_group" value="' . (int) $best['group_id'] . '">';
+        echo '<input type="hidden" name="spp_sa_add_time" value="' . (int) $best['time_id'] . '">';
+        echo '<input type="hidden" name="spp_sa_add_crt" value="' . (int) $best['Crt_ID'] . '">';
+        echo '<button type="submit" class="btn btn-primary" onclick="return confirm(\'Apply this add? A backup will be taken and a validation check will run before anything is sent.\')">Apply and Check</button>';
+        echo '</form>';
+        $back_form = false;
+    }
+
+    if ( ! empty( $back_form ) ) {
+        echo '<form method="post">';
+        wp_nonce_field( 'spp_schedule_adjust', 'spp_sa_nonce' );
+        echo '<input type="hidden" name="spp_sa_action" value="add"><input type="hidden" name="spp_sa_stage" value="select">';
+        echo '<button type="submit" class="btn btn-neutral">Back</button></form>';
+    }
+}
+
+function spp_sa2_add_apply( $carpool_rank_tolerance ) {
+    global $wpdb;
+
+    $uid     = (int) ( $_POST['spp_sa_add_uid'] ?? 0 );
+    $rank    = (int) ( $_POST['spp_sa_add_rank'] ?? 0 );
+    $group_id = (int) ( $_POST['spp_sa_add_group'] ?? 0 );
+    $time_id  = (int) ( $_POST['spp_sa_add_time'] ?? 0 );
+    $crt_id   = (int) ( $_POST['spp_sa_add_crt'] ?? 0 );
+
+    $backup_table = spp_sa2_backup_schedules( 'add' );
+
+    // Permanently update the rank on Master + usermeta, same as the
+    // official RandomRanks / Create-membership-table cycle.
+    $wpdb->update( 'Master', array( 'Rank' => $rank ), array( 'user_id' => $uid ) );
+    $wpdb->query( $wpdb->prepare( "DELETE FROM {$wpdb->prefix}usermeta WHERE user_id = %d AND meta_key = 'Rank'", $uid ) );
+    $wpdb->query( $wpdb->prepare( "INSERT INTO {$wpdb->prefix}usermeta (user_id, meta_key, meta_value) VALUES (%d, 'Rank', %d)", $uid, $rank ) );
+    $wpdb->query( $wpdb->prepare( "DELETE FROM {$wpdb->prefix}usermeta WHERE user_id = %d AND meta_key = 'Ladder'", $uid ) );
+    $wpdb->query( $wpdb->prepare( "INSERT INTO {$wpdb->prefix}usermeta (user_id, meta_key, meta_value) VALUES (%d, 'Ladder', 'Yes')", $uid ) );
+
+    $member = $wpdb->get_row( $wpdb->prepare( "SELECT first_name, last_name, user_phone FROM Master WHERE user_id = %d", $uid ), ARRAY_A );
+
+    $wpdb->insert( 'Schedules', array(
+        'user_id'    => $uid,
+        'first_name' => $member['first_name'],
+        'last_name'  => $member['last_name'],
+        'user_phone' => $member['user_phone'],
+        'Rank'       => $rank,
+        'group_id'   => $group_id,
+        'Crt_ID'     => $crt_id,
+        'time_id'    => $time_id,
+    ) );
+
+    echo '<h3>Applied -- Validation Check</h3>';
+    echo '<div class="box">Backup saved as <code>' . esc_html( $backup_table ) . '</code>. Rank permanently set to ' . (int) $rank . '.</div>';
+
+    if ( function_exists( 'spp_run_schedule_check' ) ) {
+        echo '<div class="box">';
+        spp_run_schedule_check();
+        echo '</div>';
+    }
+
+    echo '<form method="post" style="display:inline;">';
+    wp_nonce_field( 'spp_schedule_adjust', 'spp_sa_nonce' );
+    echo '<input type="hidden" name="spp_sa_action" value="add">';
+    echo '<input type="hidden" name="spp_sa_stage" value="finalize">';
+    echo '<input type="hidden" name="spp_sa_backup_table" value="' . esc_attr( $backup_table ) . '">';
+    echo '<input type="hidden" name="spp_sa_affected_groups" value="' . (int) $group_id . '">';
+    echo '<button type="submit" class="btn btn-primary">Looks good -- send notifications</button>';
+    echo '</form> ';
+
+    echo '<form method="post" style="display:inline;">';
+    wp_nonce_field( 'spp_schedule_adjust', 'spp_sa_nonce' );
+    echo '<input type="hidden" name="spp_sa_action" value="add">';
+    echo '<input type="hidden" name="spp_sa_stage" value="undo">';
+    echo '<input type="hidden" name="spp_sa_backup_table" value="' . esc_attr( $backup_table ) . '">';
+    echo '<button type="submit" class="btn btn-danger" onclick="return confirm(\'Discard this change and restore the previous schedule? Note: the rank update to Master will NOT be reverted by this undo.\')">Not acceptable -- undo</button>';
+    echo '</form>';
+    echo '<p style="font-size:12px;color:#888;">Note: undo restores the Schedules table only. If you need to revert the rank change too, use Manual Rank Override.</p>';
+}
+
+function spp_sa2_add_undo() {
+    $backup_table = sanitize_text_field( $_POST['spp_sa_backup_table'] ?? '' );
+    $ok = spp_sa2_restore_schedules( $backup_table );
+    echo '<h3>Undo</h3>';
+    if ( $ok ) {
+        echo '<div class="box box-ok">Restored from <code>' . esc_html( $backup_table ) . '</code>. No notifications were sent.</div>';
+    } else {
+        echo '<div class="box box-err">Could not restore -- backup table not found.</div>';
+    }
+    spp_sa2_action_selector();
+}
+
+function spp_sa2_add_finalize() {
+    $backup_table = sanitize_text_field( $_POST['spp_sa_backup_table'] ?? '' );
+    $affected_group_ids = array_filter( array_map( 'intval', explode( ',', $_POST['spp_sa_affected_groups'] ?? '' ) ) );
+
+    echo '<h3>Finalized</h3>';
+    echo '<div class="box box-ok">Change kept. Backup <code>' . esc_html( $backup_table ) . '</code> retained for this event.</div>';
+
+    $result = spp_sa2_notify(
+        $affected_group_ids,
+        'A player was added to the schedule at the last minute.',
+        'Last-Minute Add'
+    );
+
+    if ( ! $result['published'] ) {
+        echo '<div class="box">Schedule not yet published -- players were not notified. Convenor confirmation email '
+           . ( $result['convenor'] ? 'sent to ' . esc_html( $result['convenor_email'] ) : 'FAILED' ) . '.</div>';
+    } else {
+        echo '<div class="box">Notified ' . (int) $result['sent'] . ' player(s)'
+           . ( $result['failed'] ? ' (' . (int) $result['failed'] . ' failed)' : '' )
+           . '. Convenor summary ' . ( $result['convenor'] ? 'sent to ' . esc_html( $result['convenor_email'] ) : 'FAILED' ) . '.</div>';
+    }
+
+    spp_sa2_action_selector();
+}
+
 function spp_sa2_dropout_finalize() {
     global $wpdb;
 
@@ -541,24 +836,22 @@ function spp_sa2_dropout_finalize() {
     echo '<h3>Finalized</h3>';
     echo '<div class="box box-ok">Change kept. Backup <code>' . esc_html( $backup_table ) . '</code> retained for this event.</div>';
 
-    $schedule_published = (int) get_option( 'spp_schedule_published', 0 );
-    $convenor_email = spp_sa2_get_convenor_email();
+    $affected_group_ids = array_filter( array_map( 'intval', explode( ',', $_POST['spp_sa_affected_groups'] ?? '' ) ) );
 
-    if ( ! $schedule_published ) {
-        wp_mail( $convenor_email,
-            'Stouffville Pickleball Players -- Schedule Adjustment (pre-publish)',
-            '<p>A dropout was processed before the schedule was published. No player notifications were sent -- the published schedule will reflect this automatically.</p>',
-            array( 'Content-Type: text/html; charset=UTF-8' )
-        );
-        echo '<div class="box">Schedule not yet published -- players were not notified. Convenor confirmation email sent to ' . esc_html( $convenor_email ) . '.</div>';
-        spp_sa2_action_selector();
-        return;
+    $result = spp_sa2_notify(
+        $affected_group_ids,
+        'A player dropped out and the schedule was adjusted accordingly.',
+        'Dropout Adjustment'
+    );
+
+    if ( ! $result['published'] ) {
+        echo '<div class="box">Schedule not yet published -- players were not notified. Convenor confirmation email '
+           . ( $result['convenor'] ? 'sent to ' . esc_html( $result['convenor_email'] ) : 'FAILED' ) . '.</div>';
+    } else {
+        echo '<div class="box">Notified ' . (int) $result['sent'] . ' player(s)'
+           . ( $result['failed'] ? ' (' . (int) $result['failed'] . ' failed)' : '' )
+           . '. Convenor summary ' . ( $result['convenor'] ? 'sent to ' . esc_html( $result['convenor_email'] ) : 'FAILED' ) . '.</div>';
     }
-
-    // Published: notify every player currently in the groups that were touched.
-    // (Simplification for this pass: notify everyone in the current full schedule's
-    // affected groups by re-checking group membership post-change.)
-    echo '<div class="box">Schedule is published -- notification sending will be wired in the next pass alongside the other four actions, so all five share one notify routine.</div>';
 
     spp_sa2_action_selector();
 }
@@ -573,4 +866,166 @@ function spp_sa2_get_convenor_email() {
          WHERE o.id = %d", $event
     ) );
     return $email ?: 'abrooks@rogers.com';
+}
+
+/* =========================================================
+   SHARED NOTIFICATION ROUTINE
+   Used by every mutating action (dropout, add, swap, group
+   swap). Same visual pattern as gl-publish-schedule.php and
+   spp-switch-players.php: personalized email per player in
+   each affected group, plus one convenor summary.
+   Pre-publish: skips player emails entirely (Publish Schedule
+   will send the real thing later), sends a convenor
+   confirmation only, clearly marked "pre-publish".
+   ========================================================= */
+
+function spp_sa2_notify( array $affected_group_ids, string $change_note, string $action_label ) {
+    global $wpdb;
+
+    $affected_group_ids = array_values( array_unique( array_map( 'intval', $affected_group_ids ) ) );
+    $event_date = spp_sa2_get_event_date();
+    $subject    = "Stouffville Pickleball Players -- Schedule Change for {$event_date}";
+    $schedule_published = (int) get_option( 'spp_schedule_published', 0 );
+    $convenor_email      = spp_sa2_get_convenor_email();
+    $headers = array(
+        'Content-Type: text/html; charset=UTF-8',
+        'From: Stouffville Pickleball Players <pb@pickleballstouffville.ca>',
+    );
+
+    if ( ! $schedule_published ) {
+        $body = spp_sa2_email_header( $event_date )
+              . '<tr><td style="padding:16px 24px;"><p style="font-size:14px;color:#333;">'
+              . '<strong>' . esc_html( $action_label ) . '</strong> was processed before the schedule was published.</p>'
+              . '<p style="font-size:14px;color:#333;">' . $change_note . '</p>'
+              . '<p style="font-size:13px;color:#888;">No players were notified -- the published schedule will reflect this change automatically.</p>'
+              . '</td></tr>'
+              . spp_sa2_email_footer();
+        $ok = wp_mail( $convenor_email, $subject . ' [PRE-PUBLISH]', $body, $headers );
+        return array(
+            'published' => false,
+            'sent'      => 0,
+            'failed'    => 0,
+            'convenor'  => $ok,
+            'convenor_email' => $convenor_email,
+        );
+    }
+
+    $pairings_5 = array(
+        array( 'name' => 'Round 1', 'blue' => array(0,1), 'red' => array(2,3), 'bye' => 4 ),
+        array( 'name' => 'Round 2', 'blue' => array(0,2), 'red' => array(1,4), 'bye' => 3 ),
+        array( 'name' => 'Round 3', 'blue' => array(0,3), 'red' => array(2,4), 'bye' => 1 ),
+        array( 'name' => 'Round 4', 'blue' => array(0,4), 'red' => array(1,3), 'bye' => 2 ),
+        array( 'name' => 'Round 5', 'blue' => array(1,2), 'red' => array(3,4), 'bye' => 0 ),
+    );
+    $pairings_4 = array(
+        array( 'name' => 'Round 1', 'blue' => array(0,1), 'red' => array(2,3), 'bye' => -1 ),
+        array( 'name' => 'Round 2', 'blue' => array(0,2), 'red' => array(1,3), 'bye' => -1 ),
+        array( 'name' => 'Round 3', 'blue' => array(0,3), 'red' => array(1,2), 'bye' => -1 ),
+    );
+
+    $sent = 0; $failed = 0;
+    $convenor_body_groups = '';
+
+    foreach ( $affected_group_ids as $gid ) {
+        $roster = $wpdb->get_results( $wpdb->prepare(
+            "SELECT s.user_id, s.first_name, s.last_name, s.user_phone, s.Rank, s.group_id,
+                    m.user_email, g.GP_name, c.Crt_name, t.T_desc
+             FROM Schedules s
+             JOIN Groups g ON s.group_id = g.GP_ID
+             JOIN Courts c ON s.Crt_ID = c.Crt_ID
+             JOIN Times t  ON s.time_id = t.T_ID
+             LEFT JOIN membership m ON s.user_id = m.user_id
+             WHERE s.group_id = %d ORDER BY s.Rank", $gid
+        ), ARRAY_A );
+
+        if ( empty( $roster ) ) continue; // group dissolved, nothing to notify here
+
+        $pairings = count( $roster ) >= 5 ? $pairings_5 : $pairings_4;
+
+        foreach ( $roster as $player ) {
+            if ( empty( $player['user_email'] ) ) continue;
+            $body = spp_sa2_email_header( $event_date )
+                  . spp_sa2_email_group_block( $roster, $pairings, $player['user_id'] )
+                  . spp_sa2_email_footer();
+            $ok = wp_mail( $player['user_email'], $subject, $body, $headers );
+            if ( $ok ) $sent++; else $failed++;
+        }
+
+        $convenor_body_groups .= spp_sa2_email_group_block( $roster, $pairings, 0 );
+    }
+
+    $convenor_body = spp_sa2_email_header( $event_date )
+        . '<tr><td style="padding:16px 24px 4px 24px;">'
+        . '<p style="font-size:15px;font-weight:bold;color:#2c3e50;margin:0 0 4px 0;">' . esc_html( $action_label ) . '</p>'
+        . '<p style="font-size:14px;color:#555;margin:0 0 12px 0;">' . $change_note . '</p>'
+        . '</td></tr>'
+        . $convenor_body_groups
+        . spp_sa2_email_footer();
+
+    $ok_convenor = wp_mail( $convenor_email, $subject . ' [SUMMARY]', $convenor_body, $headers );
+
+    return array(
+        'published' => true,
+        'sent'      => $sent,
+        'failed'    => $failed,
+        'convenor'  => $ok_convenor,
+        'convenor_email' => $convenor_email,
+    );
+}
+
+function spp_sa2_get_event_date() {
+    global $wpdb;
+    $event = (int) get_option( 'spp_current_event', 0 );
+    $prefix = $wpdb->prefix;
+    $raw = $wpdb->get_var( $wpdb->prepare(
+        "SELECT event_date FROM {$prefix}gl_event_occurrences WHERE id = %d", $event
+    ) );
+    return $raw ? date( 'F d, Y', strtotime( $raw ) ) : 'tonight';
+}
+
+function spp_sa2_email_header( $event_date ) {
+    $logo_url = 'https://pickleballstouffville.ca/wp-content/uploads/2024/03/SPP_Logo-96DPI-8X-3.52-480x211.png';
+    return '<!DOCTYPE html><html><body style="margin:0;padding:0;background:#f5f5f5;">
+<table width="620" cellpadding="0" cellspacing="0" style="margin:20px auto;background:#fdfae8;border:1px solid #ddd;font-family:Arial,sans-serif;font-size:14px;color:#333;">
+  <tr><td style="padding:16px 24px;border-bottom:1px solid #ddd;">
+    <table width="100%" cellpadding="0" cellspacing="0"><tr>
+      <td width="160"><img src="' . $logo_url . '" width="160" alt="SPP Logo"></td>
+      <td style="text-align:center;padding-left:10px;">
+        <strong style="font-size:16px;">Stouffville Pickleball Players</strong><br>
+        <span style="font-size:13px;color:#666;">Schedule update -- ' . esc_html( $event_date ) . '</span>
+      </td>
+    </tr></table>
+  </td></tr>';
+}
+
+function spp_sa2_email_footer() {
+    $schedule_url = 'https://pickleballstouffville.ca/gl-player-schedule-view/';
+    return '<tr><td style="padding:16px 24px;border-top:1px solid #ddd;font-size:12px;color:#666;text-align:center;">
+    <a href="' . $schedule_url . '" style="color:#3766AB;">View full schedule on the website</a>
+  </td></tr></table></body></html>';
+}
+
+function spp_sa2_email_group_block( $players, $pairings, $my_user_id ) {
+    $p0 = $players[0];
+    $html = '<tr><td style="padding:16px 24px 8px 24px;">';
+    if ( $my_user_id ) {
+        $html .= '<p style="margin:0 0 8px 0;font-size:15px;font-weight:bold;color:red;">Your schedule has changed tonight!</p>';
+    }
+    $html .= '<div style="background:#2c3e50;color:#ffffff;padding:8px 12px;border-radius:6px 6px 0 0;font-weight:bold;font-size:15px;">'
+            . esc_html( $p0['GP_name'] ) . ' &mdash; ' . esc_html( $p0['Crt_name'] ) . ' &mdash; ' . esc_html( $p0['T_desc'] ) . '</div>';
+    $html .= '<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;border:1px solid #ddd;margin-bottom:12px;">
+      <thead><tr style="background:#3766AB;">
+        <td style="color:#fff;padding:5px 8px;font-weight:bold;width:40px;">Rank</td>
+        <td style="color:#fff;padding:5px 8px;font-weight:bold;">Name</td>
+        <td style="color:#fff;padding:5px 8px;font-weight:bold;">Phone</td>
+      </tr></thead><tbody>';
+    foreach ( $players as $i => $p ) {
+        $is_me = ( (int) $p['user_id'] === (int) $my_user_id );
+        $bg = $is_me ? 'background:#e8f5e9;font-weight:bold;' : ( $i % 2 == 0 ? 'background:#f9f9f9;' : 'background:#ffffff;' );
+        $html .= '<tr style="' . $bg . '"><td style="padding:5px 8px;border-bottom:1px solid #eee;">' . esc_html( $p['Rank'] ) . '</td>'
+               . '<td style="padding:5px 8px;border-bottom:1px solid #eee;">' . esc_html( $p['first_name'] . ' ' . $p['last_name'] ) . ( $is_me ? ' (me)' : '' ) . '</td>'
+               . '<td style="padding:5px 8px;border-bottom:1px solid #eee;">' . esc_html( $p['user_phone'] ) . '</td></tr>';
+    }
+    $html .= '</tbody></table></td></tr>';
+    return $html;
 }
