@@ -18,8 +18,13 @@
         results. NO notifications sent yet.
      3. Convenor reviews the check output and picks:
           "Looks good -- send notifications"  -> finalize, notify
-          "Not acceptable -- undo"            -> restore backup,
-                                                  discard, retry
+          "Not acceptable -- cancel"          -> surgically revert only the
+                                                  rows this specific action
+                                                  changed (not a blunt
+                                                  full-table restore, so any
+                                                  other already-finalized
+                                                  change or concurrent edit
+                                                  is left untouched), retry
 
    Backup tables (Schedules_backup_<action>_<timestamp>) are
    kept intentionally -- not auto-dropped after finalize/undo.
@@ -217,8 +222,46 @@ function spp_sa2_restore_schedules( $backup_table ) {
     if ( ! preg_match( '/^Schedules_backup_[a-z0-9_]+$/i', $backup_table ) ) return false;
     $exists = $wpdb->get_var( "SHOW TABLES LIKE '$backup_table'" );
     if ( ! $exists ) return false;
-    $wpdb->query( "TRUNCATE TABLE Schedules" );
-    $wpdb->query( "INSERT INTO Schedules SELECT * FROM `$backup_table`" );
+
+    // Surgical, not blunt: only touch rows this specific action's apply
+    // step actually changed. A full TRUNCATE + restore would also wipe out
+    // any unrelated change made elsewhere in Schedules since the backup was
+    // taken (e.g. another action already finalized in this same session,
+    // or a concurrent edit in another tab) -- forcing it to be redone. This
+    // instead restores/re-adds/removes only the specific rows that differ.
+    $backup_rows  = $wpdb->get_results( "SELECT user_id, first_name, last_name, user_phone, Rank, group_id, Crt_ID, time_id FROM `$backup_table`", ARRAY_A );
+    $current_rows = $wpdb->get_results( "SELECT user_id, group_id, Crt_ID, time_id FROM Schedules", ARRAY_A );
+
+    $backup_by_uid  = array_column( $backup_rows, null, 'user_id' );
+    $current_by_uid = array_column( $current_rows, null, 'user_id' );
+
+    // Rows that existed before this action's apply: put them back exactly
+    // as they were, whether that means restoring their group/time/court,
+    // or re-inserting them if this action deleted them (dropout).
+    foreach ( $backup_by_uid as $uid => $brow ) {
+        if ( isset( $current_by_uid[ $uid ] ) ) {
+            $c = $current_by_uid[ $uid ];
+            if ( (int) $c['group_id'] !== (int) $brow['group_id']
+              || (int) $c['Crt_ID']   !== (int) $brow['Crt_ID']
+              || (int) $c['time_id']  !== (int) $brow['time_id'] ) {
+                $wpdb->update( 'Schedules',
+                    array( 'group_id' => $brow['group_id'], 'Crt_ID' => $brow['Crt_ID'], 'time_id' => $brow['time_id'] ),
+                    array( 'user_id' => $uid )
+                );
+            }
+        } else {
+            $wpdb->insert( 'Schedules', $brow );
+        }
+    }
+
+    // Rows that exist now but didn't exist in the backup: this action added
+    // them (last-minute add) -- remove just those.
+    foreach ( $current_by_uid as $uid => $crow ) {
+        if ( ! isset( $backup_by_uid[ $uid ] ) ) {
+            $wpdb->delete( 'Schedules', array( 'user_id' => $uid ) );
+        }
+    }
+
     return true;
 }
 
@@ -340,6 +383,23 @@ function spp_sa2_action_selector() {
     echo '</div>';
     echo '</form>';
 
+    echo '<div class="box"><strong>Group time-slot swap</strong><br><br>';
+
+    echo '<form method="post">';
+    wp_nonce_field( 'spp_schedule_adjust', 'spp_sa_nonce' );
+    echo '<input type="hidden" name="spp_sa_action" value="groupswap">';
+    echo '<input type="hidden" name="spp_sa_stage" value="propose_by_player">';
+    echo '<label><strong>By player</strong> -- find a candidate swap that gets this player into a time slot they can actually make</label>';
+    echo '<select name="spp_sa_gs_player" required><option value="">-- select player --</option>';
+    foreach ( $players as $p ) {
+        echo '<option value="' . (int) $p['user_id'] . '">' . esc_html( $p['last_name'] . ', ' . $p['first_name'] ) . ' (' . esc_html( $p['GP_name'] ) . ' -- ' . esc_html( $p['T_desc'] ) . ')</option>';
+    }
+    echo '</select>';
+    echo '<button type="submit" class="btn btn-primary">Find Candidate Swaps</button>';
+    echo '</form>';
+
+    echo '<hr style="margin:16px 0;border:none;border-top:1px solid #ddd;">';
+
     echo '<form method="post">';
     wp_nonce_field( 'spp_schedule_adjust', 'spp_sa_nonce' );
     echo '<input type="hidden" name="spp_sa_action" value="groupswap">';
@@ -353,7 +413,7 @@ function spp_sa2_action_selector() {
          GROUP BY s.group_id
          ORDER BY g.GP_name", ARRAY_A
     );
-    echo '<div class="box"><strong>Group time-slot swap</strong> -- swap two groups\' court/time assignment.<br><br>';
+    echo '<label><strong>By groups directly</strong> -- manual fallback, not tied to any one player\'s need</label>';
     echo '<label>Group A</label><select name="spp_sa_gs_a" required><option value="">-- select --</option>';
     foreach ( $groups_now as $g ) {
         echo '<option value="' . (int) $g['group_id'] . '">' . esc_html( $g['GP_name'] . ' -- ' . $g['T_desc'] ) . '</option>';
@@ -539,6 +599,7 @@ function spp_sa2_dropout_propose( $carpool_rank_tolerance ) {
     echo '<input type="hidden" name="spp_sa_stage" value="apply">';
     echo '<input type="hidden" name="spp_sa_plan" value="' . esc_attr( base64_encode( wp_json_encode( $plan ) ) ) . '">';
     echo '<button type="submit" class="btn btn-primary" onclick="return confirm(\'Apply this dropout? A backup will be taken and a validation check will run before anything is sent.\')">Apply and Check</button>';
+    echo '<a href="' . esc_url( $_SERVER['REQUEST_URI'] ) . '" class="btn btn-neutral" style="text-decoration:none;">Cancel</a>';
     echo '</form>';
 }
 
@@ -606,7 +667,7 @@ function spp_sa2_dropout_apply( $carpool_rank_tolerance ) {
     echo '<input type="hidden" name="spp_sa_action" value="dropout">';
     echo '<input type="hidden" name="spp_sa_stage" value="undo">';
     echo '<input type="hidden" name="spp_sa_backup_table" value="' . esc_attr( $backup_table ) . '">';
-    echo '<button type="submit" class="btn btn-danger" onclick="return confirm(\'Discard this change and restore the previous schedule?\')">Not acceptable -- undo</button>';
+    echo '<button type="submit" class="btn btn-danger" onclick="return confirm(\'Cancel this change? Only the rows this action touched will be reverted -- nothing else will be affected.\')">Not acceptable -- cancel</button>';
     echo '</form>';
 }
 
@@ -725,6 +786,7 @@ function spp_sa2_rank_propose() {
     echo '<label>New rank:</label>';
     echo '<input type="number" name="spp_sa_new_rank" value="' . (int) $member['Rank'] . '" min="1" required>';
     echo '<button type="submit" class="btn btn-primary">Save</button>';
+    echo '<a href="' . esc_url( $_SERVER['REQUEST_URI'] ) . '" class="btn btn-neutral" style="text-decoration:none;">Cancel</a>';
     echo '</form>';
 }
 
@@ -870,6 +932,7 @@ function spp_sa2_playerswap_propose( $carpool_rank_tolerance ) {
     } else {
         echo '<button type="submit" class="btn btn-primary" onclick="return confirm(\'Apply this change? A backup will be taken and a validation check will run before anything is sent.\')">Apply and Check</button>';
     }
+    echo '<a href="' . esc_url( $_SERVER['REQUEST_URI'] ) . '" class="btn btn-neutral" style="text-decoration:none;">Cancel</a>';
     echo '</form>';
 }
 
@@ -920,7 +983,7 @@ function spp_sa2_playerswap_apply( $carpool_rank_tolerance ) {
     echo '<input type="hidden" name="spp_sa_action" value="playerswap">';
     echo '<input type="hidden" name="spp_sa_stage" value="undo">';
     echo '<input type="hidden" name="spp_sa_backup_table" value="' . esc_attr( $backup_table ) . '">';
-    echo '<button type="submit" class="btn btn-danger" onclick="return confirm(\'Discard this change and restore the previous schedule?\')">Not acceptable -- undo</button>';
+    echo '<button type="submit" class="btn btn-danger" onclick="return confirm(\'Cancel this change? Only the rows this action touched will be reverted -- nothing else will be affected.\')">Not acceptable -- cancel</button>';
     echo '</form>';
 }
 
@@ -1068,6 +1131,7 @@ function spp_sa2_add_propose( $carpool_rank_tolerance ) {
     echo '<label>Rank to use (edit if needed):</label>';
     echo '<input type="number" name="spp_sa_add_rank" value="' . (int) $suggestion['rank'] . '" min="1" required>';
     echo '<button type="submit" class="btn btn-primary">Find a placement</button>';
+    echo '<a href="' . esc_url( $_SERVER['REQUEST_URI'] ) . '" class="btn btn-neutral" style="text-decoration:none;">Cancel</a>';
     echo '</form>';
 }
 
@@ -1086,7 +1150,7 @@ function spp_sa2_add_propose_placement( $carpool_rank_tolerance ) {
 
     if ( ! $best ) {
         echo '<div class="box box-err">No group has room for <strong>' . esc_html( $member['first_name'] . ' ' . $member['last_name'] ) . '</strong> at rank ' . (int) $rank . ' without breaking a carpool match or exceeding 5 players. Cannot proceed automatically.</div>';
-        $back_form = true;
+        echo '<a href="' . esc_url( $_SERVER['REQUEST_URI'] ) . '" class="btn btn-neutral" style="text-decoration:none;">Cancel</a>';
     } else {
         $group_desc = $wpdb->get_row( $wpdb->prepare(
             "SELECT g.GP_name, t.T_desc FROM Groups g, Times t
@@ -1105,15 +1169,8 @@ function spp_sa2_add_propose_placement( $carpool_rank_tolerance ) {
         echo '<input type="hidden" name="spp_sa_add_time" value="' . (int) $best['time_id'] . '">';
         echo '<input type="hidden" name="spp_sa_add_crt" value="' . (int) $best['Crt_ID'] . '">';
         echo '<button type="submit" class="btn btn-primary" onclick="return confirm(\'Apply this add? A backup will be taken and a validation check will run before anything is sent.\')">Apply and Check</button>';
+        echo '<a href="' . esc_url( $_SERVER['REQUEST_URI'] ) . '" class="btn btn-neutral" style="text-decoration:none;">Cancel</a>';
         echo '</form>';
-        $back_form = false;
-    }
-
-    if ( ! empty( $back_form ) ) {
-        echo '<form method="post">';
-        wp_nonce_field( 'spp_schedule_adjust', 'spp_sa_nonce' );
-        echo '<input type="hidden" name="spp_sa_action" value="add"><input type="hidden" name="spp_sa_stage" value="select">';
-        echo '<button type="submit" class="btn btn-neutral">Back</button></form>';
     }
 }
 
@@ -1174,7 +1231,7 @@ function spp_sa2_add_apply( $carpool_rank_tolerance ) {
     echo '<input type="hidden" name="spp_sa_action" value="add">';
     echo '<input type="hidden" name="spp_sa_stage" value="undo">';
     echo '<input type="hidden" name="spp_sa_backup_table" value="' . esc_attr( $backup_table ) . '">';
-    echo '<button type="submit" class="btn btn-danger" onclick="return confirm(\'Discard this change and restore the previous schedule? Note: the rank update to Master will NOT be reverted by this undo.\')">Not acceptable -- undo</button>';
+    echo '<button type="submit" class="btn btn-danger" onclick="return confirm(\'Cancel this change? Only the rows this action touched will be reverted -- nothing else will be affected. Note: the rank update to Master will NOT be reverted by this cancel.\')">Not acceptable -- cancel</button>';
     echo '</form>';
     echo '<p style="font-size:12px;color:#888;">Note: undo restores the Schedules table only. If you need to revert the rank change too, use Manual Rank Override.</p>';
 }
@@ -1229,6 +1286,8 @@ function spp_sa2_add_finalize() {
 function spp_sa2_groupswap_flow( $stage ) {
     if ( $stage === 'propose' ) {
         spp_sa2_groupswap_propose();
+    } elseif ( $stage === 'propose_by_player' ) {
+        spp_sa2_groupswap_propose_by_player();
     } elseif ( $stage === 'apply' ) {
         spp_sa2_groupswap_apply();
     } elseif ( $stage === 'finalize' ) {
@@ -1338,6 +1397,133 @@ function spp_sa2_groupswap_propose() {
     echo '<input type="hidden" name="spp_sa_gs_a" value="' . $gp1 . '">';
     echo '<input type="hidden" name="spp_sa_gs_b" value="' . $gp2 . '">';
     echo '<button type="submit" class="btn btn-primary" onclick="return confirm(\'Apply this swap? A backup will be taken and a validation check will run before anything is sent.\')">Apply and Check</button>';
+    echo '<a href="' . esc_url( $_SERVER['REQUEST_URI'] ) . '" class="btn btn-neutral" style="text-decoration:none;">Cancel</a>';
+    echo '</form>';
+}
+
+/**
+ * Given a travel preference string, return the list of time_id positions
+ * (0=5:30, 1=6:40, 2=7:50) that would actually satisfy it. Empty array
+ * means "no preference" -- nothing to search for.
+ */
+function spp_sa2_satisfying_positions( $travel ) {
+    $travel = spp_sa2_normalize_travel( $travel );
+    if ( empty( $travel ) ) return array();
+
+    if ( preg_match( '/^\+5:30/i', $travel ) ) return array( 0 );
+    if ( preg_match( '/^\+6:40/i', $travel ) ) return array( 1 );
+    if ( preg_match( '/^\+7:50/i', $travel ) ) return array( 2 );
+    if ( preg_match( '/^-5:30/i', $travel ) )  return array( 1, 2 ); // avoid 5:30 -> 6:40 or 7:50 both fine
+    if ( preg_match( '/^-7:50/i', $travel ) )  return array( 0, 1 ); // avoid 7:50 -> 5:30 or 6:40 both fine
+    return array();
+}
+
+function spp_sa2_groupswap_propose_by_player() {
+    global $wpdb;
+
+    $uid = (int) ( $_POST['spp_sa_gs_player'] ?? 0 );
+    if ( ! $uid ) {
+        echo '<p class="box box-err">No player selected.</p>';
+        spp_sa2_action_selector();
+        return;
+    }
+
+    $player = $wpdb->get_row( $wpdb->prepare(
+        "SELECT s.user_id, s.first_name, s.last_name, s.group_id, s.time_id, m.travel
+         FROM Schedules s JOIN Master m ON s.user_id = m.user_id
+         WHERE s.user_id = %d AND s.group_id != 99", $uid
+    ), ARRAY_A );
+
+    if ( ! $player ) {
+        echo '<p class="box box-err">That player is not currently scheduled.</p>';
+        spp_sa2_action_selector();
+        return;
+    }
+
+    $time_ids = spp_sa2_get_time_positions();
+    $current_pos = array_search( (int) $player['time_id'], $time_ids );
+    $satisfying_positions = spp_sa2_satisfying_positions( $player['travel'] );
+
+    echo '<h3>Group Swap -- Candidates for ' . esc_html( $player['first_name'] . ' ' . $player['last_name'] ) . '</h3>';
+
+    if ( empty( $satisfying_positions ) ) {
+        echo '<div class="box box-warn">This player has no +/- time preference on record, so there\'s no specific slot to search for. Use "By groups directly" instead.</div>';
+        echo '<a href="' . esc_url( $_SERVER['REQUEST_URI'] ) . '" class="btn btn-neutral" style="text-decoration:none;">Back</a>';
+        return;
+    }
+
+    if ( in_array( $current_pos, $satisfying_positions, true ) ) {
+        echo '<div class="box box-ok">This player is already in a time slot that satisfies their preference -- no swap needed.</div>';
+        echo '<a href="' . esc_url( $_SERVER['REQUEST_URI'] ) . '" class="btn btn-neutral" style="text-decoration:none;">Back</a>';
+        return;
+    }
+
+    $satisfying_time_ids = array_map( fn( $pos ) => $time_ids[ $pos ], $satisfying_positions );
+
+    $candidate_groups = $wpdb->get_results(
+        "SELECT s.group_id, g.GP_name, t.T_desc, s.time_id
+         FROM Schedules s
+         JOIN Groups g ON s.group_id = g.GP_ID
+         JOIN Times t ON s.time_id = t.T_ID
+         WHERE s.group_id != 99 AND s.group_id != " . (int) $player['group_id'] . "
+           AND s.time_id IN (" . implode( ',', array_map( 'intval', $satisfying_time_ids ) ) . ")
+         GROUP BY s.group_id", ARRAY_A
+    );
+
+    if ( empty( $candidate_groups ) ) {
+        echo '<div class="box box-err">No group is currently scheduled in a time slot that would satisfy this player\'s preference. Nothing to swap with.</div>';
+        echo '<a href="' . esc_url( $_SERVER['REQUEST_URI'] ) . '" class="btn btn-neutral" style="text-decoration:none;">Back</a>';
+        return;
+    }
+
+    $my_roster = $wpdb->get_results( $wpdb->prepare(
+        "SELECT s.user_id, s.first_name, s.last_name, m.travel FROM Schedules s JOIN Master m ON s.user_id = m.user_id WHERE s.group_id = %d",
+        $player['group_id']
+    ), ARRAY_A );
+
+    $scored = array();
+    foreach ( $candidate_groups as $cand ) {
+        $cand_roster = $wpdb->get_results( $wpdb->prepare(
+            "SELECT s.user_id, s.first_name, s.last_name, m.travel FROM Schedules s JOIN Master m ON s.user_id = m.user_id WHERE s.group_id = %d",
+            $cand['group_id']
+        ), ARRAY_A );
+
+        // My group's roster (including this player) moving to the candidate's
+        // slot, and the candidate's roster moving to my group's current slot --
+        // exactly the same bidirectional check the manual swap already uses.
+        $viol_mine = spp_sa2_check_travel_for_new_time( $my_roster, (int) $cand['time_id'], $time_ids );
+        $viol_cand = spp_sa2_check_travel_for_new_time( $cand_roster, (int) $player['time_id'], $time_ids );
+
+        $scored[] = array(
+            'group_id'   => (int) $cand['group_id'],
+            'label'      => $cand['GP_name'] . ' -- ' . $cand['T_desc'],
+            'violations' => array_merge( $viol_mine, $viol_cand ),
+        );
+    }
+    usort( $scored, fn( $a, $b ) => count( $a['violations'] ) <=> count( $b['violations'] ) );
+
+    echo '<form method="post">';
+    wp_nonce_field( 'spp_schedule_adjust', 'spp_sa_nonce' );
+    echo '<input type="hidden" name="spp_sa_action" value="groupswap">';
+    echo '<input type="hidden" name="spp_sa_stage" value="apply">';
+    echo '<input type="hidden" name="spp_sa_gs_a" value="' . (int) $player['group_id'] . '">';
+    echo '<label>Swap with (sorted by fewest conflicts introduced):</label>';
+    echo '<select name="spp_sa_gs_b" required>';
+    foreach ( $scored as $s ) {
+        $tag = count( $s['violations'] ) === 0 ? ' -- 0 conflicts' : ' -- ' . count( $s['violations'] ) . ' conflict(s)';
+        echo '<option value="' . $s['group_id'] . '">' . esc_html( $s['label'] . $tag ) . '</option>';
+    }
+    echo '</select>';
+
+    foreach ( $scored as $s ) {
+        if ( ! empty( $s['violations'] ) ) {
+            echo '<div class="box box-warn" style="font-size:12px;"><strong>' . esc_html( $s['label'] ) . '</strong> would introduce: '
+               . esc_html( implode( '; ', $s['violations'] ) ) . '</div>';
+        }
+    }
+
+    echo '<button type="submit" class="btn btn-primary" onclick="return confirm(\'Apply this swap? A backup will be taken and a validation check will run before anything is sent.\')">Apply and Check</button>';
+    echo '<a href="' . esc_url( $_SERVER['REQUEST_URI'] ) . '" class="btn btn-neutral" style="text-decoration:none;">Cancel</a>';
     echo '</form>';
 }
 
@@ -1378,7 +1564,7 @@ function spp_sa2_groupswap_apply() {
     echo '<input type="hidden" name="spp_sa_action" value="groupswap">';
     echo '<input type="hidden" name="spp_sa_stage" value="undo">';
     echo '<input type="hidden" name="spp_sa_backup_table" value="' . esc_attr( $backup_table ) . '">';
-    echo '<button type="submit" class="btn btn-danger" onclick="return confirm(\'Discard this change and restore the previous schedule?\')">Not acceptable -- undo</button>';
+    echo '<button type="submit" class="btn btn-danger" onclick="return confirm(\'Cancel this change? Only the rows this action touched will be reverted -- nothing else will be affected.\')">Not acceptable -- cancel</button>';
     echo '</form>';
 }
 
