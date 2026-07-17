@@ -56,6 +56,8 @@ require_once get_stylesheet_directory() . '/inc/passkey-login.php';
 require_once get_stylesheet_directory() . '/inc/spp-schedule-check.php';
 require_once get_stylesheet_directory() . '/inc/spp-membership-editor.php';
 require_once get_stylesheet_directory() . '/inc/spp-schedule-adjust.php';
+require_once get_stylesheet_directory() . '/inc/spp-club-rating.php';
+require_once get_stylesheet_directory() . '/inc/spp-create-results.php';
 
 add_filter('template_include', function($template) {
     if (is_singular('tribe_events')) {
