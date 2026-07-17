@@ -8,7 +8,7 @@
    Changes from 1.5:
    - Migrated from Code Manager snippet ("Player Schedule View")
      to a tracked theme file, wrapped in
-     [gl_player_schedule_view] shortcode.
+     [spp_player_schedule_view] shortcode.
    - Fixed session_status() check: was "!session_status() ==
      PHP_SESSION_ACTIVE" (always false due to precedence, so
      session_start() never actually ran); now correctly checks
@@ -24,15 +24,15 @@
 
 defined( 'ABSPATH' ) || exit;
 
-add_shortcode( 'gl_player_schedule_view', 'gl_player_schedule_view_shortcode' );
+add_shortcode( 'spp_player_schedule_view', 'spp_player_schedule_view_shortcode' );
 
-function gl_player_schedule_view_shortcode() {
+function spp_player_schedule_view_shortcode() {
     ob_start();
-    gl_player_schedule_view_run();
+    spp_player_schedule_view_run();
     return ob_get_clean();
 }
 
-function gl_player_schedule_view_run() {
+function spp_player_schedule_view_run() {
 
 if ( session_status() !== PHP_SESSION_ACTIVE ) { session_start(); }
 
@@ -329,4 +329,4 @@ foreach ($time_slots as $slot) {
 }
 </style>
 <?php
-} // end gl_player_schedule_view_run()
+} // end spp_player_schedule_view_run()
