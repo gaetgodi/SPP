@@ -58,8 +58,7 @@ require_once get_stylesheet_directory() . '/inc/spp-membership-editor.php';
 require_once get_stylesheet_directory() . '/inc/spp-schedule-adjust.php';
 require_once get_stylesheet_directory() . '/inc/spp-club-rating.php';
 require_once get_stylesheet_directory() . '/inc/spp-create-results.php';
-// require_once get_stylesheet_directory() . '/inc/gl-player-schedule-view.php'; // TEMP: disabled, naming collision with gl-events plugin
-
+require_once get_stylesheet_directory() . '/inc/gl-player-schedule-view.php';
 add_filter('template_include', function($template) {
     if (is_singular('tribe_events')) {
         error_log('TEC single event template: ' . $template);
