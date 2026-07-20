@@ -1149,8 +1149,7 @@ function spp_sa2_add_propose_placement( $carpool_rank_tolerance ) {
     echo '<h3>Last-Minute Add -- Placement</h3>';
 
     if ( ! $best ) {
-        echo '<div class="box box-err">No group has room for <strong>' . esc_html( $member['first_name'] . ' ' . $member['last_name'] ) . '</strong> at rank ' . (int) $rank . ' without breaking a carpool match or exceeding 5 players. Cannot proceed automatically.</div>';
-        echo '<a href="' . esc_url( $_SERVER['REQUEST_URI'] ) . '" class="btn btn-neutral" style="text-decoration:none;">Cancel</a>';
+        echo '<div class="box box-err">No group has room for <strong>' . esc_html( $member['first_name'] . ' ' . $member['last_name'] ) . '</strong> at rank ' . (int) $rank . ' without breaking a carpool match or exceeding 5 players. Cannot proceed automatically -- pick a group manually below to override.</div>';
     } else {
         $group_desc = $wpdb->get_row( $wpdb->prepare(
             "SELECT g.GP_name, t.T_desc FROM Groups g, Times t
@@ -1169,9 +1168,53 @@ function spp_sa2_add_propose_placement( $carpool_rank_tolerance ) {
         echo '<input type="hidden" name="spp_sa_add_time" value="' . (int) $best['time_id'] . '">';
         echo '<input type="hidden" name="spp_sa_add_crt" value="' . (int) $best['Crt_ID'] . '">';
         echo '<button type="submit" class="btn btn-primary" onclick="return confirm(\'Apply this add? A backup will be taken and a validation check will run before anything is sent.\')">Apply and Check</button>';
-        echo '<a href="' . esc_url( $_SERVER['REQUEST_URI'] ) . '" class="btn btn-neutral" style="text-decoration:none;">Cancel</a>';
         echo '</form>';
     }
+
+    // Manual override -- always available, not just on auto-search failure.
+    // The automatic search only checks capacity and a same-group carpool
+    // continuity signal; it can't know every reason a convenor might
+    // prefer a specific group, so this is the human override valve.
+    $all_groups = $wpdb->get_results(
+        "SELECT s.group_id, g.GP_name, t.T_desc, t.T_ID, s.Crt_ID, COUNT(*) AS cnt
+         FROM Schedules s
+         JOIN Groups g ON s.group_id = g.GP_ID
+         JOIN Times t  ON s.time_id = t.T_ID
+         WHERE s.group_id != 99
+         GROUP BY s.group_id
+         ORDER BY t.T_ID, g.GP_name", ARRAY_A
+    );
+
+    echo '<div class="box"><strong>Or choose a group manually:</strong><br><br>';
+    echo '<form method="post">';
+    wp_nonce_field( 'spp_schedule_adjust', 'spp_sa_nonce' );
+    echo '<input type="hidden" name="spp_sa_action" value="add">';
+    echo '<input type="hidden" name="spp_sa_stage" value="apply">';
+    echo '<input type="hidden" name="spp_sa_add_uid" value="' . (int) $uid . '">';
+    echo '<input type="hidden" name="spp_sa_add_rank" value="' . (int) $rank . '">';
+    echo '<select name="spp_sa_manual_group" required onchange="
+        var opt = this.options[this.selectedIndex];
+        this.form.spp_sa_add_group.value = opt.dataset.group;
+        this.form.spp_sa_add_time.value = opt.dataset.time;
+        this.form.spp_sa_add_crt.value = opt.dataset.crt;
+    ">';
+    echo '<option value="">-- select group --</option>';
+    foreach ( $all_groups as $g ) {
+        $full_flag = (int) $g['cnt'] >= 5 ? ' (FULL -- will exceed normal size)' : '';
+        echo '<option value="' . (int) $g['group_id'] . '" data-group="' . (int) $g['group_id']
+           . '" data-time="' . (int) $g['T_ID'] . '" data-crt="' . (int) $g['Crt_ID'] . '">'
+           . esc_html( $g['GP_name'] . ' -- ' . $g['T_desc'] . ' (' . (int) $g['cnt'] . '/5)' . $full_flag )
+           . '</option>';
+    }
+    echo '</select>';
+    echo '<input type="hidden" name="spp_sa_add_group" value="">';
+    echo '<input type="hidden" name="spp_sa_add_time" value="">';
+    echo '<input type="hidden" name="spp_sa_add_crt" value="">';
+    echo '<button type="submit" class="btn btn-primary" onclick="return confirm(\'Apply this add to the manually chosen group? A backup will be taken and a validation check will run before anything is sent. No automatic constraint checks were run against this choice.\')">Apply Manual Placement</button>';
+    echo '</form>';
+    echo '</div>';
+
+    echo '<a href="' . esc_url( $_SERVER['REQUEST_URI'] ) . '" class="btn btn-neutral" style="text-decoration:none;">Cancel</a>';
 }
 
 function spp_sa2_add_apply( $carpool_rank_tolerance ) {
