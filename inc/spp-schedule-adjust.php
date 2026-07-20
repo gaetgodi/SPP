@@ -1245,6 +1245,7 @@ function spp_sa2_add_apply( $carpool_rank_tolerance ) {
         'first_name' => $member['first_name'],
         'last_name'  => $member['last_name'],
         'user_phone' => $member['user_phone'],
+        'travel'     => $member['travel'],
         'Rank'       => $rank,
         'group_id'   => $group_id,
         'Crt_ID'     => $crt_id,
