@@ -663,6 +663,8 @@ function spp_sa2_dropout_apply( $carpool_rank_tolerance ) {
     $player_id = (int) $plan['player_id'];
     $group_id  = (int) $plan['group_id'];
 
+    spp_sa2_registration_withdraw( (int) get_option( 'spp_current_event', 0 ), $player_id );
+
     if ( $plan['mode'] === 'simple' ) {
         $wpdb->delete( 'Schedules', array( 'user_id' => $player_id ) );
     } elseif ( $plan['mode'] === 'pack' ) {
@@ -1325,18 +1327,25 @@ function spp_sa2_add_apply( $carpool_rank_tolerance ) {
     $wpdb->query( $wpdb->prepare( "DELETE FROM {$wpdb->prefix}usermeta WHERE user_id = %d AND meta_key = 'Ladder'", $uid ) );
     $wpdb->query( $wpdb->prepare( "INSERT INTO {$wpdb->prefix}usermeta (user_id, meta_key, meta_value) VALUES (%d, 'Ladder', 'Yes')", $uid ) );
 
-    $member = spp_sa2_get_member_info( $uid );
+    $member   = spp_sa2_get_member_info( $uid );
+    $event_id = (int) get_option( 'spp_current_event', 0 );
+
+    spp_sa2_registration_confirm( $event_id, $uid );
 
     $wpdb->insert( 'Schedules', array(
-        'user_id'    => $uid,
-        'first_name' => $member['first_name'],
-        'last_name'  => $member['last_name'],
-        'user_phone' => $member['user_phone'],
-        'travel'     => $member['travel'],
-        'Rank'       => $rank,
-        'group_id'   => $group_id,
-        'Crt_ID'     => $crt_id,
-        'time_id'    => $time_id,
+        'user_id'           => $uid,
+        'first_name'        => $member['first_name'],
+        'last_name'         => $member['last_name'],
+        'user_phone'        => $member['user_phone'],
+        'user_email'        => $member['user_email'],
+        'travel'            => $member['travel'],
+        'Rank'              => $rank,
+        'RankPrime'         => $rank,
+        'group_id'          => $group_id,
+        'Crt_ID'            => $crt_id,
+        'time_id'           => $time_id,
+        'event_id'          => $event_id,
+        'registration_date' => current_time( 'Y-m-d' ),
     ) );
 
     echo '<h3>Applied -- Validation Check</h3>';
@@ -1850,6 +1859,67 @@ function spp_sa2_discard_pending_notify() {
     echo '<h3>Discarded</h3>';
     echo '<div class="box box-ok">Pending notification queue (' . $count . ' group(s)) discarded -- nothing was sent. The schedule changes themselves remain in place; only the notification queue was cleared.</div>';
     spp_sa2_action_selector();
+}
+
+/* =========================================================
+   REGISTRATION SYNC (gl_registrations)
+   Last-Minute Add and Dropout keep the real registration table
+   in sync with Schedules, so a manually-added player looks like
+   a genuine registrant everywhere else in the system (reports,
+   history, membership stats) -- not just a Schedules row with
+   hand-copied fields. Deliberately bypasses the gl-events
+   plugin's own GL_Registration::register()/deregister(): those
+   enforce a registration cutoff (which a same-day add/dropout is
+   almost always past) and register() can silently downgrade to
+   'waiting' if the event is at capacity -- neither fits a
+   convenor's deliberate manual override. No do_action() hooks
+   fired here, so no confirmation/withdrawal email goes out (the
+   convenor is telling the player directly) and no automatic
+   waitlist promotion happens (which would otherwise misleadingly
+   confirm a promoted player into a spot nobody has actually
+   placed them into in Schedules).
+   ========================================================= */
+
+function spp_sa2_registration_confirm( $event_id, $uid ) {
+    global $wpdb;
+    $table = $wpdb->prefix . 'gl_registrations';
+    $now = current_time( 'mysql' );
+
+    $existing = $wpdb->get_row( $wpdb->prepare(
+        "SELECT id FROM $table WHERE occurrence_id = %d AND user_id = %d", $event_id, $uid
+    ) );
+
+    if ( $existing ) {
+        $wpdb->update( $table,
+            array( 'status' => 'confirmed', 'updated_at' => $now ),
+            array( 'id' => $existing->id )
+        );
+    } else {
+        $wpdb->insert( $table, array(
+            'occurrence_id' => $event_id,
+            'user_id'       => $uid,
+            'status'        => 'confirmed',
+            'registered_at' => $now,
+            'updated_at'    => $now,
+            'notes'         => 'Added via Schedule Adjustment tool',
+        ) );
+    }
+}
+
+function spp_sa2_registration_withdraw( $event_id, $uid ) {
+    global $wpdb;
+    $table = $wpdb->prefix . 'gl_registrations';
+
+    $existing = $wpdb->get_row( $wpdb->prepare(
+        "SELECT id FROM $table WHERE occurrence_id = %d AND user_id = %d", $event_id, $uid
+    ) );
+
+    if ( $existing ) {
+        $wpdb->update( $table,
+            array( 'status' => 'withdrawn', 'updated_at' => current_time( 'mysql' ) ),
+            array( 'id' => $existing->id )
+        );
+    }
 }
 
 function spp_sa2_get_convenor_email() {
