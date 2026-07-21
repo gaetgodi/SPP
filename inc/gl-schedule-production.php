@@ -1,8 +1,20 @@
 <?php
 /* =========================================================
    GL Schedule Production
-   Version: 2.0.3
-   Date: 2026-06-30
+   Version: 2.0.4
+   Date: 2026-07-21
+
+   Changes from 2.0.3:
+   - Added a guard at the very start of production: if the
+     Schedule Adjustment tool (spp-schedule-adjust.php) has
+     queued, unsent player notifications for the current event,
+     production now refuses to run rather than silently
+     overwriting Schedules out from under a pending batch --
+     which would previously have caused those notifications to
+     either vanish (an event-tag mismatch safety check discards
+     stale queues) or, worse, reference next week's completely
+     different rosters if sent afterward. Convenor must send or
+     discard the pending queue first.
 
    Changes from 2.0.2
    - From shuffle groups between time slots to sequence groups between time slots
@@ -192,6 +204,23 @@ $project = 29;
 $page = 70;
 
 if (isset($Event) and $Event <> 0) {
+
+    // Guard: block production if there's an unsent notification queue for
+    // the event currently in progress (about to be replaced). Producing a
+    // new schedule overwrites Schedules entirely -- if pending
+    // notifications were sent AFTER that overwrite, they'd reference next
+    // week's completely different rosters/groups by mistake. The convenor
+    // must explicitly send or discard the pending queue first, via the
+    // "Send Pending Notifications" / "Discard" banner in the Schedule
+    // Adjustment tool. Checked here, before spp_current_event gets
+    // overwritten below, so this still reads the OLD/current event.
+    if ( function_exists( 'spp_sa2_get_pending_notify_groups' ) ) {
+        $pending_check = spp_sa2_get_pending_notify_groups();
+        if ( ! empty( $pending_check ) ) {
+            echo '<p class="gl-error">Cannot produce a new schedule -- ' . count( $pending_check ) . ' group(s) have adjustments queued for notification from the current event. Go to Schedule Adjustment and either send or discard those notifications first.</p>';
+            return;
+        }
+    }
 
     $master = "Master";
     $this_page = 72;

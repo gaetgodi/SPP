@@ -294,6 +294,10 @@ function spp_sa2_render() {
         spp_sa2_rank_flow( $stage );
     } elseif ( $action === 'playerswap' ) {
         spp_sa2_playerswap_flow( $stage );
+    } elseif ( $action === 'notify_pending' ) {
+        spp_sa2_notify_pending();
+    } elseif ( $action === 'discard_pending' ) {
+        spp_sa2_discard_pending_notify();
     } else {
         spp_sa2_action_selector();
     }
@@ -343,6 +347,22 @@ function spp_sa2_action_selector() {
     if ( ! $event ) {
         echo '<p>No current event set.</p>';
         return;
+    }
+
+    $pending_groups = spp_sa2_get_pending_notify_groups();
+    if ( ! empty( $pending_groups ) ) {
+        echo '<div class="box box-warn"><strong>' . count( $pending_groups ) . ' group(s) queued for notification</strong> from adjustments made so far tonight -- no emails sent yet.<br><br>';
+        echo '<form method="post" style="display:inline;">';
+        wp_nonce_field( 'spp_schedule_adjust', 'spp_sa_nonce' );
+        echo '<input type="hidden" name="spp_sa_action" value="notify_pending">';
+        echo '<button type="submit" class="btn btn-primary" onclick="return confirm(\'Send notifications now for all queued groups? Do this once you\\'re done making adjustments for tonight.\')">Send Pending Notifications</button>';
+        echo '</form> ';
+        echo '<form method="post" style="display:inline;">';
+        wp_nonce_field( 'spp_schedule_adjust', 'spp_sa_nonce' );
+        echo '<input type="hidden" name="spp_sa_action" value="discard_pending">';
+        echo '<button type="submit" class="btn btn-danger" onclick="return confirm(\'Discard the pending notification queue without sending anything? The schedule changes themselves stay in place -- only the notification is discarded. This cannot be undone.\')">Discard</button>';
+        echo '</form>';
+        echo '</div>';
     }
 
     echo '<form method="post">';
@@ -556,7 +576,7 @@ function spp_sa2_dropout_propose( $carpool_rank_tolerance ) {
         } else {
             // Spread across all slots, independently, tracking exclusions.
             $placements = array();
-            $unresolved = array();
+            $unresolved_uids = array(); // uid => name, for players auto-search couldn't place
             $used_groups = array( $group_id );
 
             foreach ( $remaining as $rp ) {
@@ -567,29 +587,37 @@ function spp_sa2_dropout_propose( $carpool_rank_tolerance ) {
                     $placements[ (int) $rp['user_id'] ] = $best;
                     $used_groups[] = $best['group_id'];
                 } else {
-                    $unresolved[] = $rp['first_name'] . ' ' . $rp['last_name'];
+                    $unresolved_uids[ (int) $rp['user_id'] ] = $rp['first_name'] . ' ' . $rp['last_name'];
                 }
             }
 
-            echo '<div class="box box-warn">No single group could pack all remaining players. <strong>Spreading</strong> across other groups (any time slot):<ul>';
-            foreach ( $placements as $uid => $g ) {
-                $name = array_values( array_filter( $remaining, fn( $p ) => (int) $p['user_id'] === $uid ) )[0];
-                echo '<li>' . esc_html( $name['first_name'] . ' ' . $name['last_name'] ) . ' -> group ' . $g['group_id'] . '</li>';
-            }
-            echo '</ul></div>';
-
-            if ( ! empty( $unresolved ) ) {
-                echo '<div class="box box-err"><strong>Unresolved:</strong> could not find a fit for: ' . esc_html( implode( ', ', $unresolved ) ) . '. Cannot proceed automatically -- please handle these manually before applying.</div>';
-                echo '<form method="post">';
-                wp_nonce_field( 'spp_schedule_adjust', 'spp_sa_nonce' );
-                echo '<input type="hidden" name="spp_sa_action" value="dropout"><input type="hidden" name="spp_sa_stage" value="select">';
-                echo '<button type="submit" class="btn btn-neutral">Back</button></form>';
-                return;
+            if ( ! empty( $placements ) ) {
+                echo '<div class="box box-warn">No single group could pack all remaining players. <strong>Spreading</strong> across other groups (any time slot):<ul>';
+                foreach ( $placements as $uid => $g ) {
+                    $name = array_values( array_filter( $remaining, fn( $p ) => (int) $p['user_id'] === $uid ) )[0];
+                    echo '<li>' . esc_html( $name['first_name'] . ' ' . $name['last_name'] ) . ' -> group ' . $g['group_id'] . '</li>';
+                }
+                echo '</ul></div>';
             }
 
             $plan['mode']            = 'spread';
             $plan['placements']      = $placements;
+            $plan['unresolved_uids'] = array_keys( $unresolved_uids );
             $plan['affected_groups'] = array_merge( array( $group_id ), array_map( fn( $d ) => $d['group_id'], $placements ) );
+
+            if ( ! empty( $unresolved_uids ) ) {
+                echo '<div class="box box-err"><strong>Could not auto-place:</strong> ' . esc_html( implode( ', ', $unresolved_uids ) ) . '. Choose a group manually for each below to override -- no automatic constraint checks will run against these choices.</div>';
+
+                $all_groups = $wpdb->get_results(
+                    "SELECT s.group_id, g.GP_name, t.T_desc, t.T_ID, s.Crt_ID, COUNT(*) AS cnt
+                     FROM Schedules s
+                     JOIN Groups g ON s.group_id = g.GP_ID
+                     JOIN Times t  ON s.time_id = t.T_ID
+                     WHERE s.group_id != 99
+                     GROUP BY s.group_id
+                     ORDER BY t.T_ID, g.GP_name", ARRAY_A
+                );
+            }
         }
     }
 
@@ -598,6 +626,22 @@ function spp_sa2_dropout_propose( $carpool_rank_tolerance ) {
     echo '<input type="hidden" name="spp_sa_action" value="dropout">';
     echo '<input type="hidden" name="spp_sa_stage" value="apply">';
     echo '<input type="hidden" name="spp_sa_plan" value="' . esc_attr( base64_encode( wp_json_encode( $plan ) ) ) . '">';
+
+    if ( ! empty( $unresolved_uids ) ) {
+        echo '<div class="box"><strong>Manual placement required:</strong><br><br>';
+        foreach ( $unresolved_uids as $uid => $name ) {
+            echo '<label>' . esc_html( $name ) . '</label>';
+            echo '<select name="spp_sa_manual_' . (int) $uid . '" required>';
+            echo '<option value="">-- select group --</option>';
+            foreach ( $all_groups as $g ) {
+                $full_flag = (int) $g['cnt'] >= 5 ? ' (FULL -- will exceed normal size)' : '';
+                echo '<option value="' . (int) $g['group_id'] . '">' . esc_html( $g['GP_name'] . ' -- ' . $g['T_desc'] . ' (' . (int) $g['cnt'] . '/5)' . $full_flag ) . '</option>';
+            }
+            echo '</select>';
+        }
+        echo '</div>';
+    }
+
     echo '<button type="submit" class="btn btn-primary" onclick="return confirm(\'Apply this dropout? A backup will be taken and a validation check will run before anything is sent.\')">Apply and Check</button>';
     echo '<a href="' . esc_url( $_SERVER['REQUEST_URI'] ) . '" class="btn btn-neutral" style="text-decoration:none;">Cancel</a>';
     echo '</form>';
@@ -632,6 +676,22 @@ function spp_sa2_dropout_apply( $carpool_rank_tolerance ) {
             );
         }
     } elseif ( $plan['mode'] === 'spread' ) {
+        // Merge in any manually-chosen placements (server-side lookup of the
+        // group's current Crt_ID/time_id -- no automatic constraint checks
+        // ran against these, by design, since the auto-search already failed
+        // for these specific players).
+        foreach ( $plan['unresolved_uids'] ?? array() as $uid ) {
+            $manual_group = (int) ( $_POST[ 'spp_sa_manual_' . $uid ] ?? 0 );
+            if ( $manual_group ) {
+                $target_row = $wpdb->get_row( $wpdb->prepare( "SELECT Crt_ID, time_id FROM Schedules WHERE group_id = %d LIMIT 1", $manual_group ), ARRAY_A );
+                $plan['placements'][ $uid ] = array(
+                    'group_id' => $manual_group,
+                    'Crt_ID'   => (int) $target_row['Crt_ID'],
+                    'time_id'  => (int) $target_row['time_id'],
+                );
+            }
+        }
+
         $wpdb->delete( 'Schedules', array( 'user_id' => $player_id ) );
         foreach ( $plan['placements'] as $uid => $dest ) {
             $wpdb->update( 'Schedules',
@@ -639,6 +699,10 @@ function spp_sa2_dropout_apply( $carpool_rank_tolerance ) {
                 array( 'user_id' => (int) $uid )
             );
         }
+
+        // Recompute affected_groups fresh -- the plan's version (computed at
+        // propose time) doesn't know about manual choices made just now.
+        $plan['affected_groups'] = array_merge( array( $group_id ), array_map( fn( $d ) => $d['group_id'], $plan['placements'] ) );
     }
 
     echo '<h3>Applied -- Validation Check</h3>';
@@ -913,6 +977,20 @@ function spp_sa2_playerswap_propose( $carpool_rank_tolerance ) {
     }
     usort( $candidates, fn( $a, $b ) => $a['rankdiff'] <=> $b['rankdiff'] );
 
+    // Manual override -- always available, not just when auto-search comes up
+    // empty. This is also the direct "just move this player to a group of my
+    // choosing" option, independent of insert-search or compensating-swap
+    // logic finding anything at all.
+    $all_groups = $wpdb->get_results(
+        "SELECT s.group_id, g.GP_name, t.T_desc, t.T_ID, s.Crt_ID, COUNT(*) AS cnt
+         FROM Schedules s
+         JOIN Groups g ON s.group_id = g.GP_ID
+         JOIN Times t  ON s.time_id = t.T_ID
+         WHERE s.group_id != 99 AND s.group_id != " . (int) $p1['group_id'] . "
+         GROUP BY s.group_id
+         ORDER BY t.T_ID, g.GP_name", ARRAY_A
+    );
+
     echo '<form method="post">';
     wp_nonce_field( 'spp_schedule_adjust', 'spp_sa_nonce' );
     echo '<input type="hidden" name="spp_sa_action" value="playerswap">';
@@ -925,10 +1003,18 @@ function spp_sa2_playerswap_propose( $carpool_rank_tolerance ) {
     foreach ( $candidates as $c ) {
         echo '<option value="swap:' . $c['uid'] . '">Swap with ' . esc_html( $c['name'] ) . ' (rank diff ' . $c['rankdiff'] . ')</option>';
     }
+    if ( ! empty( $all_groups ) ) {
+        echo '<optgroup label="Or choose a group manually (overrides automatic checks)">';
+        foreach ( $all_groups as $g ) {
+            $full_flag = (int) $g['cnt'] >= 5 ? ' (FULL -- will exceed normal size)' : '';
+            echo '<option value="manual:' . (int) $g['group_id'] . '">' . esc_html( $g['GP_name'] . ' -- ' . $g['T_desc'] . ' (' . (int) $g['cnt'] . '/5)' . $full_flag ) . '</option>';
+        }
+        echo '</optgroup>';
+    }
     echo '</select>';
 
-    if ( ! $insert_target && empty( $candidates ) ) {
-        echo '<div class="box box-err">No valid insert spot or compensating swap found. Cannot proceed automatically.</div>';
+    if ( ! $insert_target && empty( $candidates ) && empty( $all_groups ) ) {
+        echo '<div class="box box-err">No valid insert spot, compensating swap, or other group found. Cannot proceed.</div>';
     } else {
         echo '<button type="submit" class="btn btn-primary" onclick="return confirm(\'Apply this change? A backup will be taken and a validation check will run before anything is sent.\')">Apply and Check</button>';
     }
@@ -951,6 +1037,11 @@ function spp_sa2_playerswap_apply( $carpool_rank_tolerance ) {
     if ( $parts[0] === 'insert' ) {
         $new_group = (int) $parts[1]; $new_time = (int) $parts[2]; $new_crt = (int) $parts[3];
         $wpdb->update( 'Schedules', array( 'group_id' => $new_group, 'time_id' => $new_time, 'Crt_ID' => $new_crt ), array( 'user_id' => $p1_uid ) );
+        $affected_groups[] = $new_group;
+    } elseif ( $parts[0] === 'manual' ) {
+        $new_group  = (int) $parts[1];
+        $target_row = $wpdb->get_row( $wpdb->prepare( "SELECT Crt_ID, time_id FROM Schedules WHERE group_id = %d LIMIT 1", $new_group ), ARRAY_A );
+        $wpdb->update( 'Schedules', array( 'group_id' => $new_group, 'time_id' => (int) $target_row['time_id'], 'Crt_ID' => (int) $target_row['Crt_ID'] ), array( 'user_id' => $p1_uid ) );
         $affected_groups[] = $new_group;
     } else { // swap
         $p2_uid = (int) $parts[1];
@@ -1004,11 +1095,7 @@ function spp_sa2_playerswap_finalize() {
     echo '<h3>Finalized</h3>';
     echo '<div class="box box-ok">Change kept. Backup <code>' . esc_html( $backup_table ) . '</code> retained for this event.</div>';
 
-    $result = spp_sa2_notify( $affected_group_ids, 'A player was moved to a different group.', 'Player Swap' );
-
-    echo ! $result['published']
-        ? '<div class="box">Schedule not yet published -- players were not notified. Convenor confirmation email ' . ( $result['convenor'] ? 'sent to ' . esc_html( $result['convenor_email'] ) : 'FAILED' ) . '.</div>'
-        : '<div class="box">Notified ' . (int) $result['sent'] . ' player(s)' . ( $result['failed'] ? ' (' . (int) $result['failed'] . ' failed)' : '' ) . '. Convenor summary ' . ( $result['convenor'] ? 'sent to ' . esc_html( $result['convenor_email'] ) : 'FAILED' ) . '.</div>';
+    spp_sa2_finalize_notify_or_queue( $affected_group_ids, 'A player was moved to a different group.', 'Player Swap' );
 
     spp_sa2_action_selector();
 }
@@ -1299,20 +1386,7 @@ function spp_sa2_add_finalize() {
     echo '<h3>Finalized</h3>';
     echo '<div class="box box-ok">Change kept. Backup <code>' . esc_html( $backup_table ) . '</code> retained for this event.</div>';
 
-    $result = spp_sa2_notify(
-        $affected_group_ids,
-        'A player was added to the schedule at the last minute.',
-        'Last-Minute Add'
-    );
-
-    if ( ! $result['published'] ) {
-        echo '<div class="box">Schedule not yet published -- players were not notified. Convenor confirmation email '
-           . ( $result['convenor'] ? 'sent to ' . esc_html( $result['convenor_email'] ) : 'FAILED' ) . '.</div>';
-    } else {
-        echo '<div class="box">Notified ' . (int) $result['sent'] . ' player(s)'
-           . ( $result['failed'] ? ' (' . (int) $result['failed'] . ' failed)' : '' )
-           . '. Convenor summary ' . ( $result['convenor'] ? 'sent to ' . esc_html( $result['convenor_email'] ) : 'FAILED' ) . '.</div>';
-    }
+    spp_sa2_finalize_notify_or_queue( $affected_group_ids, 'A player was added to the schedule at the last minute.', 'Last-Minute Add' );
 
     spp_sa2_action_selector();
 }
@@ -1515,8 +1589,32 @@ function spp_sa2_groupswap_propose_by_player() {
     );
 
     if ( empty( $candidate_groups ) ) {
-        echo '<div class="box box-err">No group is currently scheduled in a time slot that would satisfy this player\'s preference. Nothing to swap with.</div>';
-        echo '<a href="' . esc_url( $_SERVER['REQUEST_URI'] ) . '" class="btn btn-neutral" style="text-decoration:none;">Back</a>';
+        echo '<div class="box box-err">No group is currently scheduled in a time slot that would satisfy this player\'s preference. Nothing found automatically -- choose a group manually below to override (the preference will not be satisfied by this swap).</div>';
+
+        $all_other_groups = $wpdb->get_results(
+            "SELECT s.group_id, g.GP_name, t.T_desc
+             FROM Schedules s
+             JOIN Groups g ON s.group_id = g.GP_ID
+             JOIN Times t  ON s.time_id = t.T_ID
+             WHERE s.group_id != 99 AND s.group_id != " . (int) $player['group_id'] . "
+             GROUP BY s.group_id
+             ORDER BY g.GP_name", ARRAY_A
+        );
+
+        echo '<form method="post">';
+        wp_nonce_field( 'spp_schedule_adjust', 'spp_sa_nonce' );
+        echo '<input type="hidden" name="spp_sa_action" value="groupswap">';
+        echo '<input type="hidden" name="spp_sa_stage" value="apply">';
+        echo '<input type="hidden" name="spp_sa_gs_a" value="' . (int) $player['group_id'] . '">';
+        echo '<label>Swap with:</label><select name="spp_sa_gs_b" required>';
+        echo '<option value="">-- select group --</option>';
+        foreach ( $all_other_groups as $g ) {
+            echo '<option value="' . (int) $g['group_id'] . '">' . esc_html( $g['GP_name'] . ' -- ' . $g['T_desc'] ) . '</option>';
+        }
+        echo '</select>';
+        echo '<button type="submit" class="btn btn-primary" onclick="return confirm(\'Apply this swap? A backup will be taken and a validation check will run before anything is sent. This override was not automatically checked against this player\\'s travel preference.\')">Apply Manual Swap</button>';
+        echo '<a href="' . esc_url( $_SERVER['REQUEST_URI'] ) . '" class="btn btn-neutral" style="text-decoration:none;">Cancel</a>';
+        echo '</form>';
         return;
     }
 
@@ -1629,11 +1727,7 @@ function spp_sa2_groupswap_finalize() {
     echo '<h3>Finalized</h3>';
     echo '<div class="box box-ok">Change kept. Backup <code>' . esc_html( $backup_table ) . '</code> retained for this event.</div>';
 
-    $result = spp_sa2_notify( $affected_group_ids, 'Two groups swapped their court/time assignment.', 'Group Time-Slot Swap' );
-
-    echo ! $result['published']
-        ? '<div class="box">Schedule not yet published -- players were not notified. Convenor confirmation email ' . ( $result['convenor'] ? 'sent to ' . esc_html( $result['convenor_email'] ) : 'FAILED' ) . '.</div>'
-        : '<div class="box">Notified ' . (int) $result['sent'] . ' player(s)' . ( $result['failed'] ? ' (' . (int) $result['failed'] . ' failed)' : '' ) . '. Convenor summary ' . ( $result['convenor'] ? 'sent to ' . esc_html( $result['convenor_email'] ) : 'FAILED' ) . '.</div>';
+    spp_sa2_finalize_notify_or_queue( $affected_group_ids, 'Two groups swapped their court/time assignment.', 'Group Time-Slot Swap' );
 
     spp_sa2_action_selector();
 }
@@ -1649,21 +1743,112 @@ function spp_sa2_dropout_finalize() {
 
     $affected_group_ids = array_filter( array_map( 'intval', explode( ',', $_POST['spp_sa_affected_groups'] ?? '' ) ) );
 
-    $result = spp_sa2_notify(
-        $affected_group_ids,
-        'A player dropped out and the schedule was adjusted accordingly.',
-        'Dropout Adjustment'
-    );
+    spp_sa2_finalize_notify_or_queue( $affected_group_ids, 'A player dropped out and the schedule was adjusted accordingly.', 'Dropout Adjustment' );
 
-    if ( ! $result['published'] ) {
+    spp_sa2_action_selector();
+}
+
+/* =========================================================
+   PENDING NOTIFICATION QUEUE
+   Post-publish, a convenor often makes several adjustments in
+   one sitting (a dropout, then a swap to cover it, etc.). If
+   each action's finalize step sent notifications immediately,
+   an affected player could get several emails in a row, each
+   showing a mid-session state rather than their actual final
+   grouping. Instead, "finalize" on a published schedule queues
+   the affected group_ids (deduped) rather than sending right
+   away; a single "Send Pending Notifications" step at the top
+   of the action selector sends one batch once the convenor is
+   done adjusting. spp_sa2_notify() always queries live
+   Schedules fresh at send time, so even if a player moved
+   through several groups across several actions, they end up
+   correctly notified once, for their actual final group.
+   Pre-publish is unaffected -- no player emails are ever at
+   stake there, only a convenor FYI note, which stays immediate.
+   ========================================================= */
+
+function spp_sa2_queue_pending_notify( array $group_ids ) {
+    $current_event = (int) get_option( 'spp_current_event', 0 );
+    $stored = get_option( 'spp_sa2_pending_notify', array() );
+    // If a queue exists from a DIFFERENT event (e.g. left unsent, then a new
+    // schedule got produced before "Send Pending Notifications" was ever
+    // clicked), discard it rather than risk emailing this week's players
+    // using stale group references from a prior week's roster.
+    $pending = ( is_array( $stored ) && (int) ( $stored['event'] ?? 0 ) === $current_event )
+        ? $stored['groups']
+        : array();
+    $pending = array_values( array_unique( array_merge( $pending, array_map( 'intval', $group_ids ) ) ) );
+    update_option( 'spp_sa2_pending_notify', array( 'event' => $current_event, 'groups' => $pending ) );
+    return count( $pending );
+}
+
+function spp_sa2_get_pending_notify_groups() {
+    $current_event = (int) get_option( 'spp_current_event', 0 );
+    $stored = get_option( 'spp_sa2_pending_notify', array() );
+    if ( ! is_array( $stored ) || (int) ( $stored['event'] ?? 0 ) !== $current_event ) return array();
+    return is_array( $stored['groups'] ?? null ) ? $stored['groups'] : array();
+}
+
+function spp_sa2_clear_pending_notify() {
+    delete_option( 'spp_sa2_pending_notify' );
+}
+
+/**
+ * Called from every action's finalize step. Pre-publish: sends the
+ * convenor-only confirmation immediately (unchanged behaviour, no player
+ * emails at stake). Post-publish: queues the affected groups instead of
+ * sending -- actual player notifications go out once, in a batch, via
+ * spp_sa2_notify_pending() when the convenor clicks "Send Pending
+ * Notifications".
+ */
+function spp_sa2_finalize_notify_or_queue( array $affected_group_ids, string $change_note, string $action_label ) {
+    $schedule_published = (int) get_option( 'spp_schedule_published', 0 );
+
+    if ( ! $schedule_published ) {
+        $result = spp_sa2_notify( $affected_group_ids, $change_note, $action_label );
         echo '<div class="box">Schedule not yet published -- players were not notified. Convenor confirmation email '
            . ( $result['convenor'] ? 'sent to ' . esc_html( $result['convenor_email'] ) : 'FAILED' ) . '.</div>';
-    } else {
-        echo '<div class="box">Notified ' . (int) $result['sent'] . ' player(s)'
-           . ( $result['failed'] ? ' (' . (int) $result['failed'] . ' failed)' : '' )
-           . '. Convenor summary ' . ( $result['convenor'] ? 'sent to ' . esc_html( $result['convenor_email'] ) : 'FAILED' ) . '.</div>';
+        return;
     }
 
+    $pending_count = spp_sa2_queue_pending_notify( $affected_group_ids );
+    echo '<div class="box box-warn">Schedule is published -- <strong>' . count( $affected_group_ids ) . ' group(s) queued for notification</strong> ('
+       . $pending_count . ' group(s) pending in total). No emails sent yet -- make any further adjustments, then use '
+       . '<strong>"Send Pending Notifications"</strong> at the top of the menu once you\'re done, so anyone affected '
+       . 'multiple times tonight only gets one email reflecting their actual final grouping.</div>';
+}
+
+/**
+ * Sends the actual batch: every group currently in the pending queue,
+ * deduped, queried fresh (so a player who moved through several groups
+ * across several actions is correctly shown in their real final group).
+ */
+function spp_sa2_notify_pending() {
+    $pending = spp_sa2_get_pending_notify_groups();
+
+    echo '<h3>Send Pending Notifications</h3>';
+
+    if ( empty( $pending ) ) {
+        echo '<div class="box">No notifications pending.</div>';
+        spp_sa2_action_selector();
+        return;
+    }
+
+    $result = spp_sa2_notify( $pending, 'Your schedule was adjusted tonight -- this reflects your final grouping.', 'Schedule Adjustments' );
+    spp_sa2_clear_pending_notify();
+
+    echo ! $result['published']
+        ? '<div class="box">Schedule not published -- nothing sent. Convenor confirmation email ' . ( $result['convenor'] ? 'sent to ' . esc_html( $result['convenor_email'] ) : 'FAILED' ) . '.</div>'
+        : '<div class="box box-ok">Notified ' . (int) $result['sent'] . ' player(s) across ' . count( $pending ) . ' group(s)' . ( $result['failed'] ? ' (' . (int) $result['failed'] . ' failed)' : '' ) . '. Convenor summary ' . ( $result['convenor'] ? 'sent to ' . esc_html( $result['convenor_email'] ) : 'FAILED' ) . '.</div>';
+
+    spp_sa2_action_selector();
+}
+
+function spp_sa2_discard_pending_notify() {
+    $count = count( spp_sa2_get_pending_notify_groups() );
+    spp_sa2_clear_pending_notify();
+    echo '<h3>Discarded</h3>';
+    echo '<div class="box box-ok">Pending notification queue (' . $count . ' group(s)) discarded -- nothing was sent. The schedule changes themselves remain in place; only the notification queue was cleared.</div>';
     spp_sa2_action_selector();
 }
 
