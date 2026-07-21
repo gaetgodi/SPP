@@ -1,18 +1,34 @@
 <?php
 /* =========================================================
    GL Player Schedule View
-   Version: 1.6.0
-   Date: 2026-07-17
+   Version: 1.6.2
+   Date: 2026-07-21
    Based on: Player Schedule View 1.5
 
-   Changes from 1.5:
-   - Migrated from Code Manager snippet ("Player Schedule View")
-     to a tracked theme file, wrapped in
-     [spp_player_schedule_view] shortcode.
-   - Fixed session_status() check: was "!session_status() ==
-     PHP_SESSION_ACTIVE" (always false due to precedence, so
-     session_start() never actually ran); now correctly checks
-     "session_status() !== PHP_SESSION_ACTIVE".
+   Changes from 1.6.1 (undocumented at the time, applied via
+   sed directly on the server during a same-night fatal-error
+   fix on 2026-07-17):
+   - All functions and the shortcode renamed from
+     gl_player_schedule_view_* / [gl_player_schedule_view] to
+     spp_player_schedule_view_* / [spp_player_schedule_view].
+     The gl-events PLUGIN has its own file with the exact same
+     names, which caused a site-wide fatal error the moment
+     this file loaded alongside it.
+
+   Changes from 1.6.0:
+   - Player-facing "is the schedule published" gate no longer
+     queries wpda_project_page.add_to_menu (a WP Data Access
+     Premium admin-page-config field being repurposed for this).
+     Depending on it proved fragile: a WPDA reinstall on
+     2026-07-17 left it in a state nothing ever flipped back to
+     'Yes' on publish, so players saw "not currently available"
+     all night on 2026-07-20 despite a successful publish --
+     admin/editor accounts bypass this check entirely, which is
+     why it went unnoticed until players reported it. Now uses
+     get_option('spp_schedule_published') directly -- the same
+     flag gl-schedule-production.php (sets to 0) and
+     gl-publish-schedule.php (sets to 1) already control
+     reliably elsewhere, with no third-party plugin dependency.
    - Added a Travel column, visible to admin/editor only
      (spp_is_admin_or_editor()) -- lets convenors spot missing
      or mismatched carpool codes (e.g. same-surname players not
@@ -20,6 +36,14 @@
      needing to open the membership editor separately. Same
      "gate one extra field behind a role check" approach already
      used for the P- preferred-player prefix handling elsewhere.
+
+   Changes from 1.5:
+   - Migrated from Code Manager snippet ("Player Schedule View")
+     to a tracked theme file.
+   - Fixed session_status() check: was "!session_status() ==
+     PHP_SESSION_ACTIVE" (always false due to precedence, so
+     session_start() never actually ran); now correctly checks
+     "session_status() !== PHP_SESSION_ACTIVE".
    ========================================================= */
 
 defined( 'ABSPATH' ) || exit;
@@ -44,14 +68,20 @@ if (!$Event) {
     return;
 }
 
-$published = $wpdb->get_var($wpdb->prepare("
-    SELECT add_to_menu
-    FROM {$wpdb->prefix}wpda_project_page
-    WHERE page_sequence = %d
-	AND page_id = 70
-    AND add_to_menu = 'Yes'
-    LIMIT 1
-", $Event));
+// Player-facing gate uses our own spp_schedule_published option --
+// not the WPDA-table add_to_menu field. That field belongs to a
+// third-party plugin's internal admin page config, and depending on
+// it for player-facing access proved fragile in practice (July 20
+// 2026: a WP Data Access Premium reinstall left it in a state where
+// nothing was ever flipping it back to 'Yes' on publish, so players
+// saw "not currently available" all night despite a successful
+// publish -- admin/editor accounts bypass this check entirely,
+// which is why it went unnoticed until players reported it).
+// spp_schedule_published is already the authoritative flag for this
+// exact question elsewhere in the codebase (set to 0 by
+// gl-schedule-production.php, 1 by gl-publish-schedule.php), so
+// using it here directly removes the WPDA dependency altogether.
+$published = (int) get_option( 'spp_schedule_published', 0 );
 
 $is_admin_or_editor = spp_is_admin_or_editor();
 
