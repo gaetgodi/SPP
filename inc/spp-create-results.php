@@ -1,9 +1,24 @@
 <?php
 /* =========================================================
    SPP Create Results (for Override)
-   Version: 2.1.1
-   Date: 2026-07-17
+   Version: 2.1.2
+   Date: 2026-07-21
    Based on: Create Results for Override (Main Path) 2.0
+
+   Changes from 2.1.1:
+   - RankCalc_Shadow added as a real column on Results_{event}
+     and Results (Step 11, propagated automatically via Step 14's
+     CREATE TABLE ... LIKE), pulled from the already-built shadow
+     table via LEFT JOIN on user_id. Sits directly alongside
+     RankCalc/RankOverride in the Modify Overrides page (WPDA
+     app_id 7, project 30) so the two can be compared side by
+     side while actually making override decisions, instead of
+     only appearing in the separate end-of-run comparison report.
+   - Shadow Ranking Comparison report: header row text was
+     unreadable (black-on-dark-blue) -- Divi's theme CSS was
+     overriding a plain inline color:#fff with no !important,
+     same failure mode fixed elsewhere in the membership editor.
+     Each <th> now sets color:#fff !important individually.
 
    Changes from 2.1.0:
    - Shadow dampening now prefers the computed, club-relative
@@ -340,13 +355,18 @@ $shadow_table = "Results_shadow_{$prev}";
 $wpdb->query("DROP TABLE IF EXISTS {$shadow_table}");
 $wpdb->query("RENAME TABLE tmp1_shadow TO {$shadow_table}");
 
-// Step 11: Add override columns (live, unchanged)
+// Step 11: Add override columns, plus the shadow comparison value pulled
+// in from the shadow table built in Step 10b -- sits right next to
+// RankCalc/RankOverride so the two can be compared directly in the
+// Modify Overrides page, instead of only appearing in a separate report.
 $wpdb->query("DROP TABLE IF EXISTS tmp1");
 $wpdb->query("CREATE TABLE tmp1 SELECT * FROM (
-    SELECT Rank, old_0_Rank AS RankPrev, newrank AS RankCalc, newrank AS RankOverride,
-           user_id, group_id, Score, event_id, display_name
-    FROM {$resultsnew}
-    ORDER BY CAST(newrank AS DECIMAL(8,2)) ASC
+    SELECT r.Rank, r.old_0_Rank AS RankPrev, r.newrank AS RankCalc, r.newrank AS RankOverride,
+           sh.newrank AS RankCalc_Shadow,
+           r.user_id, r.group_id, r.Score, r.event_id, r.display_name
+    FROM {$resultsnew} r
+    LEFT JOIN {$shadow_table} sh ON sh.user_id = r.user_id
+    ORDER BY CAST(r.newrank AS DECIMAL(8,2)) ASC
 ) t1");
 
 $table = "Results_{$prev}";
@@ -438,7 +458,7 @@ usort( $comparison, fn( $a, $b ) => abs( $b['moved'] ) <=> abs( $a['moved'] ) );
 echo '<h3 style="margin-top:20px;">Shadow Ranking Comparison (Rating-distance dampened, K=' . SPP_CR_SHADOW_K . ')</h3>';
 echo '<p style="font-size:13px;color:#666;">This does NOT affect Results, RankOverride, or anything live -- for review only. Sorted by biggest movers first.</p>';
 echo '<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;font-size:14px;">';
-echo '<tr style="background:#3766AB;color:#fff;"><th>Player</th><th>Live Rank</th><th>Shadow Rank</th><th>Moved</th></tr>';
+echo '<tr style="background:#3766AB;"><th style="color:#fff !important;">Player</th><th style="color:#fff !important;">Live Rank</th><th style="color:#fff !important;">Shadow Rank</th><th style="color:#fff !important;">Moved</th></tr>';
 foreach ( $comparison as $c ) {
     $moved_display = $c['moved'] > 0 ? "+{$c['moved']}" : (string) $c['moved'];
     $row_style = $c['moved'] !== 0 ? 'background:#fff8e1;' : '';
