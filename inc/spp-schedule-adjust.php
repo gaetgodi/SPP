@@ -355,7 +355,7 @@ function spp_sa2_action_selector() {
         echo '<form method="post" style="display:inline;">';
         wp_nonce_field( 'spp_schedule_adjust', 'spp_sa_nonce' );
         echo '<input type="hidden" name="spp_sa_action" value="notify_pending">';
-        echo '<button type="submit" class="btn btn-primary" onclick="return confirm(\'Send notifications now for all queued groups? Do this once you\\'re done making adjustments for tonight.\')">Send Pending Notifications</button>';
+        echo '<button type="submit" class="btn btn-primary" onclick="return confirm(\'Send notifications now for all queued groups? Do this once you\\\'re done making adjustments for tonight.\')">Send Pending Notifications</button>';
         echo '</form> ';
         echo '<form method="post" style="display:inline;">';
         wp_nonce_field( 'spp_schedule_adjust', 'spp_sa_nonce' );
@@ -1612,7 +1612,7 @@ function spp_sa2_groupswap_propose_by_player() {
             echo '<option value="' . (int) $g['group_id'] . '">' . esc_html( $g['GP_name'] . ' -- ' . $g['T_desc'] ) . '</option>';
         }
         echo '</select>';
-        echo '<button type="submit" class="btn btn-primary" onclick="return confirm(\'Apply this swap? A backup will be taken and a validation check will run before anything is sent. This override was not automatically checked against this player\\'s travel preference.\')">Apply Manual Swap</button>';
+        echo '<button type="submit" class="btn btn-primary" onclick="return confirm(\'Apply this swap? A backup will be taken and a validation check will run before anything is sent. This override was not automatically checked against this player\\\'s travel preference.\')">Apply Manual Swap</button>';
         echo '<a href="' . esc_url( $_SERVER['REQUEST_URI'] ) . '" class="btn btn-neutral" style="text-decoration:none;">Cancel</a>';
         echo '</form>';
         return;
