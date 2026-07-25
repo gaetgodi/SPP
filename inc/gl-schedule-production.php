@@ -325,7 +325,7 @@ if (isset($Event) and $Event <> 0) {
     $max_slots = $num_crts * $num_times;
     $max_registrants = $max_slots * 5;
     $total_registrants = min($totalentries, $max_registrants);
-    $groups_needed = min($max_slots, (int)floor($total_registrants / 4));
+    $groups_needed = min($max_slots, (int)ceil($total_registrants / 5));
     $total_registrants = min($total_registrants, $groups_needed * 5);
     $extra_registrants = ($groups_needed * 5) - $total_registrants;
 
