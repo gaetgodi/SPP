@@ -272,7 +272,7 @@ function spp_sa2_restore_schedules( $backup_table ) {
 function spp_sa2_render() {
     global $wpdb;
 
-    if ( ! current_user_can( 'edit_others_posts' ) ) {
+    if ( ! spp_is_admin_or_editor() ) {
         echo '<p>You do not have permission to use this tool.</p>';
         return;
     }

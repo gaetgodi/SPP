@@ -28,6 +28,11 @@ function spp_schedule_check_shortcode() {
 function spp_run_schedule_check() {
     global $wpdb;
 
+    if ( ! spp_is_admin_or_editor() ) {
+        echo '<p class="gl-error">You do not have permission to use this tool.</p>';
+        return;
+    }
+
     $Schedules = "Schedules";
     $Master    = "Master";
 
@@ -144,7 +149,7 @@ function spp_run_schedule_check() {
     };
 
     echo '<div class="spp-schedule-check">';
-    echo '<p><strong>Schedule Validation Report</strong> — ' . $event_label . ' (event ID ' . esc_html( $event ) . ')</p>';
+    echo '<p><strong>Schedule Validation Report</strong> — ' . $event_label . ' (event ID ' . esc_html( $event ) . ') — ' . esc_html( $schedule_rows ) . ' player(s) on the schedule</p>';
 
     // -------------------------------------------------------
     // PUBLISH / RESULTS RISK WARNING
