@@ -6,7 +6,7 @@
 
    Replaces UM form 1433 on the /members/ page.
 
-   - Admin/Editor (current_user_can('edit_others_posts')):
+   - Admin/Editor (spp_is_admin_or_editor()):
      full sortable, searchable table of every Master-list
      member, any field inline-editable for any member.
    - Everyone else logged in: their own row only, same
@@ -51,7 +51,7 @@ function spp_membership_editor_render() {
         return;
     }
 
-    $is_admin     = current_user_can( 'edit_others_posts' );
+    $is_admin     = spp_is_admin_or_editor();
     $current_uid  = get_current_user_id();
 
     $roster = $wpdb->get_col( "SELECT user_id FROM Master ORDER BY user_id" );
@@ -406,7 +406,7 @@ add_action( 'wp_ajax_spp_save_membership_field', function() {
         wp_send_json_error( array( 'message' => 'Invalid field.' ) );
     }
 
-    $is_admin = current_user_can( 'edit_others_posts' );
+    $is_admin = spp_is_admin_or_editor();
 
     if ( ! $is_admin && $target_uid !== get_current_user_id() ) {
         wp_send_json_error( array( 'message' => 'You can only edit your own profile.' ) );
