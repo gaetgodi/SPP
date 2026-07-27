@@ -186,8 +186,14 @@ function spp_tools_menu_shortcode() {
     $output .= '</ul>';
     $output .= '</div>';
 
-    // Moderator — ladder role and administrators
-    if (current_user_can('administrator') || current_user_can('ladder')) {
+    // Moderator — ladder-cop, editor, and administrators (spp_is_ladder_admin()
+    // correctly distinguishes real moderators via the 'ladder-cop' role from
+    // the universal "Ladder" player-status flag every registered player has;
+    // the previous current_user_can('ladder') check never matched that flag
+    // at all -- wrong case, wrong semantics -- so this section was silently
+    // dead for everyone except administrators, who always passed via the
+    // separate OR condition and never noticed.
+    if ( spp_is_ladder_admin() ) {
         $mod = spp_render_section($items, 'Moderator');
         if ($mod) $output .= $mod;
     }

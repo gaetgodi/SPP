@@ -38,7 +38,7 @@ defined( 'ABSPATH' ) || exit;
 add_shortcode( 'spp_score_correction', 'spp_score_correction_shortcode' );
 
 function spp_score_correction_shortcode() {
-    if ( ! current_user_can( 'manage_options' ) ) {
+    if ( ! spp_is_admin_or_editor() ) {
         return '<p class="gl-error">You do not have permission to access this tool.</p>';
     }
 
@@ -313,7 +313,7 @@ function spp_score_correction_shortcode() {
 // AJAX: Load players for an event
 // ============================================================
 add_action( 'wp_ajax_spp_sc_load_players', function() {
-    if ( ! current_user_can( 'manage_options' ) ) wp_send_json_error( 'No permission' );
+    if ( ! spp_is_admin_or_editor() ) wp_send_json_error( 'No permission' );
     if ( ! check_ajax_referer( 'spp_score_correction', 'nonce', false ) ) wp_send_json_error( 'Invalid nonce' );
 
     global $wpdb;
@@ -353,7 +353,7 @@ add_action( 'wp_ajax_spp_sc_load_players', function() {
 // AJAX: Load group details for selected player
 // ============================================================
 add_action( 'wp_ajax_spp_sc_load_group', function() {
-    if ( ! current_user_can( 'manage_options' ) ) wp_send_json_error( 'No permission' );
+    if ( ! spp_is_admin_or_editor() ) wp_send_json_error( 'No permission' );
     if ( ! check_ajax_referer( 'spp_score_correction', 'nonce', false ) ) wp_send_json_error( 'Invalid nonce' );
 
     global $wpdb;
@@ -609,7 +609,7 @@ function spp_sc_recalculate( $event_id, $user_id, $game_num, $new_score ) {
 // AJAX: Preview changes
 // ============================================================
 add_action( 'wp_ajax_spp_sc_preview', function() {
-    if ( ! current_user_can( 'manage_options' ) ) wp_send_json_error( 'No permission' );
+    if ( ! spp_is_admin_or_editor() ) wp_send_json_error( 'No permission' );
     if ( ! check_ajax_referer( 'spp_score_correction', 'nonce', false ) ) wp_send_json_error( 'Invalid nonce' );
 
     $event_id  = (int) ( $_POST['event_id'] ?? 0 );
@@ -697,7 +697,7 @@ add_action( 'wp_ajax_spp_sc_preview', function() {
 // AJAX: Apply changes
 // ============================================================
 add_action( 'wp_ajax_spp_sc_apply', function() {
-    if ( ! current_user_can( 'manage_options' ) ) wp_send_json_error( 'No permission' );
+    if ( ! spp_is_admin_or_editor() ) wp_send_json_error( 'No permission' );
     if ( ! check_ajax_referer( 'spp_score_correction', 'nonce', false ) ) wp_send_json_error( 'Invalid nonce' );
 
     global $wpdb;
