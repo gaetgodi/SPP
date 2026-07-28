@@ -115,6 +115,8 @@ correctly in that UI, not just in code.
 - Code Manager snippets are rows in a DB table, not files here. Always ask me for a fresh copy of a
   snippet before modifying it — never work from an old version. CM 278 is disabled and kept as a
   fallback.
+- The "Event Status" page runs the `[gl_event_registrations]` shortcode, which lives in the GL
+  Events plugin itself, not this theme repo — so `git log`/`grep` over this repo will never find it.
 - After a first `git pull` on the server, the mu-plugin symlink must be recreated.
 
 ## Deployment rules
