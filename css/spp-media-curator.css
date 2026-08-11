@@ -1,0 +1,156 @@
+/**
+ * SPP Media Curator — admin styles
+ * Scaled-down port of fishbucklake/css/media-curator.css: kept the
+ * toolbar/table/field styling, dropped the hover-preview and custom
+ * suggestion-dropdown rules (that JS was cut — see spp-media-curator.js).
+ */
+
+.spp-curator .spp-curator-toolbar {
+    margin: 1rem 0;
+    padding: 1rem;
+    background: #fff;
+    border: 1px solid #c3c4c7;
+    border-radius: 4px;
+}
+
+.spp-curator-toolbar select {
+    min-width: 260px;
+    margin-left: 0.5rem;
+}
+
+.spp-curator-count {
+    margin-left: 1rem;
+    color: #646970;
+    font-style: italic;
+}
+
+.spp-curator-actions {
+    margin: 0.75rem 0;
+    padding: 0.75rem 1rem;
+    background: #f6f7f7;
+    border: 1px solid #dcdcde;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.spp-curator-sep {
+    color: #c3c4c7;
+    margin: 0 0.5rem;
+}
+
+.spp-curator-status {
+    margin-left: 0.5rem;
+    color: #2271b1;
+    font-style: italic;
+}
+
+/* thumbnails */
+.spp-curator-thumb {
+    width: 60px;
+    height: 60px;
+    object-fit: cover;
+    border-radius: 3px;
+    display: block;
+    background: #f0f0f1;
+    cursor: zoom-in;
+}
+
+.spp-curator-fn {
+    font-size: 10px;
+    color: #8c8f94;
+    margin-top: 2px;
+    word-break: break-all;
+    max-width: 60px;
+    line-height: 1.2;
+}
+
+/* editable fields */
+.spp-curator-field {
+    width: 100%;
+    transition: background-color 0.3s ease, box-shadow 0.2s ease;
+}
+
+.spp-curator-field.is-saving {
+    background: #fff8e5;
+}
+
+.spp-curator-field.is-saved {
+    background: #edfaef;
+    box-shadow: 0 0 0 1px #00a32a inset;
+}
+
+.spp-curator-field.is-error {
+    background: #fcf0f1;
+    box-shadow: 0 0 0 1px #d63638 inset;
+}
+
+/* muted caption suggestion (title shown, not yet saved) */
+.spp-curator-field.is-suggestion {
+    color: #8c8f94;
+    font-style: italic;
+}
+
+/* header select-all checkboxes */
+.spp-curator-table thead th input[type="checkbox"] {
+    margin-top: 2px;
+}
+
+/* keep the title column a touch narrower than caption */
+.spp-curator-table th:nth-child(2) { width: 28%; }
+.spp-curator-table th:nth-child(3) { width: auto; }
+
+.spp-curator-table td {
+    vertical-align: middle;
+}
+
+/* selected row highlight — works alongside .striped rows */
+.spp-curator-table tbody tr.is-selected,
+.spp-curator-table tbody tr.is-selected:nth-child(odd) {
+    background: #e6f0f7;
+}
+
+.spp-curator-table tbody tr.is-selected td:first-child {
+    box-shadow: inset 3px 0 0 #2271b1;
+}
+
+.spp-curator-table tbody tr.is-selected .spp-curator-thumb {
+    outline: 2px solid #2271b1;
+    outline-offset: 1px;
+}
+
+/* hover preview (enlarged image + pixel dimensions) */
+.spp-curator-hover {
+    position: fixed;
+    z-index: 100000;
+    pointer-events: none;
+    display: none;
+    background: #fff;
+    padding: 4px;
+    border: 1px solid #c3c4c7;
+    border-radius: 4px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+}
+
+.spp-curator-hover.is-visible {
+    display: block;
+}
+
+.spp-curator-hover img {
+    display: block;
+    max-width: 340px;
+    max-height: 340px;
+    width: auto;
+    height: auto;
+    border-radius: 2px;
+}
+
+.spp-curator-hover-dims {
+    text-align: center;
+    font-size: 12px;
+    color: #1d2327;
+    padding: 4px 0 2px;
+    font-family: Consolas, Monaco, monospace;
+}
