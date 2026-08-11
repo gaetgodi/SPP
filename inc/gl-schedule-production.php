@@ -288,8 +288,9 @@ if (isset($Event) and $Event <> 0) {
 
     $totalentries = count($entries);
 
-    $active_courts = $wpdb->get_results("SELECT Crt_ID FROM Courts WHERE active = 1");
-    shuffle($active_courts);
+    // Ordered by Crt_ID (not shuffled) so lower-numbered courts (e.g. courts 1-4)
+    // fill to capacity in every time slot before spilling into the remaining courts.
+    $active_courts = $wpdb->get_results("SELECT Crt_ID FROM Courts WHERE active = 1 ORDER BY Crt_ID ASC");
     $num_crts = count($active_courts);
 
     $active_times = $wpdb->get_results("SELECT T_ID FROM Times WHERE Active = 1 ORDER BY T_ID");
