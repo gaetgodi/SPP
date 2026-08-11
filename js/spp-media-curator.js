@@ -108,14 +108,21 @@
         img.src = it.thumb || '';
         img.alt = '';
         img.className = 'spp-curator-thumb';
+        img.title = 'Click to select' + (it.large ? ' — hover for larger preview' : '');
         if (it.large) {
-            img.title = 'Hover for larger preview';
             img.dataset.large = it.large;
             img.dataset.dims = it.dims || '';
             img.addEventListener('mouseenter', showHover);
             img.addEventListener('mousemove', moveHover);
             img.addEventListener('mouseleave', hideHover);
         }
+        img.addEventListener('click', function () {
+            var cb = $('.spp-curator-select', tr);
+            if (!cb) return;
+            cb.checked = !cb.checked;
+            syncRowSelected(tr);
+            if (!cb.checked && els.selectall) els.selectall.checked = false;
+        });
         tdImg.appendChild(img);
         var fn = document.createElement('div');
         fn.className = 'spp-curator-fn';
