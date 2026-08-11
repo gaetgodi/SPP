@@ -42,6 +42,7 @@ require_once get_stylesheet_directory() . '/inc/spp-album-taxonomy.php'; // must
 require_once get_stylesheet_directory() . '/inc/spp-flickr-import.php';
 require_once get_stylesheet_directory() . '/inc/spp-media-curator.php';
 require_once get_stylesheet_directory() . '/inc/spp-gallery.php';
+require_once get_stylesheet_directory() . '/inc/spp-gallery-builder.php'; // depends on spp_gallery_get_ids() above
 require_once get_stylesheet_directory() . '/inc/blog-roles.php';
 require_once get_stylesheet_directory() . '/inc/score-scanner.php';
 // require_once get_stylesheet_directory() . '/inc/spp-registrant-list.php'; // Superseded by gl-events plugin
