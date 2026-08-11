@@ -1,0 +1,224 @@
+/* =========================================================
+   SPP GALLERY - grid / carousel / masonry views
+   Ported from fishbucklake/css/gallery.css. Custom properties
+   remapped to SPP's actual design tokens (spp-tokens.css) instead
+   of FBL's --fbl-* fallback-only tokens.
+   ========================================================= */
+
+.spp-gallery {
+    margin: var(--spp-space-xl, 2rem) 0;
+}
+
+.spp-gallery-error {
+    padding: 0.75rem 1rem;
+    background: #fff3f3;
+    border-left: 4px solid #dc3232;
+    font-size: 0.9rem;
+}
+
+.spp-gallery-image {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+.spp-gallery-link {
+    display: block;
+    overflow: hidden;
+    border-radius: var(--spp-radius, 6px);
+}
+
+.spp-gallery-link .spp-gallery-image {
+    transition: transform 0.3s ease;
+}
+
+.spp-gallery-link:hover .spp-gallery-image {
+    transform: scale(1.04);
+}
+
+.spp-gallery-caption {
+    padding: 0.4rem 0.25rem 0;
+    font-size: 0.85rem;
+    line-height: 1.35;
+    color: var(--spp-text-subtle, #666);
+    text-align: center;
+}
+
+.spp-gallery--carousel .spp-gallery-caption {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    padding: 0.6rem 3.5rem;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    z-index: 1;
+}
+
+/* ---------------- GRID ---------------- */
+
+.spp-gallery--grid {
+    display: grid;
+    grid-template-columns: repeat(var(--spp-gallery-columns, 3), 1fr);
+    gap: var(--spp-space-md, 1rem);
+}
+
+.spp-gallery--grid .spp-gallery-image {
+    aspect-ratio: 4 / 3;
+    object-fit: cover;
+}
+
+/* ---------------- MASONRY ---------------- */
+
+.spp-gallery--masonry {
+    columns: var(--spp-gallery-columns, 3);
+    column-gap: var(--spp-space-md, 1rem);
+}
+
+.spp-gallery--masonry .spp-gallery-item {
+    break-inside: avoid;
+    margin-bottom: var(--spp-space-md, 1rem);
+}
+
+/* ---------------- CAROUSEL ---------------- */
+
+.spp-gallery--carousel {
+    position: relative;
+    overflow: hidden;
+    border-radius: var(--spp-radius, 6px);
+}
+
+.spp-gallery--carousel .spp-gallery-item {
+    display: none;
+}
+
+.spp-gallery--carousel .spp-gallery-item.is-active {
+    display: block;
+    animation: spp-gallery-fade 0.6s ease;
+}
+
+.spp-gallery--carousel .spp-gallery-image {
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+    border-radius: 0;
+}
+
+.spp-gallery--fit-contain.spp-gallery--carousel .spp-gallery-image {
+    object-fit: contain;
+    background: var(--spp-dark, #1a1a1a);
+}
+
+.spp-gallery--fit-contain.spp-gallery--grid .spp-gallery-image {
+    object-fit: contain;
+    background: var(--spp-dark, #1a1a1a);
+}
+
+@keyframes spp-gallery-fade {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+.spp-gallery-prev,
+.spp-gallery-next {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    background: rgba(0, 0, 0, 0.45);
+    color: #fff;
+    border: none;
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+    z-index: 2;
+    transition: background 0.2s ease;
+}
+
+.spp-gallery-prev:hover,
+.spp-gallery-next:hover {
+    background: var(--spp-primary, rgba(0, 0, 0, 0.75));
+}
+
+.spp-gallery--fit-contain .spp-gallery-prev,
+.spp-gallery--fit-contain .spp-gallery-next {
+    background: rgba(0, 0, 0, 0.45);
+    color: #fff;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+
+.spp-gallery--fit-contain .spp-gallery-prev:hover,
+.spp-gallery--fit-contain .spp-gallery-next:hover {
+    background: var(--spp-primary, rgba(0, 0, 0, 0.75));
+    color: #fff;
+}
+
+.spp-gallery-prev { left: 12px; }
+.spp-gallery-next { right: 12px; }
+
+/* ---------------- RESPONSIVE ---------------- */
+
+@media (max-width: 980px) {
+    .spp-gallery--grid    { grid-template-columns: repeat(2, 1fr); }
+    .spp-gallery--masonry { columns: 2; }
+}
+
+@media (max-width: 600px) {
+    .spp-gallery--grid    { grid-template-columns: repeat(1, 1fr); }
+    .spp-gallery--masonry { columns: 1; }
+
+    .spp-gallery-prev,
+    .spp-gallery-next {
+        width: 36px;
+        height: 36px;
+    }
+}
+
+/* Arrow glyphs are SVG with stroke="currentColor" — force white regardless of
+   any inherited button color from Divi/resets. */
+.spp-gallery-prev svg,
+.spp-gallery-next svg,
+.spp-gallery--fit-contain .spp-gallery-prev svg,
+.spp-gallery--fit-contain .spp-gallery-next svg {
+    stroke: #fff !important;
+    color: #fff !important;
+}
+
+/* ---------------------------------------------------------
+   Overlay caption mode  [spp_gallery thumb_caption="overlay"]
+   Uses the theme's own heading font instead of FBL's imported
+   Google-Fonts cursive face, to avoid an extra external dependency.
+   --------------------------------------------------------- */
+.spp-gallery-item.spp-gallery-item--overlay {
+    position: relative;
+    overflow: hidden;
+    border-radius: var(--spp-radius, 6px);
+}
+
+.spp-gallery-caption--overlay {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    padding: 2.5rem 1rem 1.25rem;
+    background: linear-gradient(to top, rgba(0,0,0,0.75), transparent);
+    text-align: center;
+    pointer-events: none; /* clicks pass through to the link/image below */
+}
+
+.spp-gallery-caption--overlay span {
+    font-family: var(--spp-font-heading, Georgia, serif);
+    font-size: 1.8rem;
+    line-height: 1.15;
+    color: var(--spp-text-light, #fff) !important;
+    text-shadow: 0 2px 6px rgba(0,0,0,0.6);
+}
+
+@media (max-width: 640px) {
+    .spp-gallery-caption--overlay span {
+        font-size: 1.4rem;
+    }
+}
