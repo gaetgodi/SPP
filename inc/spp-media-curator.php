@@ -89,7 +89,9 @@ function spp_media_curator_render_page() {
                        placeholder="album name">
                 <datalist id="spp-curator-albums">
                     <?php foreach ($albums as $a): ?>
-                        <option value="<?php echo esc_attr($a->name); ?>">
+                        <option value="<?php echo esc_attr($a->name); ?>"
+                                data-slug="<?php echo esc_attr($a->slug); ?>"
+                                label="<?php echo esc_attr($a->name . ' (' . (int) $a->count . ')'); ?>">
                     <?php endforeach; ?>
                 </datalist>
             </label>
@@ -97,6 +99,7 @@ function spp_media_curator_render_page() {
                 Copy selected →
             </button>
 
+            <span id="spp-curator-selected-count" class="spp-curator-count">Selected: 0</span>
             <span id="spp-curator-status" class="spp-curator-status"></span>
         </div>
 
@@ -249,7 +252,11 @@ add_action('wp_ajax_spp_curator_copyalbum', function () {
 
     $ids    = isset($_POST['ids']) ? array_map('intval', (array) $_POST['ids']) : array();
     $target = isset($_POST['target']) ? sanitize_text_field(wp_unslash($_POST['target'])) : '';
-    $target = trim($target);
+    // Defensive: some browsers fill the input with the <option>'s label
+    // (which we set to "Name (count)" for the datalist hint) instead of
+    // its value when a suggestion is picked — strip a trailing "(N)" so
+    // that doesn't get created as a literal album name.
+    $target = trim( preg_replace( '/\s*\(\d+\)\s*$/', '', $target ) );
 
     if (empty($ids))   wp_send_json_error('no images selected');
     if ($target === '') wp_send_json_error('enter a target album name');
@@ -269,6 +276,8 @@ add_action('wp_ajax_spp_curator_copyalbum', function () {
     $term = get_term($tid, 'spp_album');
     wp_send_json_success(array(
         'target'    => $target,
+        'name'      => $term && !is_wp_error($term) ? $term->name : $target,
+        'slug'      => $term && !is_wp_error($term) ? $term->slug : sanitize_title($target),
         'copied'    => $copied,
         'skipped'   => count($ids) - $copied,
         'created'   => $created,

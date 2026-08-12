@@ -33,6 +33,8 @@
         els.flagall   = $('#spp-curator-flagall');
         els.selectall = $('#spp-curator-selectall');
         els.hover     = $('#spp-curator-hover');
+        els.selcount  = $('#spp-curator-selected-count');
+        els.albumlist = $('#spp-curator-albums');
 
         if (!els.source) return;
 
@@ -67,6 +69,7 @@
         currentAlbum = album;
         if (els.flagall) els.flagall.checked = false;
         if (els.selectall) els.selectall.checked = false;
+        updateSelectedCount();
 
         if (!album) {
             els.table.style.display = 'none';
@@ -86,6 +89,10 @@
             }
             var items = res.data.items || [];
             els.count.textContent = res.data.count + ' image' + (res.data.count === 1 ? '' : 's');
+            // The <option> count baked into the page markup can go stale
+            // as soon as anything is copied/added without a reload —
+            // resync it (and the target datalist) to the freshly-loaded count.
+            updateAlbumCount(album, res.data.count);
             if (!items.length) {
                 els.table.style.display = 'none';
                 els.actions.style.display = 'none';
@@ -97,6 +104,29 @@
             els.actions.style.display = '';
             els.empty.style.display = 'none';
         });
+    }
+
+    /* Keep the source <select> and "copy to" <datalist> counts in sync
+       with reality (both start out baked into the initial page render,
+       so they'd otherwise drift after every load/copy). */
+    function updateAlbumCount(slug, count) {
+        var opt = els.source ? els.source.querySelector('option[value="' + cssEscape(slug) + '"]') : null;
+        if (opt) opt.textContent = opt.textContent.replace(/\s*\(\d+\)\s*$/, '') + ' (' + count + ')';
+
+        if (els.albumlist) {
+            var dlOpt = els.albumlist.querySelector('option[data-slug="' + cssEscape(slug) + '"]');
+            if (dlOpt) dlOpt.label = dlOpt.value + ' (' + count + ')';
+        }
+    }
+
+    function cssEscape(v) {
+        return window.CSS && CSS.escape ? CSS.escape(v) : String(v).replace(/"/g, '\\"');
+    }
+
+    function updateSelectedCount() {
+        if (!els.selcount) return;
+        var n = els.rows ? $all('.spp-curator-select:checked', els.rows).length : 0;
+        els.selcount.textContent = 'Selected: ' + n;
     }
 
     function buildRow(it) {
@@ -166,6 +196,7 @@
         var cb = $('.spp-curator-select', tr);
         if (!cb) return;
         tr.classList.toggle('is-selected', cb.checked);
+        updateSelectedCount();
     }
 
     /* ---- hover preview (enlarged image + pixel dimensions) ---- */
@@ -318,6 +349,7 @@
             setTimeout(function () { btn.textContent = 'Copy →'; }, 1500);
             els.status.textContent = 'Sent to ' + res.data.target +
                 ' (' + res.data.copied + ' copied, ' + res.data.skipped + ' already there).';
+            updateAlbumCount(res.data.slug, res.data.new_count);
         });
     }
 
@@ -339,8 +371,10 @@
                 syncRowSelected(r);
             });
             if (els.selectall) els.selectall.checked = false;
+            updateSelectedCount();
             els.status.textContent = 'Copied ' + res.data.copied + ' to ' + res.data.target +
                 ' (' + res.data.skipped + ' already there).';
+            updateAlbumCount(res.data.slug, res.data.new_count);
         });
     }
 })();
