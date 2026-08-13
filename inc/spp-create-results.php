@@ -1,9 +1,27 @@
 <?php
 /* =========================================================
    SPP Create Results (for Override)
-   Version: 2.1.2
-   Date: 2026-07-21
+   Version: 2.1.3
+   Date: 2026-08-13
    Based on: Create Results for Override (Main Path) 2.0
+
+   Changes from 2.1.2:
+   - Fixed event_id being written as NULL (instead of the current
+     event) for members who were not scheduled/registered for the
+     event at all but still received a rank-decay entry pulled from
+     Master (Step 10's 4th UNION branch, and the matching branch in
+     the Step 10b shadow UNION). These rows' RankCalc was always
+     correct, but the NULL event_id meant they silently dropped out
+     of any query/view filtered by event_id -- e.g. the Modify
+     Overrides page (WPDA app_id 7, project 30) -- even though their
+     rank visibly changed for that event. Confirmed on production:
+     104 such rows in Results_160/Results had event_id NULL prior to
+     this fix. Results_all was unaffected (a separate, out-of-repo
+     process backfills its event_id independently), so only the
+     per-event snapshot tables (Results_{event}, live Results) and
+     anything reading them were impacted. Existing NULL-event_id rows
+     in Results_160/Results/Results_all are not touched by this fix
+     and would need a manual backfill if desired.
 
    Changes from 2.1.1:
    - RankCalc_Shadow added as a real column on Results_{event}
@@ -300,7 +318,7 @@ $wpdb->query("CREATE TABLE tmp1 SELECT * FROM (
     (SELECT
         m.Rank AS old_0_Rank,
         CAST(m.Rank + {$noshow_np} AS DECIMAL(6,2)) AS newrank,
-        m.user_id, NULL AS group_id, NULL AS Score, NULL AS event_id,
+        m.user_id, NULL AS group_id, NULL AS Score, {$Event} AS event_id,
         CONCAT(m.first_name, ' ', m.last_name) AS display_name
      FROM {$master} m
      LEFT JOIN {$resultstmp} t ON m.user_id = t.user_id
@@ -343,7 +361,7 @@ $wpdb->query("CREATE TABLE tmp1_shadow SELECT * FROM (
     (SELECT
         m.Rank AS old_0_Rank,
         CAST(m.Rank + {$noshow_np} AS DECIMAL(6,2)) AS newrank,
-        m.user_id, NULL AS group_id, NULL AS Score, NULL AS event_id,
+        m.user_id, NULL AS group_id, NULL AS Score, {$Event} AS event_id,
         CONCAT(m.first_name, ' ', m.last_name) AS display_name
      FROM {$master} m
      LEFT JOIN {$resultstmp} t ON m.user_id = t.user_id
