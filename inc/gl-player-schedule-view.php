@@ -1,9 +1,22 @@
 <?php
 /* =========================================================
    GL Player Schedule View
-   Version: 1.6.3
+   Version: 1.6.4
    Date: 2026-08-14
    Based on: Player Schedule View 1.5
+
+   Changes from 1.6.3:
+   - Added registrant counts: a page-total count above the
+     convenor message, and a per-time-slot subtotal in each
+     .spp-time-header. Both count rows in schedules_w with
+     GP_name != 'Group 99' -- Group 99 (group_id/time_id/
+     Crt_ID = 99) is the sentinel gl-schedule-production.php
+     uses to shelve dropped/unscheduled registrants, and the
+     groups query on this page already excludes it, so the
+     counts use the same exclusion to stay consistent with what
+     the page actually lists. Both counts query schedules_w
+     (not Schedules directly) for the same reason -- this page
+     already reads exclusively from that view.
 
    Changes from 1.6.2:
    - Guarded the `[cmruncode name='Create View']` call (CM254:
@@ -149,6 +162,14 @@ $_conv_msg   = $_conv_phone
     : "Please contact {$_conv_name} to notify of any last-minute schedule issues.";
 echo '<p class="spp-sub-intro">' . esc_html($_conv_msg) . '</p>';
 
+// Page-total registrant count -- schedules_w rows excluding the Group 99
+// (dropped/unscheduled) sentinel, matching the exclusion the groups query
+// below already applies, so this stays consistent with what's listed.
+$total_registrants = (int) $wpdb->get_var(
+    "SELECT COUNT(*) FROM schedules_w WHERE GP_name != 'Group 99'"
+);
+echo '<p class="spp-total-registrants">Total registrants: ' . esc_html($total_registrants) . '</p>';
+
 foreach ($time_slots as $slot) {
     $t_id   = $slot->T_ID;
     $t_desc = $slot->T_desc;
@@ -163,8 +184,14 @@ foreach ($time_slots as $slot) {
 
     if (empty($groups)) continue;
 
+    $slot_registrants = (int) $wpdb->get_var($wpdb->prepare(
+        "SELECT COUNT(*) FROM schedules_w WHERE t_ID = %d AND GP_name != 'Group 99'",
+        $t_id
+    ));
+
     echo '<div class="spp-time-block">';
-    echo '<div class="spp-time-header">' . esc_html($t_desc) . '</div>';
+    echo '<div class="spp-time-header">' . esc_html($t_desc)
+       . ' <span class="spp-slot-count">(' . esc_html($slot_registrants) . ' registrants)</span></div>';
     echo '<div class="spp-groups-grid">';
 
     foreach ($groups as $group) {
@@ -221,6 +248,10 @@ foreach ($time_slots as $slot) {
     margin-bottom: 16px;
     font-style: italic;
 }
+.spp-total-registrants {
+    font-weight: bold;
+    margin: 0 0 12px 0;
+}
 
 /* ── Time block ───────────────────────────────────────── */
 .spp-time-block {
@@ -235,6 +266,11 @@ foreach ($time_slots as $slot) {
     font-size: 1.2em;
     font-weight: bold;
     text-align: center;
+}
+.spp-slot-count {
+    font-size: 0.75em;
+    font-weight: normal;
+    opacity: 0.85;
 }
 
 /* ── Groups grid ──────────────────────────────────────── */
