@@ -33,6 +33,9 @@ function spp_switch_players_shortcode() {
         return '<p>You do not have permission to access this tool.</p>';
     }
 
+    if ( ! defined( 'DONOTCACHEPAGE' ) ) define( 'DONOTCACHEPAGE', true );
+    nocache_headers();
+
     global $wpdb;
     $prefix = $wpdb->prefix;
 

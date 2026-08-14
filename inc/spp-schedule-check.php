@@ -20,6 +20,11 @@ defined( 'ABSPATH' ) || exit;
 add_shortcode( 'spp_schedule_check', 'spp_schedule_check_shortcode' );
 
 function spp_schedule_check_shortcode() {
+    if ( spp_is_admin_or_editor() ) {
+        if ( ! defined( 'DONOTCACHEPAGE' ) ) define( 'DONOTCACHEPAGE', true );
+        nocache_headers();
+    }
+
     ob_start();
     spp_run_schedule_check();
     return ob_get_clean();

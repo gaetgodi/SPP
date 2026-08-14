@@ -51,6 +51,11 @@ defined( 'ABSPATH' ) || exit;
 add_shortcode( 'spp_player_schedule_view', 'spp_player_schedule_view_shortcode' );
 
 function spp_player_schedule_view_shortcode() {
+    if ( spp_is_admin_or_editor() ) {
+        if ( ! defined( 'DONOTCACHEPAGE' ) ) define( 'DONOTCACHEPAGE', true );
+        nocache_headers();
+    }
+
     ob_start();
     spp_player_schedule_view_run();
     return ob_get_clean();

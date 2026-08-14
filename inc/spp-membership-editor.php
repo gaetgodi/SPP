@@ -34,6 +34,11 @@ defined( 'ABSPATH' ) || exit;
 add_shortcode( 'spp_membership_editor', 'spp_membership_editor_shortcode' );
 
 function spp_membership_editor_shortcode() {
+    if ( spp_is_admin_or_editor() ) {
+        if ( ! defined( 'DONOTCACHEPAGE' ) ) define( 'DONOTCACHEPAGE', true );
+        nocache_headers();
+    }
+
     ob_start();
     spp_membership_editor_render();
     return ob_get_clean();

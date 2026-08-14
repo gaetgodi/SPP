@@ -264,6 +264,9 @@ function spp_create_results_shortcode() {
         return '<p class="gl-error">You do not have permission to access this tool.</p>';
     }
 
+    if ( ! defined( 'DONOTCACHEPAGE' ) ) define( 'DONOTCACHEPAGE', true );
+    nocache_headers();
+
     global $wpdb;
     $info  = spp_cr_current_event();
     $Event = $info['event'];
