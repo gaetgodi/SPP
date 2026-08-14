@@ -1,9 +1,60 @@
 <?php
 /* =========================================================
    SPP Create Results (for Override)
-   Version: 3.0.0
+   Version: 3.1.0
    Date: 2026-08-14
    Based on: Create Results for Override (Main Path) 2.0
+
+   Changes from 3.0.0:
+   - Design flaw: the v2.2.0 snapshot logic treated "a snapshot
+     table exists" as equivalent to "this is a clean pre-event
+     baseline". It isn't -- Step 9b ran (and wrote a snapshot)
+     any time execution reached it, including a run that should
+     never have happened because the guard failed to trip.
+     Concrete case: usermeta_rank_pre_event_160 was created by
+     an accidental run AFTER event 160 had already been
+     correctly processed, capturing already-POST-event usermeta
+     (Ernst Boxler: 3) instead of the true pre-event value (1).
+     The v3.0.0 UI offered it as a valid restore point anyway;
+     forcing from it would have re-corrupted the ladder with
+     already-processed data instead of undoing anything.
+   - Fix (defense in depth, not just detection): Step 9b now
+     independently re-checks Results_{$Event} existence itself,
+     right before writing anything, instead of trusting the
+     guard's evaluation from ~180 lines earlier in the same
+     execution. If Results_{$Event} already exists at this
+     point, Step 9b aborts the run outright -- refuses to
+     fabricate a snapshot from already-processed state, and
+     refuses to proceed to Step 10's Master.Rank read. This
+     means a second, independent checkpoint exists immediately
+     before the actually-dangerous statement, so a guard failure
+     anywhere upstream (for any reason, including causes outside
+     this file) no longer silently produces a corrupted
+     "restore point" as a side effect.
+   - That independent check on its own would have broken a
+     legitimate force=1 re-run -- Results_{$Event} isn't dropped
+     until Step 11, so it still exists at Step 9b even when the
+     guard correctly validated and restored. Step 9b therefore
+     doesn't gate on existence alone: a $force_restore_completed
+     flag, set only as a side effect of the guard actually
+     performing the validated restore in this same execution
+     (not copied from $force, which only means "was asked"),
+     tells "shouldn't be here" apart from "supposed to be here".
+   - Every snapshot Step 9b creates is now stamped with a table
+     COMMENT (single-statement: CREATE TABLE ... COMMENT='...'
+     AS SELECT ...) recording creation time and
+     clean_baseline=1. spp_cr_snapshot_is_valid_baseline()
+     checks for that marker via SHOW TABLE STATUS instead of
+     just SHOW TABLES existence -- both the shortcode preview
+     and the force-restore path use it now. A snapshot without
+     the marker (anything from before this fix, or anything
+     that somehow still gets created outside this guarded path)
+     is treated as untrustworthy, same as an invalidated one.
+     A COMMENT was chosen over a separate metadata table
+     specifically because it travels with the table through
+     spp-score-correction.php's invalidation RENAME TABLE --
+     a side table keyed by event_id would silently desync the
+     moment that rename happens.
 
    Changes from 2.2.0:
    - BREAKING: [spp_create_results] no longer executes the
@@ -174,6 +225,30 @@ function spp_cr_current_event() {
 }
 
 /* =========================================================
+   SNAPSHOT VALIDITY HELPER (v3.1.0)
+   -----------------------------------------------------------
+   A snapshot table existing is not the same as it being a
+   trustworthy pre-event baseline. usermeta_rank_pre_event_160
+   was created by a run that should have been blocked by the
+   guard, and captured already-POST-event usermeta instead of
+   a true pre-event state -- see the v3.1.0 changelog above.
+   Snapshots Step 9b creates now carry a table COMMENT marking
+   them clean_baseline=1; this checks for that marker via
+   SHOW TABLE STATUS rather than just checking existence. Any
+   snapshot without the marker -- including every one that
+   existed before this fix shipped -- is treated as not valid.
+   ========================================================= */
+function spp_cr_snapshot_is_valid_baseline( $snapshot_table ) {
+    global $wpdb;
+    $status = $wpdb->get_row( "SHOW TABLE STATUS LIKE '{$snapshot_table}'", ARRAY_A );
+    if ( ! $status ) {
+        return false; // doesn't exist at all
+    }
+    $comment = $status['Comment'] ?? '';
+    return strpos( $comment, 'clean_baseline=1' ) !== false;
+}
+
+/* =========================================================
    SHORTCODE: read-only preview + confirmation form (v3.0.0)
    -----------------------------------------------------------
    Never executes the pipeline. Renders current state (which
@@ -202,7 +277,7 @@ function spp_create_results_shortcode() {
     $snapshot_table       = "usermeta_rank_pre_event_{$Event}";
     $already_processed    = (bool) $wpdb->get_var( "SHOW TABLES LIKE '{$results_table_check}'" );
     $snapshot_exists      = $already_processed
-        ? (bool) $wpdb->get_var( "SHOW TABLES LIKE '{$snapshot_table}'" )
+        ? spp_cr_snapshot_is_valid_baseline( $snapshot_table )
         : false;
 
     ob_start();
@@ -352,9 +427,19 @@ $snapshot_table = "usermeta_rank_pre_event_{$Event}";
 $results_table_check = "Results_{$Event}";
 $already_processed = (bool) $wpdb->get_var( "SHOW TABLES LIKE '{$results_table_check}'" );
 
+// v3.1.0: proof-of-work flag for Step 9b's independent re-check below.
+// Results_{$Event} is NOT dropped until Step 11 (~150 lines later), so on a
+// legitimate force=1 re-run it still exists all the way through Step 9b --
+// that alone can't be what Step 9b uses to decide "should I be here". This
+// flag is set ONLY as a side effect of the guard actually completing a
+// validated restore in *this* execution, right here, right now -- not
+// copied from $force (which just means "was asked", not "was granted").
+// Step 9b trusts that a real restore happened, not that one was requested.
+$force_restore_completed = false;
+
 if ( $already_processed ) {
     if ( $force ) {
-        $snapshot_exists = (bool) $wpdb->get_var( "SHOW TABLES LIKE '{$snapshot_table}'" );
+        $snapshot_exists = spp_cr_snapshot_is_valid_baseline( $snapshot_table );
         if ( ! $snapshot_exists ) {
             echo "<span style='font-size:20px;color:#c0392b;'>force=1 was passed but no valid snapshot table ({$snapshot_table}) exists for event {$Event} -- refusing to run without a restore point. If a score correction ran since the last snapshot, it will have been renamed to {$snapshot_table}_invalidated_&lt;timestamp&gt; and usermeta must be reviewed manually before proceeding. Aborting.</span>";
             return;
@@ -372,6 +457,7 @@ if ( $already_processed ) {
              SET u.meta_value = s.meta_value
              WHERE u.meta_key = 'Rank'"
         );
+        $force_restore_completed = true;
         echo "<span style='font-size:16px;color:#e67e22;'>force=1: restored {$restored} usermeta Rank row(s) that had changed since {$snapshot_table} was taken, before re-running event {$Event}.</span><br>";
     } else {
         echo "<span style='font-size:20px;color:#c0392b;'>Event {$Event} has already been processed -- {$results_table_check} already exists. Re-running would compound the no-show penalty on top of an already-decayed Master.Rank (see v2.2.0 changelog). To re-run intentionally, pass force=1 to [spp_create_results]; this restores usermeta Rank from {$snapshot_table} before proceeding, if that snapshot is still valid. Aborting.</span>";
@@ -526,18 +612,50 @@ for ($gp = 0; $gp < $groups; $gp++) {
     }
 }
 
-// Step 9b: Pre-run usermeta snapshot (v2.2.0) ------------------------------
+// Step 9b: Pre-run usermeta snapshot (v2.2.0, hardened v3.1.0) -------------
 // Captured here, immediately before Step 10 (the first place that reads
 // Master.Rank), so it reflects usermeta Rank exactly as it stood before
 // this run's eventual CM66 -> usermeta -> CM102 feedback loop can touch it.
+//
+// v3.1.0: re-checks Results_{$Event} existence independently, right here,
+// rather than trusting the guard's evaluation from ~180 lines earlier in
+// this same execution. This is deliberate defense-in-depth -- event 160
+// was corrupted by a run where the guard failed to trip, and that run
+// still reached this point and wrote a snapshot from ALREADY-POST-EVENT
+// usermeta, not a true pre-event baseline. "We got here" must not be taken
+// to mean "this is legitimately a first run"; it has to be verified again,
+// and aborted rather than allowed to fabricate a snapshot (or reach Step
+// 10's Master.Rank read) if the assumption doesn't hold.
+//
+// Results_{$Event} is NOT dropped until Step 11 (~150 lines below), so on
+// a *legitimate* force=1 re-run it still exists right here too -- existence
+// alone can't be the abort condition, or every valid forced re-run would
+// be killed at this exact line. $force_restore_completed (set above, only
+// as a side effect of the guard actually performing a validated restore in
+// this same execution -- not merely $force being truthy) is what tells
+// "shouldn't be here" apart from "supposed to be here, guard did its job".
+$results_exist_at_snapshot_time = (bool) $wpdb->get_var( "SHOW TABLES LIKE '{$results_table_check}'" );
+if ( $results_exist_at_snapshot_time && ! $force_restore_completed ) {
+    echo "<span style='font-size:20px;color:#c0392b;'>Aborting: {$results_table_check} already exists, but execution reached the pre-run snapshot step without a completed force-restore in this run. This should have been caught by the guard above -- refusing to fabricate a snapshot from already-processed usermeta state, and refusing to proceed to Step 10.</span>";
+    return;
+}
+
 // If a snapshot already exists for this event, it is NOT overwritten -- the
 // original pre-run state is what a force=1 restore needs, not whatever
 // usermeta looks like on a later run.
 $snapshot_already_exists = (bool) $wpdb->get_var( "SHOW TABLES LIKE '{$snapshot_table}'" );
 if ( ! $snapshot_already_exists ) {
-    $wpdb->query( "CREATE TABLE {$snapshot_table} AS SELECT * FROM {$prefix}usermeta WHERE meta_key = 'Rank'" );
+    // Single statement -- COMMENT is set inline in the CREATE TABLE ... AS
+    // SELECT itself, not a separate ALTER TABLE afterward. A two-statement
+    // sequence could fail between CREATE and ALTER and leave an
+    // uncommented (therefore untrusted, per spp_cr_snapshot_is_valid_
+    // baseline()) snapshot sitting around; this can't land in that state.
+    $snapshot_comment = "spp_cr_snapshot created_at=" . current_time( 'mysql' ) . " clean_baseline=1";
+    $wpdb->query(
+        "CREATE TABLE {$snapshot_table} COMMENT='{$snapshot_comment}' AS SELECT * FROM {$prefix}usermeta WHERE meta_key = 'Rank'"
+    );
     $snapshot_count = $wpdb->get_var( "SELECT COUNT(*) FROM {$snapshot_table}" );
-    echo "<span style='font-size:14px;color:#666;'>Pre-run snapshot created: {$snapshot_table} ({$snapshot_count} row(s)).</span><br>";
+    echo "<span style='font-size:14px;color:#666;'>Pre-run snapshot created: {$snapshot_table} ({$snapshot_count} row(s)), marked clean_baseline.</span><br>";
 } else {
     $snapshot_count = $wpdb->get_var( "SELECT COUNT(*) FROM {$snapshot_table}" );
     echo "<span style='font-size:14px;color:#666;'>Pre-run snapshot already exists: {$snapshot_table} ({$snapshot_count} row(s)) -- not overwritten.</span><br>";
