@@ -1,9 +1,39 @@
 <?php
 /* =========================================================
    SPP Create Results (for Override)
-   Version: 2.2.0
+   Version: 3.0.0
    Date: 2026-08-14
    Based on: Create Results for Override (Main Path) 2.0
+
+   Changes from 2.2.0:
+   - BREAKING: [spp_create_results] no longer executes the
+     pipeline on render. Confirmed on production (Aug 14): the
+     shortcode ran unconditionally on ANY GET to the page,
+     including a Facebook link-preview crawler bot
+     (meta-externalagent) and Divi Visual Builder preview
+     requests (which render the live page to build the editor
+     preview) -- neither is a deliberate "run this" action, yet
+     both fully executed Steps 1-15 and rebuilt Results_{event}/
+     Results. This is very likely how event 160 first got
+     double-penalized, independent of the re-run-guard bug
+     investigated separately. The v2.2.0 guard closed the "ran
+     twice on purpose" case; this closes the much bigger "ran
+     without anyone asking at all" case.
+   - The shortcode now only renders read-only state (current
+     event, whether Results_{$Event} already exists, whether a
+     valid pre-run snapshot exists) plus a confirmation button.
+     Execution moved to a new wp_ajax_spp_cr_run POST handler,
+     gated server-side by spp_is_admin_or_editor() (not just a
+     hidden button -- the AJAX handler re-checks independently
+     of whatever the page shows) and a nonce. Same Preview/Apply
+     pattern spp-score-correction.php already uses. A GET can no
+     longer mutate anything.
+   - Event lookup extracted into spp_cr_current_event(), shared
+     by the shortcode preview and the run engine, so the two
+     can never disagree about which event is "current".
+   - The v2.2.0 re-run guard and pre-run usermeta snapshot logic
+     are unchanged, just now only reachable through the POST
+     path instead of on every page render.
 
    Changes from 2.1.3:
    - Re-run guard: running this shortcode twice for the same event
@@ -117,12 +147,149 @@ defined( 'ABSPATH' ) || exit;
 
 add_shortcode( 'spp_create_results', 'spp_create_results_shortcode' );
 
-function spp_create_results_shortcode( $atts = array() ) {
-    $atts = shortcode_atts( array( 'force' => 0 ), $atts, 'spp_create_results' );
+/* =========================================================
+   EVENT LOOKUP HELPER (v3.0.0)
+   Shared by the shortcode (read-only preview) and the run
+   engine (execution), so the two can never determine a
+   different $Event for the same request.
+   ========================================================= */
+function spp_cr_current_event() {
+    global $wpdb;
+    $prefix       = $wpdb->prefix;
+    $results_prev = "Schedules";
+
+    $Event = (int) $wpdb->get_var( "SELECT event_id FROM {$results_prev} WHERE group_id <> 99 LIMIT 1" );
+    if ( ! $Event ) {
+        $Event = (int) get_option( 'spp_current_event', 0 );  // fallback
+    }
+    $occ = $wpdb->get_row( $wpdb->prepare(
+        "SELECT title, event_date, event_time FROM {$prefix}gl_event_occurrences WHERE id = %d",
+        $Event
+    ), ARRAY_A );
+    $name = $occ
+        ? $occ['title'] . ' ' . date( 'F d, Y', strtotime( $occ['event_date'] ) )
+        : 'Event ' . $Event;
+
+    return array( 'event' => $Event, 'name' => $name, 'occ' => $occ );
+}
+
+/* =========================================================
+   SHORTCODE: read-only preview + confirmation form (v3.0.0)
+   -----------------------------------------------------------
+   Never executes the pipeline. Renders current state (which
+   event, whether it has already been processed, whether a
+   valid pre-run snapshot exists) and a button. Actual execution
+   happens exclusively via the wp_ajax_spp_cr_run POST handler
+   below, which independently re-checks the capability and a
+   nonce server-side -- same Preview/Apply pattern
+   spp-score-correction.php already uses.
+   ========================================================= */
+function spp_create_results_shortcode() {
+    if ( ! spp_is_admin_or_editor() ) {
+        return '<p class="gl-error">You do not have permission to access this tool.</p>';
+    }
+
+    global $wpdb;
+    $info  = spp_cr_current_event();
+    $Event = $info['event'];
+    $name  = $info['name'];
+
+    if ( ! $Event ) {
+        return '<p>No event selected for result calculations.</p>';
+    }
+
+    $results_table_check = "Results_{$Event}";
+    $snapshot_table       = "usermeta_rank_pre_event_{$Event}";
+    $already_processed    = (bool) $wpdb->get_var( "SHOW TABLES LIKE '{$results_table_check}'" );
+    $snapshot_exists      = $already_processed
+        ? (bool) $wpdb->get_var( "SHOW TABLES LIKE '{$snapshot_table}'" )
+        : false;
+
     ob_start();
-    spp_create_results_run( (bool) $atts['force'] );
+    ?>
+    <div class="spp-cr-wrap" style="font-family:Arial,sans-serif;font-size:14px;max-width:700px;">
+        <p><strong>Event:</strong> <?php echo esc_html( $name ); ?> (ID <?php echo (int) $Event; ?>)</p>
+
+        <?php if ( $already_processed ) : ?>
+            <p style="color:#c0392b;"><strong><?php echo esc_html( $results_table_check ); ?></strong> already exists -- this event has already been processed. Running again would compound the no-show penalty unless usermeta is first restored from a pre-run snapshot.</p>
+            <?php if ( $snapshot_exists ) : ?>
+                <p>Pre-run snapshot <strong><?php echo esc_html( $snapshot_table ); ?></strong> is available and will be used to restore usermeta Rank before a forced re-run.</p>
+                <button type="button" id="spp-cr-run-btn" class="spp-cr-btn" data-force="1" style="padding:10px 20px;border:none;border-radius:5px;font-size:0.95rem;cursor:pointer;color:#fff;background:#c0392b;">Force Re-run Event <?php echo (int) $Event; ?></button>
+            <?php else : ?>
+                <p style="color:#c0392b;">No valid snapshot exists for this event (it may have been invalidated by a score correction) -- a forced re-run is refused until usermeta is reviewed manually.</p>
+            <?php endif; ?>
+        <?php else : ?>
+            <p>This event has not been processed yet.</p>
+            <button type="button" id="spp-cr-run-btn" class="spp-cr-btn" data-force="0" style="padding:10px 20px;border:none;border-radius:5px;font-size:0.95rem;cursor:pointer;color:#fff;background:#3766AB;">Create Results for Event <?php echo (int) $Event; ?></button>
+        <?php endif; ?>
+
+        <div id="spp-cr-status" style="margin-top:12px;"></div>
+        <div id="spp-cr-output" style="margin-top:12px;"></div>
+    </div>
+
+    <script>
+    (function() {
+        var ajaxurl = '<?php echo esc_js( admin_url( 'admin-ajax.php' ) ); ?>';
+        var nonce   = '<?php echo esc_js( wp_create_nonce( 'spp_create_results' ) ); ?>';
+        var btn     = document.getElementById('spp-cr-run-btn');
+        if ( ! btn ) return;
+
+        btn.addEventListener('click', function() {
+            var force = btn.dataset.force === '1';
+            var msg = force
+                ? 'Force re-run this event? This restores usermeta Rank from the snapshot first, then recalculates results.'
+                : 'Run results calculation for this event?';
+            if ( ! confirm(msg) ) return;
+
+            btn.disabled = true;
+            document.getElementById('spp-cr-status').textContent = 'Running...';
+            document.getElementById('spp-cr-output').innerHTML = '';
+
+            var fd = new FormData();
+            fd.append('action', 'spp_cr_run');
+            fd.append('nonce', nonce);
+            fd.append('force', force ? '1' : '0');
+
+            fetch(ajaxurl, { method: 'POST', body: fd, credentials: 'same-origin' })
+                .then(function(r) { return r.json(); })
+                .then(function(res) {
+                    btn.disabled = false;
+                    if (res.success) {
+                        document.getElementById('spp-cr-status').textContent = 'Done.';
+                        document.getElementById('spp-cr-output').innerHTML = res.data.html || '';
+                    } else {
+                        document.getElementById('spp-cr-status').textContent = 'Error: ' + (res.data || 'unknown error');
+                    }
+                })
+                .catch(function() {
+                    btn.disabled = false;
+                    document.getElementById('spp-cr-status').textContent = 'Request failed.';
+                });
+        });
+    })();
+    </script>
+    <?php
     return ob_get_clean();
 }
+
+/* =========================================================
+   AJAX: run the pipeline (v3.0.0)
+   The only path that can execute spp_create_results_run().
+   Capability + nonce both checked server-side -- the client-side
+   button being present/hidden is never trusted as the real gate.
+   ========================================================= */
+add_action( 'wp_ajax_spp_cr_run', function() {
+    if ( ! spp_is_admin_or_editor() ) wp_send_json_error( 'No permission' );
+    if ( ! check_ajax_referer( 'spp_create_results', 'nonce', false ) ) wp_send_json_error( 'Invalid nonce' );
+
+    $force = isset( $_POST['force'] ) && $_POST['force'] === '1';
+
+    ob_start();
+    spp_create_results_run( $force );
+    $html = ob_get_clean();
+
+    wp_send_json_success( array( 'html' => $html ) );
+});
 
 /* =========================================================
    SHADOW RATIO HELPERS
@@ -158,18 +325,13 @@ $noshow_np    = 1.6 * $f;  // NP: scheduled, did not play, notified
 $noshow_ns    = 2.6 * $f;  // NS: no-show, no notification
 $bonus        = 3;
 
-// ── GL EVENTS: read event ID from the Schedules table itself ─────────────────
-$Event = (int) $wpdb->get_var( "SELECT event_id FROM {$results_prev} WHERE group_id <> 99 LIMIT 1" );
-if ( ! $Event ) {
-    $Event = (int) get_option( 'spp_current_event', 0 );  // fallback
-}
-$occ   = $wpdb->get_row( $wpdb->prepare(
-    "SELECT title, event_date, event_time FROM {$prefix}gl_event_occurrences WHERE id = %d",
-    $Event
-), ARRAY_A );
-$name  = $occ
-    ? $occ['title'] . ' ' . date( 'F d, Y', strtotime( $occ['event_date'] ) )
-    : 'Event ' . $Event;
+// ── GL EVENTS: read event ID via the shared lookup helper (v3.0.0) ───────────
+// Same helper the read-only shortcode preview uses, so the two can never
+// disagree about which event is "current".
+$info  = spp_cr_current_event();
+$Event = $info['event'];
+$name  = $info['name'];
+$occ   = $info['occ'];
 // ─────────────────────────────────────────────────────────────────────────────
 
 if (!isset($Event) || $Event == 0) {
