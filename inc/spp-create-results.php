@@ -1,9 +1,45 @@
 <?php
 /* =========================================================
    SPP Create Results (for Override)
-   Version: 2.1.3
-   Date: 2026-08-13
+   Version: 2.2.0
+   Date: 2026-08-14
    Based on: Create Results for Override (Main Path) 2.0
+
+   Changes from 2.1.3:
+   - Re-run guard: running this shortcode twice for the same event
+     compounds the no-show penalty, because Step 10 branches 2-4 read
+     Master.Rank live, and this pipeline's own output eventually feeds
+     back into Master via CM66 ("Copy Ranks to user profile") ->
+     usermeta -> CM102 ("Create membership table"). A second run then
+     applies the no-show penalty a second time on top of an already-
+     decayed Master.Rank. This corrupted event 160 and required a
+     manual rebuild from a Plesk dump. Now, if Results_{$Event}
+     already exists, the shortcode aborts immediately with an
+     explanation and the snapshot table name to restore from, instead
+     of silently re-running.
+   - Pre-run usermeta snapshot: before Step 10 (the first point that
+     reads Master.Rank), copies {$prefix}usermeta rows where
+     meta_key='Rank' into usermeta_rank_pre_event_{$Event}. If that
+     table already exists it is left untouched -- the original
+     pre-run snapshot is the one a restore needs, not whatever
+     usermeta looks like on a later run. Row count is echoed to the
+     shortcode output.
+   - force=1 shortcode attribute: when the re-run guard trips,
+     [spp_create_results force="1"] restores usermeta Rank from the
+     event's snapshot table via a targeted UPDATE ... JOIN (not a
+     delete-then-reinsert -- that would silently drop the Rank row
+     for any member who joined after the snapshot was taken, since
+     they'd have no row in the snapshot to restore from). Only rows
+     present in the snapshot are touched; anyone not in it is left
+     alone. If force=1 is passed but no snapshot table exists for
+     this event -- including when spp-score-correction.php has
+     invalidated it (renamed to
+     usermeta_rank_pre_event_{$Event}_invalidated_{timestamp} after a
+     score correction, since a correction can legitimately change
+     Master/usermeta after the snapshot was taken) -- the run still
+     aborts. There's no trustworthy restore point to fall back to if
+     the re-run also goes wrong, so it refuses rather than running
+     blind.
 
    Changes from 2.1.2:
    - Fixed event_id being written as NULL (instead of the current
@@ -81,9 +117,10 @@ defined( 'ABSPATH' ) || exit;
 
 add_shortcode( 'spp_create_results', 'spp_create_results_shortcode' );
 
-function spp_create_results_shortcode() {
+function spp_create_results_shortcode( $atts = array() ) {
+    $atts = shortcode_atts( array( 'force' => 0 ), $atts, 'spp_create_results' );
     ob_start();
-    spp_create_results_run();
+    spp_create_results_run( (bool) $atts['force'] );
     return ob_get_clean();
 }
 
@@ -107,7 +144,7 @@ function spp_cr_shadow_ratio( $distance ) {
     return exp( -$distance / SPP_CR_SHADOW_K );
 }
 
-function spp_create_results_run() {
+function spp_create_results_run( $force = false ) {
 
 if ( session_status() !== PHP_SESSION_ACTIVE ) { session_start(); }
 
@@ -141,6 +178,45 @@ if (!isset($Event) || $Event == 0) {
 }
 
 $prev = $Event;
+
+// ── RE-RUN GUARD (v2.2.0) ──────────────────────────────────────────────────────
+// Running this shortcode twice for the same event compounds the no-show
+// penalty: Step 10 branches 2-4 read Master.Rank live, and this pipeline's
+// own output eventually feeds back into Master via CM66 -> usermeta -> CM102.
+// A second run then applies the no-show penalty a second time on top of an
+// already-decayed Master.Rank -- this corrupted event 160. Results_{$Event}
+// existing is our signal that this event has already been processed.
+$snapshot_table = "usermeta_rank_pre_event_{$Event}";
+$results_table_check = "Results_{$Event}";
+$already_processed = (bool) $wpdb->get_var( "SHOW TABLES LIKE '{$results_table_check}'" );
+
+if ( $already_processed ) {
+    if ( $force ) {
+        $snapshot_exists = (bool) $wpdb->get_var( "SHOW TABLES LIKE '{$snapshot_table}'" );
+        if ( ! $snapshot_exists ) {
+            echo "<span style='font-size:20px;color:#c0392b;'>force=1 was passed but no valid snapshot table ({$snapshot_table}) exists for event {$Event} -- refusing to run without a restore point. If a score correction ran since the last snapshot, it will have been renamed to {$snapshot_table}_invalidated_&lt;timestamp&gt; and usermeta must be reviewed manually before proceeding. Aborting.</span>";
+            return;
+        }
+        // Targeted UPDATE ... JOIN, not a delete-then-reinsert: a global
+        // delete would silently drop the Rank row for any member who
+        // joined after the snapshot was taken (no row in the snapshot to
+        // restore them from). This only touches users present in the
+        // snapshot and leaves everyone else alone. wpdb->query() on an
+        // UPDATE returns the number of rows actually CHANGED (not matched)
+        // -- a useful signal that the restore did something.
+        $restored = $wpdb->query(
+            "UPDATE {$prefix}usermeta u
+             JOIN {$snapshot_table} s ON s.user_id = u.user_id
+             SET u.meta_value = s.meta_value
+             WHERE u.meta_key = 'Rank'"
+        );
+        echo "<span style='font-size:16px;color:#e67e22;'>force=1: restored {$restored} usermeta Rank row(s) that had changed since {$snapshot_table} was taken, before re-running event {$Event}.</span><br>";
+    } else {
+        echo "<span style='font-size:20px;color:#c0392b;'>Event {$Event} has already been processed -- {$results_table_check} already exists. Re-running would compound the no-show penalty on top of an already-decayed Master.Rank (see v2.2.0 changelog). To re-run intentionally, pass force=1 to [spp_create_results]; this restores usermeta Rank from {$snapshot_table} before proceeding, if that snapshot is still valid. Aborting.</span>";
+        return;
+    }
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 // Step 1: Validate enough scores entered (must be >= 80% present)
 $numRows = $wpdb->get_var("SELECT COUNT(*) FROM {$results_prev} WHERE Score >= 0 AND group_id <> 99");
@@ -286,6 +362,23 @@ for ($gp = 0; $gp < $groups; $gp++) {
         $calc_shadow = $rank + ( $delta * $ratio );
         $wpdb->query("UPDATE {$resultstmp} SET newrank_shadow = {$calc_shadow} WHERE user_id = {$user_id}");
     }
+}
+
+// Step 9b: Pre-run usermeta snapshot (v2.2.0) ------------------------------
+// Captured here, immediately before Step 10 (the first place that reads
+// Master.Rank), so it reflects usermeta Rank exactly as it stood before
+// this run's eventual CM66 -> usermeta -> CM102 feedback loop can touch it.
+// If a snapshot already exists for this event, it is NOT overwritten -- the
+// original pre-run state is what a force=1 restore needs, not whatever
+// usermeta looks like on a later run.
+$snapshot_already_exists = (bool) $wpdb->get_var( "SHOW TABLES LIKE '{$snapshot_table}'" );
+if ( ! $snapshot_already_exists ) {
+    $wpdb->query( "CREATE TABLE {$snapshot_table} AS SELECT * FROM {$prefix}usermeta WHERE meta_key = 'Rank'" );
+    $snapshot_count = $wpdb->get_var( "SELECT COUNT(*) FROM {$snapshot_table}" );
+    echo "<span style='font-size:14px;color:#666;'>Pre-run snapshot created: {$snapshot_table} ({$snapshot_count} row(s)).</span><br>";
+} else {
+    $snapshot_count = $wpdb->get_var( "SELECT COUNT(*) FROM {$snapshot_table}" );
+    echo "<span style='font-size:14px;color:#666;'>Pre-run snapshot already exists: {$snapshot_table} ({$snapshot_count} row(s)) -- not overwritten.</span><br>";
 }
 
 // Step 10: Merge players + no-shows into ranked table (live, unchanged)

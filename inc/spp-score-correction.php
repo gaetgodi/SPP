@@ -12,8 +12,22 @@
  *   - rankUsersWithTies(): score desc, current rank as tie-breaker
  *   - setCaclRank(): placement adjustment + score bonus
  *
- * Version: 1.3.0
- * Date:    2026-07-02
+ * Version: 1.4.0
+ * Date:    2026-08-14
+ *
+ * Changes from 1.3.0:
+ *   - Step 7 (apply): if a pre-run usermeta snapshot exists for this
+ *     event (usermeta_rank_pre_event_{$event_id}, written by
+ *     spp-create-results.php v2.2.0+), rename it to
+ *     usermeta_rank_pre_event_{$event_id}_invalidated_{timestamp}
+ *     rather than leaving it in place. A score correction changes
+ *     Master/usermeta legitimately (step 6's [cmruncode name='Create
+ *     membership table']), so the pre-run snapshot no longer reflects
+ *     a trustworthy restore point for a force=1 re-run of
+ *     [spp_create_results]. A force run finds no valid snapshot after
+ *     this and refuses, telling the operator a score correction has
+ *     occurred since the snapshot was taken and usermeta must be
+ *     reviewed manually before any re-run.
  *
  * Changes from 1.2.0:
  *   - Steps 3 and 4: split SET @r=0 and UPDATE into separate
@@ -798,11 +812,29 @@ add_action( 'wp_ajax_spp_sc_apply', function() {
     // 6. Refresh membership and Master tables
     echo do_shortcode( "[cmruncode name='Create membership table']" );
 
+    // 7. Invalidate any pre-run usermeta snapshot for this event (v1.4.0).
+    // spp-create-results.php's force=1 restore path relies on that snapshot
+    // being an untouched pre-run state; step 6 above just changed Master/
+    // usermeta legitimately, so the snapshot -- if one exists -- no longer
+    // reflects a trustworthy restore point. Rename it (never drop -- keep
+    // the data for manual review) so a later force=1 run finds nothing
+    // valid and refuses.
+    $snapshot_table = "usermeta_rank_pre_event_{$event_id}";
+    $snapshot_exists = $wpdb->get_var( $wpdb->prepare( "SHOW TABLES LIKE %s", $snapshot_table ) );
+    if ( $snapshot_exists ) {
+        $invalidated_table = $snapshot_table . '_invalidated_' . time();
+        $wpdb->query( "RENAME TABLE `{$snapshot_table}` TO `{$invalidated_table}`" );
+        $msg_snapshot_note = " Pre-run snapshot {$snapshot_table} invalidated (renamed to {$invalidated_table}) -- a score correction has occurred since it was taken, so usermeta must be reviewed manually before any [spp_create_results force=\"1\"] re-run of this event.";
+    } else {
+        $msg_snapshot_note = '';
+    }
+
     $msg = 'Score correction applied successfully.';
     if ( ! empty( $changes ) ) {
         $msg .= ' Changes: ' . implode( '; ', $changes ) . '.';
     }
     $msg .= ' Ordinal ranks recalculated. User meta and Master updated.';
+    $msg .= $msg_snapshot_note;
 
     wp_send_json_success( array( 'message' => $msg ) );
 });
