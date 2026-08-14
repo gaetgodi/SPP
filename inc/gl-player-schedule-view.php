@@ -1,9 +1,30 @@
 <?php
 /* =========================================================
    GL Player Schedule View
-   Version: 1.6.2
-   Date: 2026-07-21
+   Version: 1.6.3
+   Date: 2026-08-14
    Based on: Player Schedule View 1.5
+
+   Changes from 1.6.2:
+   - Guarded the `[cmruncode name='Create View']` call (CM254:
+     DROP VIEW IF EXISTS schedules_w; CREATE VIEW schedules_w
+     AS ...) behind an information_schema existence check
+     instead of running it unconditionally on every render.
+     schedules_w is a real SQL VIEW, not a materialized table --
+     it always reflects the current Schedules/Times/Groups/Courts
+     data live, so recreating it on every page load changed
+     nothing and only added a DROP+CREATE DDL round-trip to the
+     member-facing page hit hundreds of times per event night.
+     Worse, DROP VIEW / CREATE VIEW is DDL: there is a window
+     between the DROP and the CREATE where the view does not
+     exist, and this call site is on the highest-traffic,
+     highest-concurrency page in the theme -- any request that
+     ran its SELECT against schedules_w during that window would
+     have errored. This eliminates that race window, not just
+     the redundant DDL churn. The two schedule-production call
+     sites (gl-schedule-production.php, spp-schedule-production.php),
+     which legitimately (re)build the view once per event, are
+     unchanged.
 
    Changes from 1.6.1 (undocumented at the time, applied via
    sed directly on the server during a same-night fatal-error
@@ -97,7 +118,20 @@ if (!$is_admin_or_editor) {
     }
 }
 
-echo do_shortcode("[cmruncode name='Create View']");
+// schedules_w is a live VIEW (not materialized) over the current
+// Schedules/Times/Groups/Courts tables -- it always reflects current
+// data without being rebuilt. Only (re)create it if it's missing.
+// Skipping the unconditional DROP+CREATE here also eliminates a race
+// window where a concurrent member request could hit schedules_w
+// mid-DROP (between the DROP and the CREATE) and error -- this is
+// the highest-traffic, highest-concurrency page in the theme.
+$schedules_w_exists = $wpdb->get_var(
+    "SELECT COUNT(*) FROM information_schema.VIEWS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'schedules_w'"
+);
+if ( ! $schedules_w_exists ) {
+    echo do_shortcode("[cmruncode name='Create View']");
+}
 $time_slots = $wpdb->get_results("SELECT T_ID, T_desc FROM Times WHERE Active = 1 ORDER BY T_ID");
 
 // Get convenor name and phone dynamically from current event
