@@ -1,9 +1,19 @@
 <?php
 /* =========================================================
    GL Player Schedule View
-   Version: 1.6.4
-   Date: 2026-08-14
+   Version: 1.6.5
+   Date: 2026-08-15
    Based on: Player Schedule View 1.5
+
+   Changes from 1.6.4:
+   - Added an event title + date header at the top of the page,
+     reusing the .spp-time-header styling (blue band, centered,
+     white text) so it reads as part of the same visual system
+     as the per-slot headers below it rather than a separate
+     ad-hoc style. Sourced from gl_event_occurrences.title /
+     event_date via the convenor lookup query already run on
+     this page (extended to also select title, event_date) --
+     no new query added.
 
    Changes from 1.6.3:
    - Added registrant counts: a page-total count above the
@@ -147,10 +157,10 @@ if ( ! $schedules_w_exists ) {
 }
 $time_slots = $wpdb->get_results("SELECT T_ID, T_desc FROM Times WHERE Active = 1 ORDER BY T_ID");
 
-// Get convenor name and phone dynamically from current event
+// Get event title/date + convenor name and phone dynamically from current event
 $_conv_event_id = (int) get_option('spp_current_event', 0);
 $_conv = $wpdb->get_row($wpdb->prepare(
-    "SELECT m.first_name, m.user_phone
+    "SELECT o.title, o.event_date, m.first_name, m.user_phone
      FROM lX9c1_gl_event_occurrences o
      JOIN membership m ON o.convenor_id = m.user_id
      WHERE o.id = %d", $_conv_event_id
@@ -160,6 +170,14 @@ $_conv_phone = $_conv ? $_conv['user_phone'] : '';
 $_conv_msg   = $_conv_phone
     ? "Please contact {$_conv_name} directly at {$_conv_phone} to notify of any last-minute schedule issues."
     : "Please contact {$_conv_name} to notify of any last-minute schedule issues.";
+
+if ($_conv && !empty($_conv['title'])) {
+    $_event_date_disp = !empty($_conv['event_date']) ? date('F j, Y', strtotime($_conv['event_date'])) : '';
+    echo '<div class="spp-time-header spp-event-header">' . esc_html($_conv['title'])
+       . ($_event_date_disp ? ' <span class="spp-slot-count">(' . esc_html($_event_date_disp) . ')</span>' : '')
+       . '</div>';
+}
+
 echo '<p class="spp-sub-intro">' . esc_html($_conv_msg) . '</p>';
 
 // Page-total registrant count -- schedules_w rows excluding the Group 99
