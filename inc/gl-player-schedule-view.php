@@ -1,9 +1,37 @@
 <?php
 /* =========================================================
    GL Player Schedule View
-   Version: 1.6.5
-   Date: 2026-08-15
+   Version: 1.7.0
+   Date: 2026-08-16
    Based on: Player Schedule View 1.5
+
+   Changes from 1.6.5:
+   - Dropped the schedules_w dependency entirely. Registrant
+     counts, groups, and players now read Schedules/Groups/
+     Courts directly. Root cause: schedules_w's underlying
+     table is retargetable via CM254's `file` shortcode param,
+     and the "Scores per game - choose date" admin feature
+     (Code Manager snippet "Black for scores - colour") calls
+     [cmruncode name='Create View' file="Schedules_Scores_{$Event}"]
+     as a side effect of a read-only score-review lookup --
+     defaulting to the most recent Schedules_Scores_ table even
+     with no date picked. On 2026-08-16 that left schedules_w
+     pointed at Schedules_Scores_160 (Aug 10) while
+     spp_current_event was already 161 (Aug 17), and this page
+     had no way to detect the mismatch since the header
+     (gl_event_occurrences via spp_current_event) and the grid
+     (schedules_w) were fully independent lookups. Schedules
+     always carries the correct current event_id once production
+     has run, so reading it directly removes this class of bug
+     structurally instead of depending on schedules_w never being
+     repointed by another feature. The existence-check +
+     [cmruncode name='Create View'] call from 1.6.2/1.6.3 is
+     removed here as dead code -- this page no longer reads
+     schedules_w at all, so there's nothing left to guard.
+     schedules_w itself is unchanged/still built by
+     gl-schedule-production.php and spp-schedule-production.php;
+     see "Black for scores - colour" for the fix that stops it
+     from being repointed by score review.
 
    Changes from 1.6.4:
    - Added an event title + date header at the top of the page,
@@ -141,20 +169,6 @@ if (!$is_admin_or_editor) {
     }
 }
 
-// schedules_w is a live VIEW (not materialized) over the current
-// Schedules/Times/Groups/Courts tables -- it always reflects current
-// data without being rebuilt. Only (re)create it if it's missing.
-// Skipping the unconditional DROP+CREATE here also eliminates a race
-// window where a concurrent member request could hit schedules_w
-// mid-DROP (between the DROP and the CREATE) and error -- this is
-// the highest-traffic, highest-concurrency page in the theme.
-$schedules_w_exists = $wpdb->get_var(
-    "SELECT COUNT(*) FROM information_schema.VIEWS
-     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'schedules_w'"
-);
-if ( ! $schedules_w_exists ) {
-    echo do_shortcode("[cmruncode name='Create View']");
-}
 $time_slots = $wpdb->get_results("SELECT T_ID, T_desc FROM Times WHERE Active = 1 ORDER BY T_ID");
 
 // Get event title/date + convenor name and phone dynamically from current event
@@ -180,11 +194,14 @@ if ($_conv && !empty($_conv['title'])) {
 
 echo '<p class="spp-sub-intro">' . esc_html($_conv_msg) . '</p>';
 
-// Page-total registrant count -- schedules_w rows excluding the Group 99
+// Page-total registrant count -- Schedules rows excluding the Group 99
 // (dropped/unscheduled) sentinel, matching the exclusion the groups query
 // below already applies, so this stays consistent with what's listed.
+// Reads Schedules/Groups directly (not schedules_w -- see 1.7.0 changelog).
 $total_registrants = (int) $wpdb->get_var(
-    "SELECT COUNT(*) FROM schedules_w WHERE GP_name != 'Group 99'"
+    "SELECT COUNT(*) FROM Schedules s
+     JOIN Groups g ON s.group_id = g.GP_ID
+     WHERE g.GP_name != 'Group 99'"
 );
 echo '<p class="spp-total-registrants">Total registrants: ' . esc_html($total_registrants) . '</p>';
 
@@ -193,17 +210,21 @@ foreach ($time_slots as $slot) {
     $t_desc = $slot->T_desc;
 
     $groups = $wpdb->get_results($wpdb->prepare(
-        "SELECT DISTINCT w.GP_name, w.Crt_name, w.t_ID "
-        . "FROM schedules_w w "
-        . "WHERE w.t_ID = %d AND w.GP_name != 'Group 99' "
-        . "ORDER BY w.Crt_name",
+        "SELECT DISTINCT g.GP_name, c.Crt_name, s.time_id AS t_ID "
+        . "FROM Schedules s "
+        . "JOIN Groups g ON s.group_id = g.GP_ID "
+        . "JOIN Courts c ON s.Crt_ID = c.Crt_ID "
+        . "WHERE s.time_id = %d AND g.GP_name != 'Group 99' "
+        . "ORDER BY c.Crt_name",
         $t_id
     ));
 
     if (empty($groups)) continue;
 
     $slot_registrants = (int) $wpdb->get_var($wpdb->prepare(
-        "SELECT COUNT(*) FROM schedules_w WHERE t_ID = %d AND GP_name != 'Group 99'",
+        "SELECT COUNT(*) FROM Schedules s
+         JOIN Groups g ON s.group_id = g.GP_ID
+         WHERE s.time_id = %d AND g.GP_name != 'Group 99'",
         $t_id
     ));
 
@@ -214,10 +235,12 @@ foreach ($time_slots as $slot) {
 
     foreach ($groups as $group) {
         $players = $wpdb->get_results($wpdb->prepare(
-            "SELECT w.full_name, w.user_phone, w.Travel, CAST(w.Rank AS UNSIGNED) AS Rank "
-            . "FROM schedules_w w "
-            . "WHERE w.t_ID = %d AND w.GP_name = %s "
-            . "ORDER BY w.Rank",
+            "SELECT CONCAT(s.first_name, ' ', s.last_name) AS full_name, "
+            . "s.user_phone, s.travel AS Travel, CAST(s.Rank AS UNSIGNED) AS Rank "
+            . "FROM Schedules s "
+            . "JOIN Groups g ON s.group_id = g.GP_ID "
+            . "WHERE s.time_id = %d AND g.GP_name = %s "
+            . "ORDER BY s.Rank",
             $t_id,
             $group->GP_name
         ));
