@@ -1,9 +1,24 @@
 <?php
 /* =========================================================
    SPP Create Results (for Override)
-   Version: 3.1.0
-   Date: 2026-08-14
+   Version: 3.2.0
+   Date: 2026-08-25
    Based on: Create Results for Override (Main Path) 2.0
+
+   Changes from 3.1.0:
+   - Step 11: RankOverride's initial value at creation time now
+     comes from RankCalc_Shadow (sh.newrank) instead of RankCalc
+     (r.newrank). RankCalc and RankCalc_Shadow themselves are
+     unchanged -- both still computed exactly as before -- only
+     what RankOverride defaults to when Results_{event}/Results is
+     first built has changed. Every downstream consumer reads
+     RankOverride, so this is the first step of migrating the
+     effective ranking from the plain calc to the rating-distance-
+     dampened shadow calc (see v2.0/v2.1.0 changelog entries below
+     for the shadow calc's rationale) -- RankCalc itself is not
+     being retired yet, and Modify Overrides can still edit
+     RankOverride by hand as before; this only changes its
+     unedited default.
 
    Changes from 3.0.0:
    - Design flaw: the v2.2.0 snapshot logic treated "a snapshot
@@ -755,7 +770,7 @@ $wpdb->query("RENAME TABLE tmp1_shadow TO {$shadow_table}");
 // Modify Overrides page, instead of only appearing in a separate report.
 $wpdb->query("DROP TABLE IF EXISTS tmp1");
 $wpdb->query("CREATE TABLE tmp1 SELECT * FROM (
-    SELECT r.Rank, r.old_0_Rank AS RankPrev, r.newrank AS RankCalc, r.newrank AS RankOverride,
+    SELECT r.Rank, r.old_0_Rank AS RankPrev, r.newrank AS RankCalc, sh.newrank AS RankOverride,
            sh.newrank AS RankCalc_Shadow,
            r.user_id, r.group_id, r.Score, r.event_id, r.display_name
     FROM {$resultsnew} r
