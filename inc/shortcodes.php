@@ -11,6 +11,14 @@
    [spp_dashboard]
    Home page dashboard — shows schedule and rank for ladder
    members, welcome message for guests and non-ladder members.
+
+   v1.1 (2026-08-27): added Club Rating and DUPR lines right after
+   the ladder rank line, same markup/styling. Both usermeta keys
+   (spp_glicko_rating / spp_dupr_rating) can be genuinely absent —
+   a legacy player with zero reconstructable historical games, or
+   any brand-new member who hasn't played a ladder event yet — so
+   both are checked with empty() and shown as "N/A" rather than
+   left blank or left to throw a notice on a missing array key.
    ========================================================= */
 function spp_dashboard_shortcode() {
     global $wpdb;
@@ -44,9 +52,12 @@ function spp_dashboard_shortcode() {
         $output .= '</div>';
 
         // Check ladder eligibility
-        $ladder       = get_user_meta($user_id, 'Ladder',   true);
-        $yr_end_dt    = get_user_meta($user_id, 'YrEndDt',  true);
-        $rank         = get_user_meta($user_id, 'Rank',     true);
+        $ladder             = get_user_meta($user_id, 'Ladder',   true);
+        $yr_end_dt          = get_user_meta($user_id, 'YrEndDt',  true);
+        $rank               = get_user_meta($user_id, 'Rank',     true);
+        $glicko_rating      = get_user_meta($user_id, 'spp_glicko_rating',       true);
+        $glicko_rating_games = get_user_meta($user_id, 'spp_glicko_rating_games', true);
+        $dupr_rating        = get_user_meta($user_id, 'spp_dupr_rating',         true);
         $current_year = date('Y');
 
         $is_ladder  = ($ladder === 'Yes');
@@ -54,12 +65,30 @@ function spp_dashboard_shortcode() {
 
         if ($is_ladder && $is_current) {
             // -----------------------------------------------
-            // Active ladder member — show rank only
+            // Active ladder member — show rank, Club Rating, DUPR
             // -----------------------------------------------
             $output .= '<div class="spp-dashboard-rank">';
             $output .= '<p>Your current ladder rank: <strong>';
             $output .= ($rank > 0) ? esc_html($rank) : 'To be determined';
             $output .= '</strong></p>';
+
+            // spp_glicko_rating can be genuinely absent (legacy player with
+            // no reconstructable historical games, or a brand-new member
+            // who hasn't played a ladder event yet) — don't assume it exists.
+            $output .= '<p>Club Rating: <strong>';
+            if ($glicko_rating !== '' && $glicko_rating !== false) {
+                $output .= esc_html($glicko_rating) . ' (based on ' . esc_html($glicko_rating_games) . ' ladder games)';
+            } else {
+                $output .= 'N/A';
+            }
+            $output .= '</strong></p>';
+
+            // spp_dupr_rating is self-entered and optional — most players
+            // won't have one.
+            $output .= '<p>DUPR: <strong>';
+            $output .= (!empty($dupr_rating)) ? esc_html($dupr_rating) : 'N/A';
+            $output .= '</strong></p>';
+
             $output .= '</div>';
         }
         // Non-ladder and expired members see only the welcome message — nothing extra needed
