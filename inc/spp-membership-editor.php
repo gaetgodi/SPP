@@ -1,8 +1,26 @@
 <?php
 /* =========================================================
    SPP Membership Editor
-   Version: 1.0.0
-   Date: 2026-07-13
+   Version: 1.2.0
+   Date: 2026-08-27
+
+   Changes from 1.1.0:
+   - dupr_rating now hard-validates its range: 2.000-8.000, DUPR's actual
+     real-world scale. This is NOT the same as our own Club Rating's
+     2.0-5.0 scale -- the two systems only coincidentally share a 2.0
+     floor, so the bound is intentionally its own constant, not borrowed
+     from spp_membership_editor_ratings() or crt_to_scale()'s range.
+     Out-of-range values are rejected with a message naming the actual
+     bound (e.g. "DUPR Rating must be between 2.000 and 8.000."), not a
+     silent clamp and not a generic "invalid" message. Blank is still
+     valid -- unrated (a brand-new DUPR player is officially "NR / Not
+     Rated" rather than a number) is a real, unrelated-to-range case.
+
+   Changes from 1.0.0:
+   - Added DUPR Rating (optional) -> usermeta spp_dupr_rating, following
+     the exact same $meta_keys / inline-edit / AJAX pattern as the other
+     fields. Free-form numeric text (not a fixed select list like Rating):
+     blank is valid (not every player has a DUPR number).
 
    Replaces UM form 1433 on the /members/ page.
 
@@ -27,6 +45,10 @@
      Rating                -> usermeta Rating (fixed 8-value list)
      Travel                -> usermeta Travel (free text + datalist
                               of existing distinct values)
+     DUPR Rating (optional) -> usermeta spp_dupr_rating (free numeric
+                              text, blank allowed, range 2.000-8.000
+                              enforced -- DUPR's own scale, not Club
+                              Rating's 2.0-5.0)
    ========================================================= */
 
 defined( 'ABSPATH' ) || exit;
@@ -47,6 +69,13 @@ function spp_membership_editor_shortcode() {
 function spp_membership_editor_ratings() {
     return array( 'Beginner', '2.5', '3.0', '3.5', '4.0', '4.5', '5.0', 'Professional' );
 }
+
+// DUPR's own real-world rating scale (2.000-8.000) -- deliberately its own
+// constant, NOT derived from spp_membership_editor_ratings() or Club
+// Rating's 2.0-5.0 scale (crt_to_scale() in update_club_ratings.php). The
+// two systems only coincidentally share a 2.0 floor.
+if ( ! defined( 'SPP_DUPR_MIN' ) ) define( 'SPP_DUPR_MIN', 2.000 );
+if ( ! defined( 'SPP_DUPR_MAX' ) ) define( 'SPP_DUPR_MAX', 8.000 );
 
 function spp_membership_editor_render() {
     global $wpdb;
@@ -76,6 +105,7 @@ function spp_membership_editor_render() {
         'user_mobile' => 'user_mobile',
         'rating'      => 'Rating',
         'travel'      => 'Travel',
+        'dupr_rating' => 'spp_dupr_rating',
     );
 
     $rows = array();
@@ -162,6 +192,7 @@ function spp_membership_editor_render() {
                         <th data-sort="user_mobile">Mobile Number</th>
                         <th data-sort="rating">Rating</th>
                         <th data-sort="travel">Travel</th>
+                        <th data-sort="dupr_rating">DUPR Rating</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -178,7 +209,7 @@ function spp_membership_editor_render() {
                 </tbody>
             </table>
         <?php else: ?>
-            <?php $row = $rows[0]; $labels = array( 'first_name' => 'First Name', 'last_name' => 'Last Name', 'user_phone' => 'Phone Number', 'user_mobile' => 'Mobile Number', 'rating' => 'Rating', 'travel' => 'Travel' ); ?>
+            <?php $row = $rows[0]; $labels = array( 'first_name' => 'First Name', 'last_name' => 'Last Name', 'user_phone' => 'Phone Number', 'user_mobile' => 'Mobile Number', 'rating' => 'Rating', 'travel' => 'Travel', 'dupr_rating' => 'DUPR Rating (optional)' ); ?>
             <?php foreach ( $labels as $field => $label ): ?>
             <div class="mem-profile-row">
                 <div class="mem-profile-label"><?php echo esc_html( $label ); ?></div>
@@ -260,6 +291,11 @@ function spp_membership_editor_render() {
                 input.type = 'text';
                 input.value = original;
                 input.autocomplete = 'off';
+            } else if (field === 'dupr_rating') {
+                input = document.createElement('input');
+                input.type = 'text';
+                input.inputMode = 'decimal';
+                input.value = original;
             } else {
                 input = document.createElement('input');
                 input.type = 'text';
@@ -405,6 +441,7 @@ add_action( 'wp_ajax_spp_save_membership_field', function() {
         'user_mobile' => 'user_mobile',
         'rating'      => 'Rating',
         'travel'      => 'Travel',
+        'dupr_rating' => 'spp_dupr_rating',
     );
 
     if ( ! $target_uid || ! isset( $meta_keys[ $field ] ) ) {
@@ -427,6 +464,26 @@ add_action( 'wp_ajax_spp_save_membership_field', function() {
     if ( $field === 'rating' ) {
         if ( $value !== '' && ! in_array( $value, spp_membership_editor_ratings(), true ) ) {
             wp_send_json_error( array( 'message' => 'Invalid rating value.' ) );
+        }
+    } elseif ( $field === 'dupr_rating' ) {
+        $value = trim( $value );
+        // Optional -- blank is a valid value: not every player has a DUPR
+        // number, and a brand-new DUPR player is officially "NR / Not
+        // Rated" rather than a number, so blank is the correct state for
+        // them too.
+        if ( $value !== '' ) {
+            if ( ! is_numeric( $value ) ) {
+                wp_send_json_error( array( 'message' => 'DUPR Rating must be a number.' ) );
+            }
+            // Hard range: DUPR's actual real-world scale is 2.000-8.000 --
+            // NOT Club Rating's 2.0-5.0 (see SPP_DUPR_MIN/MAX above).
+            if ( (float) $value < SPP_DUPR_MIN || (float) $value > SPP_DUPR_MAX ) {
+                wp_send_json_error( array( 'message' => sprintf(
+                    'DUPR Rating must be between %s and %s.',
+                    number_format( SPP_DUPR_MIN, 3 ),
+                    number_format( SPP_DUPR_MAX, 3 )
+                ) ) );
+            }
         }
     } else {
         $value = sanitize_text_field( $value );

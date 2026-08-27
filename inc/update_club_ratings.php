@@ -1,16 +1,74 @@
 <?php
 /* =========================================================
    Update Club Ratings
-   Version: 1.0
+   Version: 1.4
    Date: 2026-08-27
+
+   Changes from 1.3:
+   - Step 5's usermeta write now loops over every user_id in
+     club_rating_state (the full $state array, post-merge), not just
+     $players_this_event. Reason: the displayed 2.0-5.0 rating depends
+     on crt_to_scale(), which is a function of the CURRENT population's
+     mean_mu/std_mu/k -- values that shift slightly every run as other
+     players' mu moves, even for someone whose own mu didn't change
+     this week. Without this, a non-playing member's stored usermeta
+     rating silently goes stale relative to everyone else's. Nothing
+     about who gets a real Glicko rating update changed -- mu/rd/
+     games_played still only move for $players_this_event via Steps
+     3-4; this is purely a widening of who gets Step 5's recompute-
+     and-rewrite. Confirmed deliberate at current table size (~217
+     rows): this raises usermeta writes from ~1 event's worth of
+     players per run to the full roster every run.
+
+   Changes from 1.2:
+   - total_slots reverted to counting every slot with any non-null
+     value present (its pre-1.2 meaning), and the all-zero slots v1.2
+     started skipping now land in a new $not_played counter instead of
+     being dropped from every count with no trace. total_slots =
+     not_played + count($games) + $unreconstructed always. Both report
+     lines (the summary and the "couldn't be reconstructed" note) now
+     show all three buckets, so a future reader can tell "nobody
+     played this round" apart from "this got flagged as a genuine
+     score-entry problem" at a glance, instead of just seeing a
+     smaller total_slots with no explanation for where the rest went.
+     Still zero effect on $games or any rating math -- same as 1.2,
+     this only changes what gets counted and reported.
+
+   Changes from 1.1:
+   - Step 1: a game slot where every present player shows the same
+     value 0 is now skipped entirely (not counted as a slot at all,
+     not flagged as unreconstructed) instead of being run through
+     reconstruction and failing. Diagnosed against event 162: every
+     one of that event's 14 "unreconstructed" slots turned out to be
+     Game4/Game5 for a 4-player group that only played 3 games that
+     week -- the unused columns default to 0 for every member of the
+     group, not NULL, so they looked "present" to the old check. A
+     real result can never have every player on both teams score 0
+     (someone always wins), so all-zero-among-everyone-present is an
+     unambiguous "not played" signal, distinct from a genuine skunk
+     (e.g. 15-0, which mixes a 0 with a 15 and still reconstructs
+     normally). Doesn't change $games or any rating math -- these
+     slots were never reconstructable and contributed nothing before
+     either; this only fixes what total_slots/$unreconstructed count
+     and report, so the warning stops flagging perfectly ordinary
+     data as a likely score-entry mismatch.
+
+   Changes from 1.0:
+   - $DRY_RUN flipped false -> true -> false: dry-run report checked
+     against event 162 (58 players, 65 slots, 51 reconstructed, 14
+     unreconstructed, 0 new players, ratings spanning 2.44-5.0) and
+     confirmed correct. Live from here -- future Apply Override runs
+     will write club_rating_state, club_rating_event_log, and
+     spp_glicko_rating / spp_glicko_rating_games usermeta for real.
 
    Companion to "Copy Ranks to user profile" — call it right
    after that snippet, in Apply Override Stage 2. Reads the
    just-published Schedules_Scores_{event_id} table, applies
    ONE incremental Glicko update to club_rating_state (seeded
    once from two years of history — see club_rating_state_bootstrap.sql),
-   and writes spp_club_rating / spp_club_rating_games to usermeta
-   for every player who played this week.
+   and writes spp_glicko_rating / spp_glicko_rating_games to usermeta
+   for every player in club_rating_state (not just those who played
+   this week — see v1.4 changelog for why).
 
    RE-PUBLISH SAFE: if Apply Override is run again for the same
    event (a score got corrected, overrides recalculated, results
@@ -46,7 +104,7 @@ global $wpdb;
 // per-player report of what WOULD happen. Safe to run repeatedly against any
 // already-published event with zero risk. Flip to false only once the dry-run
 // output has been checked against a real event and looks right.
-$DRY_RUN = true;
+$DRY_RUN = false;
 
 $prefix        = $wpdb->prefix;
 $umetatable    = $prefix . 'usermeta';
@@ -152,6 +210,7 @@ function crt_reconstruct_round($present) {
 
 $games = array();
 $unreconstructed = 0;
+$not_played = 0;
 $total_slots = 0;
 
 foreach ($groups as $group_id => $members) {
@@ -165,6 +224,19 @@ foreach ($groups as $group_id => $members) {
         }
         if (empty($present)) continue;
         $total_slots++;
+
+        // Everyone present shows the unused-column default (0) -- this slot
+        // was never played (see v1.3 changelog), not a score-entry problem.
+        // Counted in its own bucket so the unreconstructed warning only
+        // fires on genuine failures. A real result can't have every player
+        // score 0; a genuine skunk (e.g. 15-0) mixes a 0 with a nonzero
+        // value and isn't caught here.
+        $all_zero = true;
+        foreach ($present as $p) {
+            if ($p['val'] !== 0) { $all_zero = false; break; }
+        }
+        if ($all_zero) { $not_played++; continue; }
+
         $result = crt_reconstruct_round($present);
         if ($result === null) {
             $unreconstructed++;
@@ -215,7 +287,7 @@ foreach ($games as $g) {
 $players_this_event = array_keys($players_this_event);
 
 if (empty($players_this_event)) {
-    echo "<p style='color:#e67e22;font-weight:bold;'>⚠ Update Club Ratings: {$total_slots} game slot(s) found in {$scores_table}, but none reconstructed cleanly ({$unreconstructed} unreconstructed) — no ratings changed this week.</p>";
+    echo "<p style='color:#e67e22;font-weight:bold;'>⚠ Update Club Ratings: {$total_slots} game slot(s) found in {$scores_table} ({$not_played} not played, {$unreconstructed} unreconstructed), but none reconstructed cleanly — no ratings changed this week.</p>";
     return;
 }
 
@@ -419,6 +491,11 @@ foreach ($players_this_event as $uid) {
 // ==============================================================
 // Recomputed fresh each run from the CURRENT established population
 // (games_played >= 15), so the scale stays anchored as the club evolves.
+// Written for EVERY user_id in club_rating_state (not just this event's
+// players): the scale (mean_mu/std_mu/k) shifts slightly every run as the
+// population changes, so a non-playing member's displayed rating can drift
+// even though their own mu didn't move. Their mu itself is untouched here
+// either way — this only controls who gets their usermeta rewritten.
 
 $established = $wpdb->get_results("SELECT mu FROM {$state_table} WHERE games_played >= 15", ARRAY_A);
 $mus = array_map(function($r) { return (float)$r['mu']; }, $established);
@@ -444,16 +521,16 @@ function crt_to_scale($mu, $mean_mu, $std_mu, $k) {
 }
 }
 
-foreach ($players_this_event as $uid) {
-    $rating = crt_to_scale($state[$uid]['mu'], $mean_mu, $std_mu, $k);
-    $games_played = $state[$uid]['games_played'];
+foreach ($state as $uid => $st) {
+    $rating = crt_to_scale($st['mu'], $mean_mu, $std_mu, $k);
+    $games_played = $st['games_played'];
 
     if (!$DRY_RUN) {
-        $wpdb->query($wpdb->prepare("DELETE FROM {$umetatable} WHERE meta_key = 'spp_club_rating' AND user_id = %d", $uid));
-        $wpdb->query($wpdb->prepare("INSERT INTO {$umetatable} (user_id, meta_key, meta_value) VALUES (%d, 'spp_club_rating', %s)", $uid, $rating));
+        $wpdb->query($wpdb->prepare("DELETE FROM {$umetatable} WHERE meta_key = 'spp_glicko_rating' AND user_id = %d", $uid));
+        $wpdb->query($wpdb->prepare("INSERT INTO {$umetatable} (user_id, meta_key, meta_value) VALUES (%d, 'spp_glicko_rating', %s)", $uid, $rating));
 
-        $wpdb->query($wpdb->prepare("DELETE FROM {$umetatable} WHERE meta_key = 'spp_club_rating_games' AND user_id = %d", $uid));
-        $wpdb->query($wpdb->prepare("INSERT INTO {$umetatable} (user_id, meta_key, meta_value) VALUES (%d, 'spp_club_rating_games', %d)", $uid, $games_played));
+        $wpdb->query($wpdb->prepare("DELETE FROM {$umetatable} WHERE meta_key = 'spp_glicko_rating_games' AND user_id = %d", $uid));
+        $wpdb->query($wpdb->prepare("INSERT INTO {$umetatable} (user_id, meta_key, meta_value) VALUES (%d, 'spp_glicko_rating_games', %d)", $uid, $games_played));
     }
 }
 
@@ -481,13 +558,13 @@ if ($DRY_RUN) {
 }
 
 $msg = ($DRY_RUN ? "DRY RUN: would update " : "OK: Club ratings updated for ") . count($players_this_event) . " player(s) from event {$Event} "
-     . "({$total_slots} game slot(s), " . count($games) . " reconstructed, {$unreconstructed} unreconstructed";
+     . "({$total_slots} game slot(s), " . count($games) . " reconstructed, {$not_played} not played, {$unreconstructed} unreconstructed";
 if ($new_player_count > 0) $msg .= ", {$new_player_count} new player(s) seeded";
 $msg .= ").";
 echo "<br><span style='font-size:14px;color:" . ($DRY_RUN ? '#e67e22' : '#339966') . ";'>{$msg}</span>";
 
 if ($unreconstructed > 0) {
-    echo "<br><span style='font-size:13px;color:#e67e22;'>Note: {$unreconstructed} of {$total_slots} slot(s) in {$scores_table} couldn't be cleanly reconstructed into two teams (likely a score-entry mismatch) — those games contributed nothing to any rating this week.</span>";
+    echo "<br><span style='font-size:13px;color:#e67e22;'>Note: {$unreconstructed} of {$total_slots} slot(s) in {$scores_table} couldn't be cleanly reconstructed into two teams (likely a genuine score-entry mismatch, distinct from the {$not_played} slot(s) that simply weren't played) — those games contributed nothing to any rating this week.</span>";
 }
 
 // ==============================================================
