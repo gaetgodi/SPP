@@ -84,6 +84,30 @@
      "missing break on case 2.5 restored" -- describing a fix
      already applied directly to CM120 at some point; not present
      in the version migrated here).
+
+   UPDATE (2026-09-06) -- added a confirm-gate for consistency with
+   every other mutating admin tool in the project (CM66/CM176's
+   incident fix, CM82, CM52, CM219). Not a response to any actual
+   harm here -- this function's own Rank<0 guard (see PURPOSE above)
+   made both of tonight's accidental bare-GET loads of the "Random
+   Ranks" page confirmed no-ops (0 qualifying Master rows at the
+   time) -- but a mutating admin tool shouldn't rely on being safe by
+   luck when a real gate costs nothing. Unlike CM102/CM254, this one
+   gets the gate rather than a documented exception: its page
+   ("Random Ranks") is a dedicated tool deliberately visited to
+   assign ranks, not a routine-viewing page, so a confirm step costs
+   nothing in practice.
+
+   This function IS called internally, unconditionally, from
+   spp_assign_ranks_to_registered_players() (CM279, itself part of
+   the Schedule Production pipeline) -- that call must keep working
+   exactly as before. So the gate lives ONLY in the add_shortcode()
+   wrapper below, not in the function body: a bare GET of the
+   "Random Ranks" page now shows a read-only preview (a COUNT of
+   players who would be assigned a rank, no writes) with a confirm
+   button; only a POST with random_ranks_confirmed=1 calls the real
+   function. The function body itself, and the CM279 internal
+   caller, are untouched.
    ========================================================= */
 
 defined( 'ABSPATH' ) || exit;
@@ -210,6 +234,27 @@ function spp_random_ranks() {
 
 add_shortcode( 'spp_random_ranks', function( $atts ) {
     ob_start();
-    spp_random_ranks();
+
+    $confirmed = isset( $_POST['random_ranks_confirmed'] ) && $_POST['random_ranks_confirmed'] === '1';
+
+    if ( ! $confirmed ) {
+        global $wpdb;
+        $count = (int) $wpdb->get_var( "SELECT COUNT(*) FROM Master WHERE Rank < 0 AND Ladder LIKE 'Yes'" );
+        ?>
+        <div style="max-width:600px;margin:20px auto;font-family:Arial,sans-serif;">
+            <div style="background:#f0f7ff;border:1px solid #3766AB;border-radius:6px;padding:16px;margin:16px 0;">
+                <p>This will assign a real rank to <strong><?php echo $count; ?></strong> player(s) currently parked at a negative sentinel rank.</p>
+            </div>
+            <form method="post">
+                <input type="hidden" name="random_ranks_confirmed" value="1">
+                <button type="submit" style="padding:10px 24px;background:#3766AB;color:#fff;border:none;border-radius:4px;cursor:pointer;">Yes, Assign Ranks Now</button>
+                <a href="<?php echo esc_url( $_SERVER['REQUEST_URI'] ); ?>" style="margin-left:12px;color:#888;">Cancel</a>
+            </form>
+        </div>
+        <?php
+    } else {
+        spp_random_ranks();
+    }
+
     return ob_get_clean();
 } );

@@ -79,6 +79,27 @@
      precedence (the same pattern already removed from every other
      snippet migrated so far), and $_SESSION was never read anywhere
      in this snippet regardless.
+
+   DELIBERATELY LEFT UNGATED (2026-09-06, post-incident audit): this
+   does perform a DB write (DROP VIEW / CREATE VIEW), but a confirm
+   gate was considered and rejected on purpose:
+     - Already self-guarded (see the same-table-source check above,
+       added specifically to make repeated/unconditional calls safe)
+       -- the DROP+CREATE only actually runs when the view doesn't
+       already point at the requested table, which is the common
+       case of "no-op" on a routine page view.
+     - The bare [spp_create_view] tag lives on "Edit Schedule", "This
+       week's Schedule", and "Create View" -- pages loaded routinely,
+       many times a day, to look at the current schedule, not to
+       deliberately rebuild a view. A confirm-button interrupt there
+       would be a real usability cost on every routine visit, for a
+       DDL operation that's a no-op the vast majority of the time
+       anyway.
+     - Verified in practice: this ran repeatedly during tonight's
+       testing (both regression sweeps hit all three pages) with no
+       adverse effect.
+   Revisit only if this function starts writing anything beyond the
+   named view's own definition.
    ========================================================= */
 
 defined( 'ABSPATH' ) || exit;

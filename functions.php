@@ -49,7 +49,8 @@ require_once get_stylesheet_directory() . '/inc/score-scanner.php';
 require_once get_stylesheet_directory() . '/inc/spp-blog-reminder.php';
 require_once get_stylesheet_directory() . '/inc/spp-blog-system.php';
 require_once get_stylesheet_directory() . '/inc/spp-membership-tags-refresh.php'; // must load before spp-create-membership-table.php below, which calls spp_refresh_membership_tags() directly
-require_once get_stylesheet_directory() . '/inc/spp-create-membership-table.php'; // must load before gl-schedule-production/spp-score-correction below, which now call spp_create_membership_table() directly instead of via CM102's [cmruncode]
+require_once get_stylesheet_directory() . '/inc/spp-create-membership-table.php'; // must load before gl-schedule-production/spp-score-correction/spp-change-new-user-rank below, which now call spp_create_membership_table() directly instead of via CM102's [cmruncode]
+require_once get_stylesheet_directory() . '/inc/spp-change-new-user-rank.php'; // calls spp_create_membership_table() directly -- must load after spp-create-membership-table.php above; no direct tracked-file caller otherwise, only reached via CM219's [cmruncode] shim
 require_once get_stylesheet_directory() . '/inc/spp-random-ranks.php'; // must load before spp-assign-ranks-to-registered-players.php below, which calls spp_random_ranks() directly
 require_once get_stylesheet_directory() . '/inc/spp-create-view.php'; // must load before gl-schedule-production below, which now calls spp_create_view() directly instead of via CM254's [cmruncode] (spp-schedule-production.php, updated the same way, isn't in this require chain at all -- see its own note)
 require_once get_stylesheet_directory() . '/inc/spp-assign-ranks-to-registered-players.php'; // must load before gl-schedule-production/spp-schedule-production below, which now call spp_assign_ranks_to_registered_players() directly instead of via CM279's [cmruncode]
@@ -71,6 +72,7 @@ require_once get_stylesheet_directory() . '/inc/spp-full-form-for-ladder.php'; /
 require_once get_stylesheet_directory() . '/inc/spp-short-form-for-ladder.php'; // must load before spp-gl-ladder-events-dropdown.php below, which calls spp_short_form_for_ladder() directly instead of via CM271's [cmruncode]
 require_once get_stylesheet_directory() . '/inc/spp-gl-ladder-events-dropdown.php'; // no direct tracked-file caller -- only reached via CM275's [cmruncode] shim
 require_once get_stylesheet_directory() . '/inc/spp-scores-events-dropdown.php'; // no direct tracked-file caller -- only reached via CM273's [cmruncode] shim; independent of the ladder-events chain above
+require_once get_stylesheet_directory() . '/inc/spp-schedule-before-after-comparison.php'; // no direct tracked-file caller -- only reached via CM264's [cmruncode] shim
 require_once get_stylesheet_directory() . '/inc/gl-schedule-production.php';
 require_once get_stylesheet_directory() . '/inc/gl-publish-schedule.php';
 require_once get_stylesheet_directory() . '/inc/spp-schedule-admin.php';
@@ -160,7 +162,8 @@ add_action('template_redirect', function() {
         'spp_membership_tags_refresh_ui', 'spp_score_review_grid', 'spp_create_view',
         'spp_pdf_skills_assessment', 'spp_pdf_constitution', 'spp_pdf_instructor_subsidy',
         'spp_score_scanner_ui', 'spp_rank_history', 'spp_scores_events_dropdown',
-        'spp_gl_ladder_events_dropdown',
+        'spp_gl_ladder_events_dropdown', 'spp_schedule_before_after_comparison',
+        'spp_change_new_user_rank',
     ];
 
     global $post;

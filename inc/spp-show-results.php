@@ -41,6 +41,17 @@
    guard, same pattern removed from every other migrated snippet.
    No mutation anywhere in this file (confirmed -- pure SELECT), so
    no wildcard/meta_key audit applies. No other behavior change.
+
+   FIXED (2026-09-06): $subtitle repeated $Event a second time
+   immediately under $title ("All results from Event 162" followed
+   by "162 - Sorted by Rank") -- confirmed genuinely redundant, not a
+   count that happened to coincide: $subtitle was never anything but
+   $Event itself, no count of displayed rows exists anywhere in this
+   function. Present since the original migration (git blame:
+   b0f454c), carried forward faithfully from CM80 at the time --
+   pre-existing, not introduced here. Changed to a plain, non-
+   redundant label. $title is untouched -- it's the correctly-labeled
+   instance of the event number.
    ========================================================= */
 
 defined( 'ABSPATH' ) || exit;
@@ -53,7 +64,7 @@ function spp_show_results() {
 
     $where    = "where event_id = $Event";
     $title    = "<br>All results from Event " . $Event;
-    $subtitle = $Event . " - Sorted by Rank";
+    $subtitle = "Sorted by Rank";
 
     $sql = "SELECT
         Rank,

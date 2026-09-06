@@ -100,6 +100,26 @@
          at the top -- process-wide for the rest of the request, not
          scoped to this function. Carried forward unchanged; worth a
          second look later but out of scope here.
+
+   DELIBERATELY LEFT UNGATED (2026-09-06, post-incident audit): this
+   function has no confirm-gate, unlike CM66/CM176/CM82/CM52/CM219.
+   Considered and rejected adding one, on purpose:
+     - Read in full and confirmed idempotent -- writes only to derived
+       tables (tmp, Master, Masterlist{year}, membership,
+       Membershiplist{year}), never back to usermeta. Re-running it
+       with unchanged usermeta produces identical output every time.
+     - The bare [spp_create_membership_table] tag lives on "Add user
+       to Ladder by name" and "Add user to Ladder by code" -- pages
+       people load routinely just to use the form on them, not
+       specifically to trigger a rebuild. A confirm-button interrupt
+       on every routine visit would be a real, felt usability cost
+       for zero safety benefit, since there's nothing unsafe to
+       confirm.
+     - Verified in practice, not just in theory: this function ran
+       repeatedly during tonight's testing (both regression sweeps,
+       one deliberate trigger) with no adverse effect of any kind.
+   Revisit this decision only if the function's own behavior changes
+   to write something other than these derived tables.
    ========================================================= */
 
 defined( 'ABSPATH' ) || exit;

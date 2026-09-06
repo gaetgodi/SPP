@@ -49,6 +49,24 @@
      same cutoff event ID (30000760),
      same selection query (Master LEFT JOIN Results_all HAVING no
      scored results), same fields written.
+
+   UPDATE (2026-09-06) -- INCIDENT: this function had zero request-
+   gating -- it ran its full removal loop on every single render,
+   including a bare GET page view. A verification page-load during
+   an unrelated migration session triggered it for real, flipping
+   Ladder='No' for 74 real active-ladder members in one shot (the
+   entire then-current backlog of zero-scored-since-cutoff players).
+   Reverted separately (74 usermeta rows restored; see the site's own
+   incident record, not duplicated here).
+
+   FIXED: added the same POST-confirm gate used by
+   spp_apply_override_to_results_table() -- Stage 1 (no $_POST) now
+   only shows a preview of who WOULD be removed (read-only, same
+   SELECT, no writes) plus a confirm button; the removal loop only
+   runs when $_POST['sriu_confirmed'] === '1', matching this
+   codebase's standing propose-then-apply convention for every other
+   mutating admin tool. No other behavior change -- same cutoff
+   event, same selection query, same fields written, once confirmed.
    ========================================================= */
 
 defined( 'ABSPATH' ) || exit;
@@ -59,7 +77,7 @@ function spp_remove_inactive_ladder_users() {
     $umetatable = $wpdb->prefix . 'usermeta';
     $lowevent   = 30000760;
 
-    echo '<pre>';
+    $confirmed = isset( $_POST['sriu_confirmed'] ) && $_POST['sriu_confirmed'] === '1';
 
     $inactive = $wpdb->get_results( $wpdb->prepare( "
         SELECT m.user_id, m.Rank, r.display_name
@@ -70,6 +88,31 @@ function spp_remove_inactive_ladder_users() {
         HAVING COUNT(r.Score) = 0
         ORDER BY Rank ASC
     ", $lowevent ), ARRAY_A );
+
+    if ( ! $confirmed ) {
+        echo '<div style="max-width:600px;margin:20px auto;font-family:Arial,sans-serif;">';
+        if ( empty( $inactive ) ) {
+            echo '<p>No players currently qualify for removal (none with zero scored results since the cutoff event).</p>';
+            return;
+        }
+        echo '<div style="background:#fdf3f2;border:2px solid #c0392b;border-radius:6px;padding:16px;margin:16px 0;">';
+        echo '<p style="color:#c0392b;font-weight:bold;">This will remove ' . count( $inactive ) . ' player(s) from the ladder (Ladder=No, current Rank archived to old_Rank):</p>';
+        echo '<ul>';
+        foreach ( $inactive as $value ) {
+            echo '<li>' . esc_html( $value['user_id'] . ' ' . $value['display_name'] . ' (Rank ' . $value['Rank'] . ')' ) . '</li>';
+        }
+        echo '</ul>';
+        echo '</div>';
+        echo '<form method="post">';
+        echo '<input type="hidden" name="sriu_confirmed" value="1">';
+        echo '<button type="submit" style="padding:10px 24px;background:#c0392b;color:#fff;border:none;border-radius:4px;cursor:pointer;">Yes, Remove These Players</button>';
+        echo ' <a href="' . esc_url( $_SERVER['REQUEST_URI'] ) . '" style="margin-left:12px;color:#888;">Cancel</a>';
+        echo '</form>';
+        echo '</div>';
+        return;
+    }
+
+    echo '<pre>';
 
     foreach ( $inactive as $value ) {
         $user_id      = (int) $value['user_id'];

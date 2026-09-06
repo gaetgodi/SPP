@@ -88,6 +88,28 @@
    spp-score-correction.php already call it. No other behavior
    change: identical tmp-table build, identical loop, identical
    final message.
+
+   UPDATE (2026-09-06) -- same missing-gate class as CM176's incident
+   fix: this function itself had no request-method check, so a bare
+   [spp_copy_ranks_to_user_profile] page view would run the full
+   Rank-copy + membership rebuild unconditionally. Did NOT cause the
+   CM176 incident (verified separately) and the function's effect
+   looks idempotent (it re-copies Results.Rank into usermeta, then
+   rebuilds Master from that) rather than destructive like CM176's
+   Ladder wipe -- but same code-quality gap, fixed on the same
+   principle rather than waited on.
+
+   FIXED without changing this function's signature or behavior at
+   all: spp_copy_ranks_to_user_profile() is called internally,
+   unconditionally, from spp_apply_override_to_results_table()'s
+   Stage 2 (already inside that caller's own confirmation gate) --
+   adding a gate INSIDE this function would have broken that call.
+   Instead, the confirm-gate lives only in the add_shortcode()
+   wrapper below (the sole place a bare page view can reach this):
+   on a plain GET it now shows a read-only preview (a COUNT of
+   affected users, no writes) with a confirm button; only a POST
+   with copy_ranks_confirmed=1 calls the real function. The function
+   body itself, and every internal caller, are untouched.
    ========================================================= */
 
 defined( 'ABSPATH' ) || exit;
@@ -128,6 +150,27 @@ function spp_copy_ranks_to_user_profile() {
 
 add_shortcode( 'spp_copy_ranks_to_user_profile', function( $atts ) {
     ob_start();
-    spp_copy_ranks_to_user_profile();
+
+    $confirmed = isset( $_POST['copy_ranks_confirmed'] ) && $_POST['copy_ranks_confirmed'] === '1';
+
+    if ( ! $confirmed ) {
+        global $wpdb;
+        $count = (int) $wpdb->get_var( "SELECT COUNT(*) FROM Results WHERE (Rank <> 0 OR Rank IS NOT NULL)" );
+        ?>
+        <div style="max-width:600px;margin:20px auto;font-family:Arial,sans-serif;">
+            <div style="background:#f0f7ff;border:1px solid #3766AB;border-radius:6px;padding:16px;margin:16px 0;">
+                <p>This will copy the current Results.Rank into usermeta for <strong><?php echo $count; ?></strong> user(s), then rebuild the membership/Master tables.</p>
+            </div>
+            <form method="post">
+                <input type="hidden" name="copy_ranks_confirmed" value="1">
+                <button type="submit" style="padding:10px 24px;background:#3766AB;color:#fff;border:none;border-radius:4px;cursor:pointer;">Yes, Copy Ranks Now</button>
+                <a href="<?php echo esc_url( $_SERVER['REQUEST_URI'] ); ?>" style="margin-left:12px;color:#888;">Cancel</a>
+            </form>
+        </div>
+        <?php
+    } else {
+        spp_copy_ranks_to_user_profile();
+    }
+
     return ob_get_clean();
 } );
