@@ -1,10 +1,42 @@
 <?php
 /* =========================================================
    Create Membership Table
-   Version: 1.2.0
-   Date: 2026-09-05
+   Version: 1.3.0
+   Date: 2026-09-06
    Based on: Code Manager snippet "Create membership table" (CM102),
    version 1.1
+
+   Changes from 1.2.0:
+   - Added two new pivot columns, ClubRating and DUPR, following the
+     exact same MAX(CASE WHEN meta_key = '...' THEN meta_value END)
+     exact-match pattern already used for Rating (fixed earlier
+     tonight for the identical wildcard-collision risk):
+       - ClubRating: meta_key = 'spp_glicko_rating'. Confirmed fresh
+         against live usermeta before writing this: 217 rows exist
+         under this exact key, and 217 more exist under
+         'spp_glicko_rating_games' -- a wildcard match (e.g. LIKE
+         '%spp_glicko_rating%') would silently pull in the games
+         count alongside the rating, the same collision shape Rating
+         itself had. Exact match avoids it entirely.
+       - DUPR: meta_key = 'spp_dupr_rating'. Confirmed fresh: 5 rows
+         exist under this exact key; no similarly-named sibling key
+         found under case-insensitive collation (usermeta.meta_key is
+         utf8mb4_unicode_ci, confirmed), so no comparable collision
+         risk exists for this one today -- exact match used anyway
+         for consistency and as a guard against a future sibling key
+         (e.g. a games-count key) being added later.
+   - Propagated both new columns to all four downstream tables built
+     from this same tmp pivot (Master, Masterlist{year}, membership,
+     Membershiplist{year}). Confirmed this does NOT happen
+     automatically: each of the four CREATE TABLE ... AS SELECT
+     statements enumerates its own explicit column list rather than
+     using SELECT *, so t.ClubRating/t.DUPR had to be added to each
+     of the four SELECT lists individually, not just to the tmp
+     pivot. Verified no other code path INSERTs into any of these
+     four tables directly (they are always rebuilt wholesale by this
+     function), so adding two columns is a safe, purely additive
+     schema change for all nine callers of
+     spp_create_membership_table() site-wide.
 
    Changes from 1.1.0:
    - FIXED the same class of bug for user_phone: was
@@ -161,6 +193,8 @@ function spp_create_membership_table() {
                 {$prefix}users.user_email,
                 MAX(CASE WHEN meta_key LIKE '%Ladder%'  THEN meta_value END) AS Ladder,
                 MAX(CASE WHEN meta_key = 'Rating'  THEN meta_value END) AS Rating,
+                MAX(CASE WHEN meta_key = 'spp_glicko_rating'  THEN meta_value END) AS ClubRating,
+                MAX(CASE WHEN meta_key = 'spp_dupr_rating'  THEN meta_value END) AS DUPR,
                 MAX(CASE WHEN meta_key LIKE '%Expiry%'  THEN meta_value END) AS Expiry,
                 MAX(CASE WHEN meta_key LIKE 'YrEndDt'   THEN meta_value END) AS YrEndDt
             FROM {$umetatable}
@@ -185,7 +219,7 @@ function spp_create_membership_table() {
         CREATE TABLE {$master} AS
         SELECT t.Rank, t.user_id, t.first_name, t.last_name,
                t.user_phone, t.travel, t.user_email,
-               t.Ladder, t.Rating, m.Tag
+               t.Ladder, t.Rating, t.ClubRating, t.DUPR, m.Tag
         FROM tmp t
         INNER JOIN MembershipTags m ON t.user_id = m.user_id
         WHERE t.Rank <> 0 AND t.Ladder = 'Yes'
@@ -201,7 +235,7 @@ function spp_create_membership_table() {
         CREATE TABLE {$masterY} AS
         SELECT t.Rank, t.user_id, t.first_name, t.last_name,
                t.user_phone, t.travel, t.user_email,
-               t.Ladder, t.Rating, m.Tag
+               t.Ladder, t.Rating, t.ClubRating, t.DUPR, m.Tag
         FROM tmp t
         INNER JOIN MembershipTags m ON t.user_id = m.user_id
         WHERE t.Rank <> 0 AND t.Ladder = 'Yes'
@@ -217,7 +251,7 @@ function spp_create_membership_table() {
         CREATE TABLE {$membership} AS
         SELECT t.Rank, t.user_id, t.first_name, t.last_name,
                t.user_phone, t.travel, t.user_email,
-               t.Ladder, t.PCO, t.Rating, m.Tag
+               t.Ladder, t.PCO, t.Rating, t.ClubRating, t.DUPR, m.Tag
         FROM tmp t
         LEFT JOIN MembershipTags m ON t.user_id = m.user_id
         ORDER BY last_name
@@ -234,7 +268,7 @@ function spp_create_membership_table() {
         CREATE TABLE {$membershipY} AS
         SELECT t.Rank, t.user_id, t.first_name, t.last_name,
                t.user_phone, t.travel, t.user_email,
-               t.Ladder, t.PCO, t.Rating, m.Tag
+               t.Ladder, t.PCO, t.Rating, t.ClubRating, t.DUPR, m.Tag
         FROM tmp t
         LEFT JOIN MembershipTags m ON t.user_id = m.user_id
         ORDER BY last_name
