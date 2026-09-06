@@ -1,8 +1,28 @@
 <?php
 /* =========================================================
    Schedule Production
-   Version: 1.8.12
-   Date: 2026-05-24
+   Version: 1.8.14
+   Date: 2026-09-05
+
+   Changes from 1.8.13:
+   - Call spp_assign_ranks_to_registered_players( (int) $Event )
+     directly instead of
+     echo do_shortcode("[cmruncode name='GL Assign ranks to
+     registered player']") -- CM279 has been migrated to
+     inc/spp-assign-ranks-to-registered-players.php. Same
+     "not found to be require_once'd anywhere" caveat as 1.8.13
+     applies to this change too.
+
+   Changes from 1.8.12:
+   - Call spp_create_view() directly instead of
+     echo do_shortcode("[cmruncode name='Create View']") -- CM254
+     has been migrated to inc/spp-create-view.php. No behavior
+     change. Note: as of this edit, this file was not found to be
+     require_once'd anywhere in functions.php or elsewhere in the
+     docroot -- it may not currently be loaded at all. Updating it
+     regardless for consistency with gl-schedule-production.php and
+     in case it is loaded some other way not found by a static
+     search.
 
    Changes from 1.8.11:
    - $score_violation now scores +6:40 and +7:50 preferences
@@ -161,7 +181,7 @@ $schedules_prev = "SchedulesPrev$Event";
 // -------------------------------------------------------
 // ASSIGN RANKS
 // -------------------------------------------------------
-echo do_shortcode("[cmruncode name='GL Assign ranks to registered player']");
+spp_assign_ranks_to_registered_players( (int) $Event );
 
 $settings = get_option('Pkldr_settings');
 list('Pkldr_Project' => $Pkldr_Project, 'Pkldr_PageLdr' => $Pkldr_PageLdr) = $settings;
@@ -1759,7 +1779,7 @@ if (isset($Event) and $Event <> 0) {
     $wpdb->query("CREATE TABLE $schedules_prev SELECT * FROM $Schedules");
 
     // Create view for scoring tables
-    echo do_shortcode("[cmruncode name='Create View']");
+    spp_create_view();
 
     // -------------------------------------------------------
     // TEST SUITE SNAPSHOT

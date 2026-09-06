@@ -1,8 +1,47 @@
 <?php
 /* =========================================================
    GL Schedule Production
-   Version: 2.0.4
-   Date: 2026-07-21
+   Version: 2.0.7
+   Date: 2026-09-05
+
+   Changes from 2.0.6:
+   - Call spp_assign_ranks_to_registered_players( (int) $Event )
+     directly instead of
+     echo do_shortcode("[cmruncode name='GL Assign ranks to
+     registered player']") -- CM279 has been migrated to
+     inc/spp-assign-ranks-to-registered-players.php. $Event here is
+     unchanged: still inherited from the "Ladder Events drop down"
+     snippet earlier in the page render, just now passed explicitly
+     rather than relied on implicitly via shared eval() scope. The
+     migrated function also fixes a dead-code bug in its own Step 6
+     (old_Rank was deleted by a wildcard before ever being read) --
+     see that file's own changelog.
+
+   Changes from 2.0.5:
+   - Call spp_create_view() directly instead of
+     echo do_shortcode("[cmruncode name='Create View']") -- CM254
+     has been migrated to inc/spp-create-view.php; this file is
+     tracked code, so it's one of the callers updated to call the
+     real function directly. Same defaults (Schedules /
+     schedules_w). The migrated function adds a guard that skips
+     the DROP+CREATE when schedules_w already points at Schedules --
+     which it almost always will here too, since schedules_w is a
+     real SQL VIEW and already reflects the fresh Schedules rows
+     this run just wrote without needing to be redeclared (same
+     reasoning gl-player-schedule-view.php's own 1.6.2 changelog
+     already established for this view). Net effect: this call
+     usually becomes a no-op DDL-wise going forward, which is a
+     minor improvement, not a regression -- if the view doesn't
+     exist yet or somehow points elsewhere, it still gets rebuilt.
+
+   Changes from 2.0.4:
+   - Call spp_create_membership_table() directly instead of
+     echo do_shortcode("[cmruncode name='Create membership table']")
+     -- CM102 has been migrated to
+     inc/spp-create-membership-table.php; this file is tracked code,
+     so it's one of the callers updated to call the real function
+     directly rather than round-tripping through Code Manager. No
+     behavior change: same tables rebuilt, same net effect.
 
    Changes from 2.0.3:
    - Added a guard at the very start of production: if the
@@ -191,12 +230,12 @@ echo '<input type="hidden" name="PBEvent" value="' . esc_attr($Event) . '">';
 }
 $schedules_prev = "SchedulesPrev$Event";
 // Need to run this to refresh travel fields
-echo do_shortcode("[cmruncode name='Create membership table']");
+spp_create_membership_table();
 
 // -------------------------------------------------------
 // ASSIGN RANKS
 // -------------------------------------------------------
-echo do_shortcode("[cmruncode name='GL Assign ranks to registered player']");
+spp_assign_ranks_to_registered_players( (int) $Event );
 
 $settings = get_option('Pkldr_settings');
 list('Pkldr_Project' => $Pkldr_Project, 'Pkldr_PageLdr' => $Pkldr_PageLdr) = $settings;
@@ -2390,7 +2429,7 @@ if (isset($Event) and $Event <> 0) {
     $wpdb->query("DROP TABLE IF EXISTS $schedules_prev");
     $wpdb->query("CREATE TABLE $schedules_prev SELECT * FROM $Schedules");
 
-    echo do_shortcode("[cmruncode name='Create View']");
+    spp_create_view();
 
     // TEST SUITE SNAPSHOT
     $test_table = "ScheduleTest_$event";

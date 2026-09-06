@@ -12,8 +12,17 @@
  *   - rankUsersWithTies(): score desc, current rank as tie-breaker
  *   - setCaclRank(): placement adjustment + score bonus
  *
- * Version: 1.4.0
- * Date:    2026-08-14
+ * Version: 1.4.1
+ * Date:    2026-09-05
+ *
+ * Changes from 1.4.0:
+ *   - Step 6: call spp_create_membership_table() directly instead of
+ *     echo do_shortcode("[cmruncode name='Create membership table']")
+ *     -- CM102 has been migrated to inc/spp-create-membership-table.php;
+ *     this file is tracked code, so it's one of the callers updated to
+ *     call the real function directly rather than round-tripping
+ *     through Code Manager. No behavior change: same tables rebuilt,
+ *     same net effect on Master/membership/usermeta.
  *
  * Changes from 1.3.0:
  *   - Step 7 (apply): if a pre-run usermeta snapshot exists for this
@@ -813,7 +822,7 @@ add_action( 'wp_ajax_spp_sc_apply', function() {
     );
 
     // 6. Refresh membership and Master tables
-    echo do_shortcode( "[cmruncode name='Create membership table']" );
+    spp_create_membership_table();
 
     // 7. Invalidate any pre-run usermeta snapshot for this event (v1.4.0).
     // spp-create-results.php's force=1 restore path relies on that snapshot
