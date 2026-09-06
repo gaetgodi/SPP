@@ -27,3 +27,9 @@ function spp_pdf_constitution() {
     $pdf_url = get_site_url() . '/wp-content/uploads/2025/09/SPP-Constitution-V2-2024.pdf';
     echo '<iframe src="https://docs.google.com/viewer?url=' . urlencode( $pdf_url ) . '&embedded=true" width="100%" height="800px" style="border:none;"></iframe>';
 }
+
+add_shortcode( 'spp_pdf_constitution', function( $atts ) {
+    ob_start();
+    spp_pdf_constitution();
+    return ob_get_clean();
+} );

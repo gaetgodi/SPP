@@ -41,3 +41,9 @@ function spp_membership_tags_refresh_ui() {
     spp_refresh_membership_tags();
     echo do_shortcode( '[wpda_app app_id="3"]' );
 }
+
+add_shortcode( 'spp_membership_tags_refresh_ui', function( $atts ) {
+    ob_start();
+    spp_membership_tags_refresh_ui();
+    return ob_get_clean();
+} );

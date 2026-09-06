@@ -33,6 +33,25 @@
      plus HTML rendering), so no wildcard/meta_key audit applies.
    - No other behavior change.
 
+   UPDATE (2026-09-06) -- real shortcode registered, $wpda_shortcode_args
+   removed: $wpda_shortcode_args was Code Manager's own mechanism for
+   passing shortcode attributes and won't exist once that plugin is
+   gone. Converted to real function parameters ($file, $time, $player)
+   with the exact same defaults as the original's else-branch, and
+   registered a real [spp_blank_scores_colour] shortcode using
+   shortcode_atts() to map file=/time=/player= attributes to them.
+
+   One confirmed-harmless side effect of this conversion: the original
+   coupled $file to $time's presence -- `if (isset($wpda_shortcode_args
+   ['time'])) { $time=...; $file=...; } else { both defaults; }` --
+   so passing file= alone without time= was silently ignored (both
+   fell back to defaults). shortcode_atts() defaults each attribute
+   independently, so file= now takes effect even without time=. No
+   live page passes one without the other (checked all real callers
+   during the Phase 2 sweep), so this has zero effect on current
+   behavior -- it's an inherent side effect of the required
+   conversion, not a separate fix.
+
    FOUND WHILE AUDITING REAL CALLERS (not fixed -- not this file's
    bug, flagging for visibility): "Create colourful table from
    schedules - 7:30" (page 20005537) and "Paper Results - 6:00"
@@ -48,24 +67,10 @@
 
 defined( 'ABSPATH' ) || exit;
 
-function spp_blank_scores_colour() {
-    global $wpdb, $wpda_shortcode_args;
+function spp_blank_scores_colour( string $file = 'schedules_w', string $time = 'where time_id > 0', string $player = "and user_id <> ''" ) {
+    global $wpdb;
 
     $prefix = $wpdb->prefix;
-
-    if ( isset( $wpda_shortcode_args['time'] ) ) {
-        $time = $wpda_shortcode_args['time'];
-        $file = $wpda_shortcode_args['file'];
-    } else {
-        $time = 'where time_id > 0';
-        $file = 'schedules_w';
-    }
-
-    if ( isset( $wpda_shortcode_args['player'] ) ) {
-        $player = $wpda_shortcode_args['player'];
-    } else {
-        $player = "and user_id <> ''";
-    }
 
     spp_create_view();
 
@@ -174,3 +179,14 @@ where Visible = 'Yes' order by ordOrder";
 
     echo "</table>";
 }
+
+add_shortcode( 'spp_blank_scores_colour', function( $atts ) {
+    $atts = shortcode_atts( array(
+        'file'   => 'schedules_w',
+        'time'   => 'where time_id > 0',
+        'player' => "and user_id <> ''",
+    ), $atts, 'spp_blank_scores_colour' );
+    ob_start();
+    spp_blank_scores_colour( $atts['file'], $atts['time'], $atts['player'] );
+    return ob_get_clean();
+} );

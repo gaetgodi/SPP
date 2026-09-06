@@ -89,3 +89,9 @@ function spp_remove_inactive_ladder_users() {
         $wpdb->query( $wpdb->prepare( "INSERT INTO {$umetatable} (user_id, meta_key, meta_value) VALUES (%d,'old_Rank',%s)", $user_id, $rank ) );
     }
 }
+
+add_shortcode( 'spp_remove_inactive_ladder_users', function( $atts ) {
+    ob_start();
+    spp_remove_inactive_ladder_users();
+    return ob_get_clean();
+} );

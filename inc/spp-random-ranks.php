@@ -207,3 +207,9 @@ function spp_random_ranks() {
         $wpdb->query( $wpdb->prepare( "INSERT INTO {$umetatable} (user_id, meta_key, meta_value) VALUES (%d,'Rank',%s)", $id, $rank_calc ) );
     }
 }
+
+add_shortcode( 'spp_random_ranks', function( $atts ) {
+    ob_start();
+    spp_random_ranks();
+    return ob_get_clean();
+} );

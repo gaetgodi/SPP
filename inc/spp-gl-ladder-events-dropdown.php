@@ -127,3 +127,12 @@ function spp_gl_ladder_events_dropdown( bool $show_tolerance = false ) {
         return;
     }
 }
+
+add_shortcode( 'spp_gl_ladder_events_dropdown', function( $atts ) {
+    $atts = shortcode_atts( array(
+        'show_tolerance' => '0',
+    ), $atts, 'spp_gl_ladder_events_dropdown' );
+    ob_start();
+    spp_gl_ladder_events_dropdown( (bool) intval( $atts['show_tolerance'] ) );
+    return ob_get_clean();
+} );

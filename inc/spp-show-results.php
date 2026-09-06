@@ -96,3 +96,9 @@ function spp_show_results() {
     unset( $GLOBALS['$Event'] );
     unset( $GLOBALS['$name'] );
 }
+
+add_shortcode( 'spp_show_results', function( $atts ) {
+    ob_start();
+    spp_show_results();
+    return ob_get_clean();
+} );

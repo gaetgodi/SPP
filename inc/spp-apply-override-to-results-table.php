@@ -509,3 +509,9 @@ function spp_apply_override_to_results_table() {
     unset($_SESSION['apply_override_event']);
     unset($_SESSION['apply_override_name']);
 }
+
+add_shortcode( 'spp_apply_override_to_results_table', function( $atts ) {
+    ob_start();
+    spp_apply_override_to_results_table();
+    return ob_get_clean();
+} );

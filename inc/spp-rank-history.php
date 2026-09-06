@@ -476,3 +476,9 @@ function spp_rank_history() {
     </details>
     ';
 }
+
+add_shortcode( 'spp_rank_history', function( $atts ) {
+    ob_start();
+    spp_rank_history();
+    return ob_get_clean();
+} );

@@ -133,3 +133,18 @@ function spp_create_view( string $table = 'Schedules', string $view_name = 'sche
         FROM (((`$table` `schedules` join `Times` on(`schedules`.`time_id` = `Times`.`T_ID`)) join `Groups` on(`schedules`.`group_id` = `Groups`.`GP_ID`)) join `Courts` on(`schedules`.`Crt_ID` = `Courts`.`Crt_ID`)) ORDER BY `schedules`.`Sequence` ASC
     " );
 }
+
+// Shortcode attribute is named 'file' (not 'table') to match the original
+// Code-Manager-level attribute name used historically when this was called
+// via [cmruncode name='Create View' file='...'] -- see spp-score-review-grid.php's
+// and spp-blank-scores-colour.php's headers. Unused by any live caller today
+// (all three confirmed real callers pass no attributes at all).
+add_shortcode( 'spp_create_view', function( $atts ) {
+    $atts = shortcode_atts( array(
+        'file'      => 'Schedules',
+        'view_name' => 'schedules_w',
+    ), $atts, 'spp_create_view' );
+    ob_start();
+    spp_create_view( $atts['file'], $atts['view_name'] );
+    return ob_get_clean();
+} );

@@ -79,3 +79,9 @@ function spp_score_scanner_ui() {
     </div>
     <?php
 }
+
+add_shortcode( 'spp_score_scanner_ui', function( $atts ) {
+    ob_start();
+    spp_score_scanner_ui();
+    return ob_get_clean();
+} );

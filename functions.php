@@ -129,6 +129,22 @@ function spp_is_ladder_admin() {
    PAGE ACCESS RESTRICTION
    Restricts cmruncode pages to editors and admins only,
    with exceptions for member-facing pages.
+
+   UPDATE (2026-09-06): this gate detects an "admin tool page" purely
+   by sniffing post_content for the literal [cmruncode] shortcode.
+   Tonight's Code Manager migration replaced [cmruncode name="X"] with
+   real [spp_x] shortcodes on 31 pages -- which silently made this
+   check return false (no more "cmruncode" string in the content) and
+   removed the restriction from all 22 of those pages that weren't
+   already in $member_pages, including the site's highest-stakes page
+   (Apply Override / Publish Results). Caught during Phase 3
+   verification, fixed immediately: the check now also recognizes
+   every shortcode tag migrated tonight that has a real page-level
+   caller, restoring the exact same protection under the new names.
+   Any FUTURE snippet migration that adds a new [spp_x] shortcode to
+   a previously admin/editor-only cmruncode page must add its tag to
+   this list too, or that page will silently lose this restriction
+   the same way.
    ========================================================= */
 add_action('template_redirect', function() {
     if (defined('DOING_AJAX') && DOING_AJAX) return;
@@ -137,8 +153,27 @@ add_action('template_redirect', function() {
 
     $member_pages = [1517, 20003754, 20003889, 20009040, 20009451, 20005967, 20009765, 20009901, 1948, 20006331, 20010179, 20010257, 20010267];
 
+    $migrated_admin_tool_shortcodes = [
+        'spp_apply_override_to_results_table', 'spp_copy_ranks_to_user_profile',
+        'spp_show_results', 'spp_remove_user_from_ladder', 'spp_create_membership_table',
+        'spp_random_ranks', 'spp_remove_inactive_ladder_users', 'spp_blank_scores_colour',
+        'spp_membership_tags_refresh_ui', 'spp_score_review_grid', 'spp_create_view',
+        'spp_pdf_skills_assessment', 'spp_pdf_constitution', 'spp_pdf_instructor_subsidy',
+        'spp_score_scanner_ui', 'spp_rank_history', 'spp_scores_events_dropdown',
+        'spp_gl_ladder_events_dropdown',
+    ];
+
     global $post;
-    if ($post && !in_array($post->ID, $member_pages) && has_shortcode($post->post_content, 'cmruncode')) {
+    if ( ! $post || in_array($post->ID, $member_pages) ) return;
+
+    $is_admin_tool_page = has_shortcode($post->post_content, 'cmruncode');
+    if ( ! $is_admin_tool_page ) {
+        foreach ($migrated_admin_tool_shortcodes as $tag) {
+            if (has_shortcode($post->post_content, $tag)) { $is_admin_tool_page = true; break; }
+        }
+    }
+
+    if ($is_admin_tool_page) {
         wp_redirect(home_url());
         exit;
     }

@@ -115,3 +115,9 @@ function spp_remove_user_from_ladder() {
     </form>
     <?php
 }
+
+add_shortcode( 'spp_remove_user_from_ladder', function( $atts ) {
+    ob_start();
+    spp_remove_user_from_ladder();
+    return ob_get_clean();
+} );

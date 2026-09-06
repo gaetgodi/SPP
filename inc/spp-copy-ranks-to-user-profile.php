@@ -125,3 +125,9 @@ function spp_copy_ranks_to_user_profile() {
 
     echo "<br />All Ranks created or updated!";
 }
+
+add_shortcode( 'spp_copy_ranks_to_user_profile', function( $atts ) {
+    ob_start();
+    spp_copy_ranks_to_user_profile();
+    return ob_get_clean();
+} );

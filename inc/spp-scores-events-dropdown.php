@@ -178,3 +178,9 @@ function spp_scores_events_dropdown() {
         echo '<p style="color:#555;font-size:0.9rem;">Showing scores for: <strong>' . esc_html( $name ) . '</strong></p>';
     }
 }
+
+add_shortcode( 'spp_scores_events_dropdown', function( $atts ) {
+    ob_start();
+    spp_scores_events_dropdown();
+    return ob_get_clean();
+} );

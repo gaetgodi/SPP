@@ -28,3 +28,9 @@ function spp_pdf_skills_assessment() {
     $pdf_url = get_site_url() . '/wp-content/uploads/2024/05/Pickleball-Canada-Skills-Self-Assessment-Chart.pdf';
     echo '<iframe src="https://docs.google.com/viewer?url=' . urlencode( $pdf_url ) . '&embedded=true" width="100%" height="800px" style="border:none;"></iframe>';
 }
+
+add_shortcode( 'spp_pdf_skills_assessment', function( $atts ) {
+    ob_start();
+    spp_pdf_skills_assessment();
+    return ob_get_clean();
+} );

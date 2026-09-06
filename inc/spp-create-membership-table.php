@@ -228,3 +228,9 @@ function spp_create_membership_table() {
     // -------------------------------------------------------
     $wpdb->query( "DROP TABLE IF EXISTS tmp" );
 }
+
+add_shortcode( 'spp_create_membership_table', function( $atts ) {
+    ob_start();
+    spp_create_membership_table();
+    return ob_get_clean();
+} );

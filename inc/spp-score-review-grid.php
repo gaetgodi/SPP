@@ -48,6 +48,21 @@
      elsewhere on the same page render still could, and this cleanup
      protects whatever runs after it from inheriting a stale 'file'
      key.
+
+   UPDATE (2026-09-06) -- real shortcode registered: removed the
+   $wpda_shortcode_args['time_id'] read entirely (was:
+   `if (isset($wpda_shortcode_args['time_id'])) { $time = ...; }
+   else { $time = 'where time_id > 0'; }`). Traced and confirmed dead
+   twice over before removing, not assumed: (1) no live caller ever
+   passes a `time_id` attribute -- the one caller that passes anything
+   passes `time="7:30"`, a different key, so isset(...['time_id']) was
+   always false in practice; (2) even if it were set, $time gets
+   unconditionally overwritten two lines later before ever being used
+   in a query. No shortcode attribute needed for this function.
+   The separate unset($wpda_shortcode_args['file']) defensive cleanup
+   below is UNTOUCHED -- it protects other, still-unmigrated
+   [cmruncode] calls that may render later on the same page, which is
+   outside tonight's scope.
    ========================================================= */
 
 defined( 'ABSPATH' ) || exit;
@@ -61,11 +76,6 @@ function spp_score_review_grid() {
     }
 
     $prefix = $wpdb->prefix;
-    if ( isset( $wpda_shortcode_args['time_id'] ) ) {
-        $time = $wpda_shortcode_args['time_id'];
-    } else {
-        $time = 'where time_id > 0';
-    }
 
     $current_event = (int) get_option( 'spp_current_event', 0 );
     $schedule_live = (int) get_option( 'spp_schedule_published', 0 ) === 1;
@@ -213,3 +223,9 @@ function spp_score_review_grid() {
 
     echo "</table>";
 }
+
+add_shortcode( 'spp_score_review_grid', function( $atts ) {
+    ob_start();
+    spp_score_review_grid();
+    return ob_get_clean();
+} );
