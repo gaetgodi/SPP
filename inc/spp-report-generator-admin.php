@@ -1,8 +1,18 @@
 <?php
 /* =========================================================
    Report Generator — Admin Screen
-   Version: 1.0.2
+   Version: 1.0.3
    Date: 2026-09-07
+
+   Changes from 1.0.2:
+   - Preview's default-sort now prefers the report definition's own
+     'default_sort' key (spp-reports.php 1.2.0+), same preference order
+     as the [spp_report] shortcode handler, falling back to the
+     original Rank-if-present heuristic when a definition doesn't set
+     one -- kept in sync so the preview shown here matches what the
+     live shortcode actually renders. No changes to this file otherwise;
+     new reports (e.g. membership) require no changes here at all, the
+     dropdown reads $GLOBALS['spp_report_registry'] directly.
 
    Changes from 1.0.1:
    - Added a permanent "CSS Customization Reference" section
@@ -390,8 +400,11 @@ function spp_render_report_generator_page() {
             return $col;
         }, $preview_columns );
     }
-    $preview_keys = array_column( $preview_columns, 'key' );
-    $preview_default_sort = in_array( 'Rank', $preview_keys, true ) ? 'Rank' : ( $preview_keys[0] ?? '' );
+    $preview_keys           = array_column( $preview_columns, 'key' );
+    $definition_default_sort = $definition['default_sort'] ?? null;
+    $preview_default_sort  = ( $definition_default_sort !== null && in_array( $definition_default_sort, $preview_keys, true ) )
+        ? $definition_default_sort
+        : ( in_array( 'Rank', $preview_keys, true ) ? 'Rank' : ( $preview_keys[0] ?? '' ) );
 
     spp_render_report_table( $preview_columns, $rows, array(
         'id'               => 'preview',

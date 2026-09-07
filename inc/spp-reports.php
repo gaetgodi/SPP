@@ -1,8 +1,34 @@
 <?php
 /* =========================================================
    Report Registry
-   Version: 1.1.0
-   Date: 2026-09-06
+   Version: 1.2.0
+   Date: 2026-09-07
+
+   Changes from 1.1.0:
+   - Added spp_report_membership(): the full, unfiltered membership
+     table (all 452 rows, no WHERE) -- replaces the WPDA "Club
+     Membership list" app (app_id=25). Same 11 columns/labels/order
+     that app currently renders, plus ClubRating and DUPR (which that
+     app's own column-selection step had marked selected but never
+     actually rendered -- see that investigation). Every column
+     sortable=true, a deliberate improvement over the WPDA app (which
+     only allowed sorting by last_name).
+   - A report definition may now optionally return a 'default_sort' key
+     -- both the [spp_report] shortcode handler below and the Report
+     Generator admin screen's preview (spp-report-generator-admin.php)
+     now prefer it over the old Rank-if-present-else-first-column
+     heuristic, falling back to that heuristic when a definition
+     doesn't set one. Needed because spp_report_membership() has to
+     default-sort by last_name despite also having a Rank column (which
+     the old heuristic would have picked unconditionally) --
+     ladder_ratings is unaffected, it still gets 'Rank' via the same
+     fallback path as before, unchanged. spp_render_report_table()
+     itself only sorts by one key at a time; membership's query is
+     written with ORDER BY last_name, first_name so that PHP 8's stable
+     usort(), sorting by last_name alone via default_sort, preserves
+     that first_name tie-break for members sharing a last name --
+     reproducing the WPDA app's two-key default sort without teaching
+     the shared renderer a new sorting concept.
 
    PURPOSE:
    Small registry mapping a report name (used as the [spp_report
@@ -67,6 +93,7 @@ defined( 'ABSPATH' ) || exit;
  */
 $GLOBALS['spp_report_registry'] = array(
     'ladder_ratings' => 'spp_report_ladder_ratings',
+    'membership'     => 'spp_report_membership',
 );
 
 /**
@@ -93,6 +120,55 @@ function spp_report_ladder_ratings() {
     );
 
     return array( 'columns' => $columns, 'rows' => $rows );
+}
+
+/**
+ * Membership report: all tracked columns for every member, unfiltered
+ * -- replaces the WPDA "Club Membership list" app (app_id=25, see that
+ * investigation). Same 11 columns/order/labels that app renders today,
+ * plus ClubRating and DUPR (selected in that app's own column picker
+ * but never actually wired into its rendered column list). Every
+ * column here is sortable, unlike the WPDA app (last_name only) --
+ * intentional improvement, not an oversight.
+ *
+ * ORDER BY last_name, first_name here (not just 'default_sort' below)
+ * matches the WPDA app's compound default sort -- see this file's
+ * version-history block for why a single default_sort key plus this
+ * query order reproduces that two-key sort exactly.
+ */
+function spp_report_membership() {
+    global $wpdb;
+
+    $rows = $wpdb->get_results(
+        "SELECT Rank, Rating, ClubRating, DUPR, Ladder, Tag,
+                first_name, last_name, travel, user_phone, user_email,
+                PCO, user_id
+         FROM membership
+         ORDER BY last_name ASC, first_name ASC",
+        ARRAY_A
+    );
+
+    $columns = array(
+        array( 'key' => 'Rank',       'label' => 'Rank',       'sortable' => true ),
+        array( 'key' => 'Rating',     'label' => 'Rating',     'sortable' => true ),
+        array( 'key' => 'ClubRating', 'label' => 'ClubRating', 'sortable' => true ),
+        array( 'key' => 'DUPR',       'label' => 'DUPR',       'sortable' => true ),
+        array( 'key' => 'Ladder',     'label' => 'Ldr',        'sortable' => true ),
+        array( 'key' => 'Tag',        'label' => 'Tag',        'sortable' => true ),
+        array( 'key' => 'first_name', 'label' => 'First Name', 'sortable' => true ),
+        array( 'key' => 'last_name',  'label' => 'Last Name',  'sortable' => true ),
+        array( 'key' => 'travel',     'label' => 'Travel',     'sortable' => true ),
+        array( 'key' => 'user_phone', 'label' => 'Phone',      'sortable' => true ),
+        array( 'key' => 'user_email', 'label' => 'Email',      'sortable' => true ),
+        array( 'key' => 'PCO',        'label' => 'PCO',        'sortable' => true ),
+        array( 'key' => 'user_id',    'label' => 'User',       'sortable' => true ),
+    );
+
+    return array(
+        'columns'      => $columns,
+        'rows'         => $rows,
+        'default_sort' => 'last_name',
+    );
 }
 
 /**
@@ -176,8 +252,15 @@ add_shortcode( 'spp_report', function( $atts ) {
         }, $effective_columns );
     }
 
-    $effective_keys = array_column( $effective_columns, 'key' );
-    $default_sort   = in_array( 'Rank', $effective_keys, true ) ? 'Rank' : ( $effective_keys[0] ?? '' );
+    // A definition's own 'default_sort' wins if it survived into the
+    // effective column list (it always will unless a columns= filter
+    // dropped it); otherwise fall back to the original Rank-if-present
+    // heuristic, unchanged from before this key existed.
+    $effective_keys       = array_column( $effective_columns, 'key' );
+    $definition_default   = $definition['default_sort'] ?? null;
+    $default_sort         = ( $definition_default !== null && in_array( $definition_default, $effective_keys, true ) )
+        ? $definition_default
+        : ( in_array( 'Rank', $effective_keys, true ) ? 'Rank' : ( $effective_keys[0] ?? '' ) );
 
     ob_start();
     spp_render_report_table( $effective_columns, $definition['rows'], array(
