@@ -1,8 +1,36 @@
 <?php
 /* =========================================================
    Report Generator — Admin Screen
-   Version: 1.0.0
-   Date: 2026-09-06
+   Version: 1.0.2
+   Date: 2026-09-07
+
+   Changes from 1.0.1:
+   - Added a permanent "CSS Customization Reference" section
+     (spp_render_report_css_reference(), called unconditionally at the
+     top of spp_render_report_generator_page() -- not tied to any
+     selected report) documenting the wrapper class and every CSS
+     custom property inc/spp-report-table.php exposes, for quick
+     reference when setting up a page in Divi. Kept in sync with that
+     file's own property list by hand -- see its changelog for the
+     three properties (--spp-report-radius, --spp-report-margin,
+     --spp-report-header-weight/--spp-report-header-transform) added
+     alongside this.
+
+   Changes from 1.0.0:
+   - Both forms on this screen submit without an explicit action, so a
+     GET submission (the "select a report" form) rebuilds the query
+     string from its own fields only and drops post_type=page, which
+     this screen's add_submenu_page() parent ('edit.php?post_type=page')
+     needs present to resolve get_admin_page_parent() correctly --
+     without it, WP core's user_can_access_admin_page() resolves the
+     wrong parent ('edit.php', i.e. Posts) and wp_die()s with "Sorry,
+     you are not allowed to access this page." before this file's own
+     render callback (and its role check) ever runs. Fixed by adding a
+     hidden post_type=page field to the GET form. Added the same
+     hidden field to the POST form too for consistency/defense-in-depth,
+     even though POST submissions without an action attribute preserve
+     the current URL's query string as-is (so the POST form wasn't
+     actually broken).
 
    PURPOSE:
    wp-admin screen (under Pages) for building a [spp_report] variant
@@ -56,6 +84,94 @@ add_action( 'admin_menu', function() {
     );
 } );
 
+/**
+ * Permanent, always-visible reference for the CSS custom properties
+ * inc/spp-report-table.php exposes on .spp-report-table -- not tied to
+ * any selected report. Manually kept in sync with that file's own
+ * property list (see its version-history block for the source of
+ * truth on defaults/behavior); this is documentation only, it doesn't
+ * read the properties from anywhere.
+ */
+function spp_render_report_css_reference() {
+    $rows = array(
+        array( '--spp-report-header-bg', '#2c3e50', 'Header row background; also the background/border of the current-page number in pagination.' ),
+        array( '--spp-report-header-text', '#ffffff', 'Header text and header sort-link color; also the text color of the current-page number in pagination.' ),
+        array( '--spp-report-border-color', '#ddd', 'Bottom border on every cell; border on pagination links/page numbers.' ),
+        array( '--spp-report-row-alt-bg', '#f5f5f5', 'Alternating (even) row background.' ),
+        array( '--spp-report-row-hover-bg', '#eef7f6', 'Row background on hover.' ),
+        array( '--spp-report-font-size', '13px', 'Base font size for the table and its per-page selector. Separate, smaller value under the 600px mobile breakpoint -- see note below.' ),
+        array( '--spp-report-cell-padding', '5px 10px', 'Padding on every cell. Separate, smaller value under the 600px mobile breakpoint -- see note below.' ),
+        array( '--spp-report-link-color', '#3766AB', 'Text color of non-current pagination links (Prev/Next/page numbers). Does not affect header sort links -- those use --spp-report-header-text.' ),
+        array( '--spp-report-max-width', 'none', "Max-width cap on the table itself, before the surrounding container's horizontal scrollbar kicks in. Default of none means no cap -- the table is sized to its own content." ),
+        array( '--spp-report-radius', '0', "Corner rounding of the table's scrolling container." ),
+        array( '--spp-report-margin', '0', 'Margin on the table element -- see the centering note below.' ),
+        array( '--spp-report-header-weight', 'bold', 'Font weight of header cell text.' ),
+        array( '--spp-report-header-transform', 'none', 'Text transform of header cell text, e.g. uppercase.' ),
+    );
+    ?>
+    <h2>CSS Customization Reference</h2>
+    <p>
+        Every report table rendered by <code>[spp_report]</code> (including the preview below) is
+        wrapped in <code>.spp-report-table</code> -- target that class from a Divi module's
+        <strong>Custom CSS</strong> field (Advanced tab &rarr; Custom CSS &rarr; Main Element) to
+        override any of the properties below.
+    </p>
+    <table class="widefat striped" style="max-width:900px;margin-bottom:16px;">
+        <thead>
+            <tr>
+                <th style="width:230px;">Property</th>
+                <th style="width:110px;">Default</th>
+                <th>Controls</th>
+            </tr>
+        </thead>
+        <tbody>
+            <?php foreach ( $rows as $r ) : ?>
+                <tr>
+                    <td><code><?php echo esc_html( $r[0] ); ?></code></td>
+                    <td><code><?php echo esc_html( $r[1] ); ?></code></td>
+                    <td><?php echo esc_html( $r[2] ); ?></td>
+                </tr>
+            <?php endforeach; ?>
+        </tbody>
+    </table>
+
+    <p><strong>Example -- Divi module Custom CSS:</strong></p>
+    <pre style="background:#f6f7f7;border:1px solid #ccd0d4;padding:10px 14px;max-width:500px;overflow-x:auto;">.spp-report-table {
+  --spp-report-max-width: 700px;
+  --spp-report-header-bg: #1a5276;
+  --spp-report-radius: 8px;
+}</pre>
+
+    <p><strong>Example -- plainer header, no color changes:</strong></p>
+    <pre style="background:#f6f7f7;border:1px solid #ccd0d4;padding:10px 14px;max-width:500px;overflow-x:auto;">.spp-report-table {
+  --spp-report-header-weight: normal;
+  --spp-report-header-transform: uppercase;
+}</pre>
+
+    <p>
+        <strong>Centering:</strong> prefer Divi's own row/column alignment settings to center this
+        table -- that's the normal way to do it and it just works. <code>--spp-report-margin</code>
+        (e.g. <code>--spp-report-margin: 0 auto;</code>) is a fallback only for contexts where Divi's
+        native alignment doesn't apply, such as a raw code/text module with no column-alignment
+        control of its own.
+    </p>
+    <p>
+        <strong>Mobile breakpoint:</strong> <code>--spp-report-font-size</code> and
+        <code>--spp-report-cell-padding</code> both switch to smaller values under a 600px viewport
+        (baked into <code>inc/spp-report-table.php</code>'s own <code>@media (max-width: 600px)</code>
+        rule). Setting either one from Divi at the default/desktop scope will still be overridden below
+        600px unless you also target that breakpoint, e.g.:
+    </p>
+    <pre style="background:#f6f7f7;border:1px solid #ccd0d4;padding:10px 14px;max-width:500px;overflow-x:auto;">@media (max-width: 600px) {
+  .spp-report-table {
+    --spp-report-font-size: 14px;
+    --spp-report-cell-padding: 6px 10px;
+  }
+}</pre>
+    <hr style="margin:20px 0;">
+    <?php
+}
+
 function spp_render_report_generator_page() {
     // Layer 2: the real gate. Deliberately not spp_is_admin_or_editor()
     // (admin-OR-editor is the wrong scope here) and deliberately an
@@ -71,6 +187,10 @@ function spp_render_report_generator_page() {
 
     echo '<div class="wrap"><h1>Report Generator</h1>';
 
+    // Always visible, not tied to $selected_report -- quick reference for
+    // setting up a page in Divi regardless of which report is loaded below.
+    spp_render_report_css_reference();
+
     // -- Step 1: choose a report (plain GET) ---------------------------------
     $selected_report = isset( $_GET['report'] ) ? sanitize_key( wp_unslash( $_GET['report'] ) ) : '';
     if ( isset( $_POST['report'] ) ) {
@@ -81,6 +201,7 @@ function spp_render_report_generator_page() {
 
     ?>
     <form method="get" style="margin-bottom:20px;">
+        <input type="hidden" name="post_type" value="page">
         <input type="hidden" name="page" value="spp-report-generator">
         <label for="spp_rg_report"><strong>Report:</strong></label>
         <select name="report" id="spp_rg_report">
@@ -208,6 +329,7 @@ function spp_render_report_generator_page() {
     ?>
     <form method="post" style="max-width:700px;">
         <?php wp_nonce_field( 'spp_report_generator', 'spp_report_generator_nonce' ); ?>
+        <input type="hidden" name="post_type" value="page">
         <input type="hidden" name="report" value="<?php echo esc_attr( $selected_report ); ?>">
 
         <table class="widefat" style="margin-bottom:14px;">

@@ -1,8 +1,40 @@
 <?php
 /* =========================================================
    Shared Report Table Renderer
-   Version: 1.0.0
-   Date: 2026-09-06
+   Version: 1.0.2
+   Date: 2026-09-07
+
+   Changes from 1.0.1:
+   - Added three more customization points, same pattern as
+     --spp-report-max-width (variable default matches the prior
+     hardcoded/inherited behavior exactly, so this is styling-only):
+       --spp-report-radius (default: 0) -- on .spp-report-table-scroll,
+         not the <table> itself, so overflow-x:auto's clipping box
+         actually rounds the visible corners (border-radius on a
+         border-collapse table doesn't reliably clip per-browser).
+       --spp-report-margin (default: 0) -- on table.spp-report-table-grid
+         itself (not the outer .spp-report-table wrapper, which is a
+         full-width block and wouldn't visibly center from margin:auto).
+         Documented in the admin screen as a fallback for centering when
+         Divi's own row/column alignment isn't available (e.g. a raw
+         code/text module); Divi's native alignment is the preferred way.
+       --spp-report-header-weight (default: bold) / --spp-report-header-transform
+         (default: none) -- both formalize the header <th>'s existing
+         rendering (bold is the browser UA-stylesheet default for th,
+         not previously an explicit rule here) into explicit,
+         overridable declarations.
+   - Added a permanent "CSS Customization Reference" section to the
+     Report Generator admin screen (spp-report-generator-admin.php)
+     documenting all of the above.
+
+   Changes from 1.0.0:
+   - Added --spp-report-max-width custom property (default: none) and
+     wired it into table.spp-report-table-grid's max-width, so a Divi
+     module's per-module Custom CSS can cap the table's width by
+     setting the variable on .spp-report-table, without needing
+     !important to fight the existing width:auto !important /
+     .entry-content table:not(.variations) specificity war. Default of
+     none preserves the pre-existing content-sized rendering exactly.
 
    PURPOSE:
    Generic, data-agnostic table renderer for member-facing reports:
@@ -138,9 +170,15 @@ function spp_render_report_table( array $columns, array $rows, array $args = arr
             --spp-report-border-color: #ddd;
             --spp-report-row-alt-bg: #f5f5f5;
             --spp-report-row-hover-bg: #eef7f6;
-            --spp-report-font-size: 14px;
-            --spp-report-cell-padding: 8px 12px;
+            --spp-report-font-size: 13px;
+            --spp-report-cell-padding: 5px 10px;
             --spp-report-link-color: #3766AB;
+            --spp-report-max-width: none; /* default preserves today's content-sized
+                                              behavior below -- see table.spp-report-table-grid */
+            --spp-report-radius: 0;
+            --spp-report-margin: 0;
+            --spp-report-header-weight: bold;
+            --spp-report-header-transform: none;
             font-family: Arial, sans-serif;
             font-size: var(--spp-report-font-size);
             max-width: 100%;
@@ -165,11 +203,63 @@ function spp_render_report_table( array $columns, array $rows, array $args = arr
         }
         .spp-report-table-scroll {
             overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
             max-width: 100%;
+            /* border-radius lives here (not on table.spp-report-table-grid)
+               so this box's own overflow clipping is what actually rounds
+               the visible corners -- border-radius on a border-collapse
+               table doesn't reliably clip its own cell borders/backgrounds
+               to rounded corners across browsers. */
+            border-radius: var(--spp-report-radius);
         }
         table.spp-report-table-grid {
             border-collapse: collapse;
-            width: 100%;
+            table-layout: auto;
+            /* width:auto (not 100%) -- let the table size to its own
+               content instead of always stretching to fill whatever
+               container it's given. The container varies a lot page to
+               page (a normal ~1024-1280px boxed Divi row on most tool
+               pages, vs. a full-width, edge-to-edge row on some report
+               pages) and forcing 100% on a table with only a handful of
+               short columns produced wide, sparse cells rather than
+               compact ones sized to their actual content.
+               !important is required here: the theme's own global
+               stylesheet has a higher-specificity rule,
+               ".entry-content table:not(.variations) { width:100%; }",
+               that otherwise wins the cascade and silently overrides
+               table-layout:auto's effect -- same fight this codebase
+               already has elsewhere against theme table defaults (see
+               spp-rank-history.php's .rh-table th color override).
+               .spp-report-table-scroll above still guarantees no column
+               is ever clipped if natural content width exceeds a narrow
+               container (see @media block below).
+
+               max-width is driven by --spp-report-max-width (default
+               none, i.e. no cap -- identical to today's rendering) so a
+               Divi module's per-module Custom CSS can constrain it by
+               setting the variable on .spp-report-table, e.g.:
+                 .spp-report-table { --spp-report-max-width: 700px; }
+               with no !important of its own needed: !important below
+               only has to win the cascade fight against the theme's
+               table default for the *max-width property itself*, not
+               against the variable assignment, since a plain (non-
+               !important) declaration of a custom property is a
+               different property entirely and always wins for whatever
+               reads it via var(). */
+            width: auto !important;
+            max-width: var(--spp-report-max-width) !important;
+            /* margin lives on the table element itself, not the outer
+               .spp-report-table div -- that div is a full-width block,
+               so margin:auto on it wouldn't visibly center anything.
+               The table's own used width comes from the automatic
+               table-layout algorithm (shrink-to-fit, per width:auto
+               above), which is exactly the case CSS auto-margins center
+               within the containing block -- see the note in the admin
+               screen's reference: Divi's own row/column centering is
+               the preferred way to center this table; this variable is
+               documented there as the fallback for contexts without
+               that control (e.g. a raw code/text module). */
+            margin: var(--spp-report-margin);
         }
         table.spp-report-table-grid th,
         table.spp-report-table-grid td {
@@ -181,6 +271,8 @@ function spp_render_report_table( array $columns, array $rows, array $args = arr
         table.spp-report-table-grid thead th {
             background: var(--spp-report-header-bg);
             color: var(--spp-report-header-text);
+            font-weight: var(--spp-report-header-weight);
+            text-transform: var(--spp-report-header-transform);
         }
         table.spp-report-table-grid thead th a {
             color: var(--spp-report-header-text);
@@ -219,6 +311,20 @@ function spp_render_report_table( array $columns, array $rows, array $args = arr
             padding: 16px;
             color: #666;
             font-style: italic;
+        }
+        @media (max-width: 600px) {
+            .spp-report-table {
+                --spp-report-font-size: 12px;
+                --spp-report-cell-padding: 4px 7px;
+            }
+            .spp-report-table .spp-report-controls {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+            .spp-report-table .spp-report-pagination a,
+            .spp-report-table .spp-report-pagination span {
+                padding: 6px 10px; /* kept larger than the cell padding above -- these are tap targets, not data cells */
+            }
         }
     </style>
 
