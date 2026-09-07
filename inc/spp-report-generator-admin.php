@@ -1,8 +1,81 @@
 <?php
 /* =========================================================
    Report Generator — Admin Screen
-   Version: 1.0.3
+   Version: 2.0.0
    Date: 2026-09-07
+
+   Changes from 1.0.3:
+   - CSS Customization Reference no longer prints unconditionally at
+     the top. It now prints below the report-picker dropdown when no
+     report is loaded yet, and below the rendered preview once one is.
+   - Rows-per-page is now a variant-configurable setting (per_page,
+     default 'All' -- see inc/spp-reports.php 1.3.0 /
+     spp_report_per_page_choices()), selected via a <select> alongside
+     no_sort, saved into spp_report_variants, and usable as a per_page=
+     shortcode attribute.
+   - The old "pick a report" GET form's job of also loading a variant
+     is now a second, combined selector: "Default" (the report's own
+     bare configuration) plus every existing variant for that base
+     table (spp_get_report_variants_for_base()). Selecting one and
+     clicking Load seeds the column/order/no_sort/per_page form state
+     from it, for review/editing -- not read-only. A "Delete Selected"
+     button sits next to it (same <select>, via a formmethod="post"
+     override on an otherwise method="get" form -- see the render
+     function for why that's safe) with a native confirm() before
+     deleting; deleting the currently-loaded variant resets the form to
+     Default.
+   - Saving a variant no longer takes a manual name -- it's always a
+     new variant, auto-named "{report}-variant-{N}" via
+     spp_next_report_variant_name() (MAX-based, so a deleted variant's
+     number is never reused). There is no update-in-place; "editing" a
+     loaded variant and saving again just creates another new one.
+   - The "Generate Shortcode" button and its always-behind-an-action
+     output are gone. The current shortcode is now always visible,
+     computed fresh on every render from the form's current state, in
+     one of three forms (see spp_report_generator_live_shortcode()):
+     (1) if current settings exactly match an existing variant, its
+     simple [spp_report table="variant-name"]; (2) else if current
+     settings exactly match the report's own bare defaults (full
+     column set/order, sortable, per_page='All'), the bare
+     [spp_report table="report-name"]; (3) else the explicit form,
+     including only the columns=/no_sort=/per_page= attributes that
+     actually differ from the bare defaults.
+   - Added a live CSS style-editor + live preview panel (see
+     spp_render_report_style_editor()): one control per --spp-report-*
+     custom property (color pickers for the six colors, text inputs for
+     max-width/radius/margin/font-size/cell-padding, selects for
+     header-transform/header-weight), two-way synced with an editable
+     CSS textarea, plus a lightweight brace/quote balance indicator.
+     The live preview is scoped via `@scope (#spp-rg-live-preview)`
+     wrapping whatever the textarea currently contains -- this is
+     genuinely arbitrary CSS, not limited to the properties the
+     controls know about, same as pasting into Divi's real Custom CSS
+     field would be, but confined to the preview's own container
+     regardless of what selectors appear in it. The empty
+     <style id="spp-rg-live-style"> tag this gets written into is
+     deliberately placed AFTER spp_render_report_table()'s own inline
+     <style> in the DOM: @scope doesn't add the scope root to inner
+     selectors' specificity, so `@scope (#spp-rg-live-preview) {
+     .spp-report-table {...} }` ties in specificity with that base
+     rule, and source order breaks the tie in our favor only if we come
+     later. Two-way sync structured to avoid a feedback loop: a control
+     edit surgically replaces/inserts just that one --spp-report-x
+     line in the textarea's current text (never destroying unrelated
+     hand-typed CSS) via regex, then re-applies the live CSS; a textarea
+     edit re-applies the live CSS unconditionally (so arbitrary typed
+     CSS always takes effect) and separately resyncs each control by
+     plain `.value =` assignment (not dispatchEvent, which is what
+     keeps this from looping back into the control-edit handler) --
+     skipping a color control silently if the extracted value isn't
+     strict 6-digit hex, and a select silently if it isn't an exact
+     option match, per this feature's spec: don't error, don't revert,
+     leave that one control showing whatever it last had. Purely
+     client-side and ephemeral -- not persisted to spp_report_variants
+     or anywhere else; it exists to help craft a snippet to paste into
+     Divi's Custom CSS field, not to be a second, competing home for
+     style state. Vanilla JS, scoped to just this panel (id/class
+     prefix spp-rg-/spp_rg_), per this feature's own explicit exception
+     to the rest of this screen's no-JS philosophy.
 
    Changes from 1.0.2:
    - Preview's default-sort now prefers the report definition's own
@@ -16,13 +89,11 @@
 
    Changes from 1.0.1:
    - Added a permanent "CSS Customization Reference" section
-     (spp_render_report_css_reference(), called unconditionally at the
-     top of spp_render_report_generator_page() -- not tied to any
-     selected report) documenting the wrapper class and every CSS
-     custom property inc/spp-report-table.php exposes, for quick
-     reference when setting up a page in Divi. Kept in sync with that
-     file's own property list by hand -- see its changelog for the
-     three properties (--spp-report-radius, --spp-report-margin,
+     (spp_render_report_css_reference()) documenting the wrapper class
+     and every CSS custom property inc/spp-report-table.php exposes,
+     for quick reference when setting up a page in Divi. Kept in sync
+     with that file's own property list by hand -- see its changelog
+     for the three properties (--spp-report-radius, --spp-report-margin,
      --spp-report-header-weight/--spp-report-header-transform) added
      alongside this.
 
@@ -45,19 +116,24 @@
    PURPOSE:
    wp-admin screen (under Pages) for building a [spp_report] variant
    interactively: pick a registered report, choose which columns to
-   show and in what order, optionally disable sorting, preview the
-   real rendered table right there, then either copy a one-off
-   shortcode (columns=/no_sort= attributes, no DB write) or save it as
-   a named variant (writes to spp_report_variants via
-   spp_save_report_variant(), inc/spp-report-variants.php) so it can be
-   embedded later with just [spp_report table="<variant_name>"].
+   show and in what order, optionally disable sorting, choose a
+   per-page setting, preview the real rendered table right there (with
+   a live CSS style editor alongside it), then either copy the
+   always-visible shortcode (no DB write) or save the current
+   configuration as a new, auto-named variant (writes to
+   spp_report_variants via spp_save_report_variant(),
+   inc/spp-report-variants.php) so it can be embedded later with just
+   [spp_report table="<variant_name>"].
 
-   No JS/AJAX -- plain GET to pick a report, plain nonce-protected POST
-   for the column/order/no-sort form, matching this project's
-   established philosophy (same reasoning already documented in
-   inc/spp-report-table.php). Column reordering is numbered order
-   inputs, not drag-and-drop -- simplest robust option, zero new JS
-   dependency.
+   No JS/AJAX for the column/order/no-sort/per-page/variant-selection
+   form -- plain GET to pick a report or load a variant, plain
+   nonce-protected POST for the column form and the delete action,
+   matching this project's established philosophy (same reasoning
+   already documented in inc/spp-report-table.php). Column reordering
+   is numbered order inputs, not drag-and-drop -- simplest robust
+   option, zero new JS dependency. The one deliberate exception is the
+   style-editor panel (see above), which needs genuine live
+   interactivity and says so explicitly in its own section.
 
    ACCESS CONTROL -- administrator-only, deliberately NOT
    spp_is_admin_or_editor() (that helper is admin-OR-editor, the wrong
@@ -95,12 +171,14 @@ add_action( 'admin_menu', function() {
 } );
 
 /**
- * Permanent, always-visible reference for the CSS custom properties
+ * Permanent reference for the CSS custom properties
  * inc/spp-report-table.php exposes on .spp-report-table -- not tied to
  * any selected report. Manually kept in sync with that file's own
  * property list (see its version-history block for the source of
  * truth on defaults/behavior); this is documentation only, it doesn't
- * read the properties from anywhere.
+ * read the properties from anywhere. Printed below the report picker
+ * when no report is loaded, and below the preview once one is (see
+ * spp_render_report_generator_page()) -- no longer shown unconditionally.
  */
 function spp_render_report_css_reference() {
     $rows = array(
@@ -121,7 +199,7 @@ function spp_render_report_css_reference() {
     ?>
     <h2>CSS Customization Reference</h2>
     <p>
-        Every report table rendered by <code>[spp_report]</code> (including the preview below) is
+        Every report table rendered by <code>[spp_report]</code> (including the preview above) is
         wrapped in <code>.spp-report-table</code> -- target that class from a Divi module's
         <strong>Custom CSS</strong> field (Advanced tab &rarr; Custom CSS &rarr; Main Element) to
         override any of the properties below.
@@ -182,6 +260,335 @@ function spp_render_report_css_reference() {
     <?php
 }
 
+/**
+ * Seed include/order/no_sort/per_page form state from either a named
+ * variant (if $variant_name matches one in $existing_variants) or the
+ * report's bare defaults (all columns, original order, sortable,
+ * per_page='All') otherwise. Shared by: a fresh GET load (?variant=),
+ * and re-seeding after a delete_variant POST (which carries no
+ * column-form fields of its own -- see the delete handling in
+ * spp_render_report_generator_page()).
+ *
+ * @return array [ $include, $order, $no_sort, $per_page ]
+ */
+function spp_report_generator_seed_state( $variant_name, array $existing_variants, array $full_columns ) {
+    $seed = null;
+    if ( $variant_name !== '' ) {
+        foreach ( $existing_variants as $v ) {
+            if ( $v['variant_name'] === $variant_name ) {
+                $seed = $v;
+                break;
+            }
+        }
+    }
+
+    $include = array();
+    $order   = array();
+
+    if ( $seed !== null ) {
+        $i = 0;
+        foreach ( $seed['columns'] as $key ) {
+            $include[ $key ] = true;
+            $order[ $key ]   = ++$i;
+        }
+        // Columns the report has today but the saved variant doesn't
+        // (e.g. added to the report definition after the variant was
+        // saved) -- included unchecked, ordered after the variant's own,
+        // so nothing from the current definition silently disappears
+        // from the editable list.
+        foreach ( $full_columns as $col ) {
+            $key = $col['key'];
+            if ( ! isset( $include[ $key ] ) ) {
+                $include[ $key ] = false;
+                $order[ $key ]   = ++$i;
+            }
+        }
+        return array( $include, $order, $seed['no_sort'], spp_report_sanitize_per_page( $seed['per_page'] ) );
+    }
+
+    foreach ( $full_columns as $i => $col ) {
+        $include[ $col['key'] ] = true;
+        $order[ $col['key'] ]   = $i + 1;
+    }
+    return array( $include, $order, false, 'All' );
+}
+
+/**
+ * Does $selected_keys (in order) + $no_sort + $per_page exactly match
+ * an existing variant for this report? Returns that variant's name, or
+ * null. Used by the always-visible shortcode's three-state logic
+ * (state 1: show the variant's own simple shortcode).
+ */
+function spp_report_generator_match_variant( array $selected_keys, $no_sort, $per_page, array $existing_variants ) {
+    $selected_keys = array_values( $selected_keys );
+    foreach ( $existing_variants as $v ) {
+        if ( $v['columns'] === $selected_keys
+            && (bool) $v['no_sort'] === (bool) $no_sort
+            && spp_report_sanitize_per_page( $v['per_page'] ) === $per_page
+        ) {
+            return $v['variant_name'];
+        }
+    }
+    return null;
+}
+
+/**
+ * The always-visible shortcode for the form's current state --
+ * three-state logic:
+ *   1. Current settings exactly match an existing variant for this
+ *      report -> that variant's own simple shortcode.
+ *   2. Else current settings exactly match the report's bare defaults
+ *      (full column set in original order, sortable, per_page='All')
+ *      -> the bare shortcode, no attributes.
+ *   3. Else -> the explicit form, but only the columns=/no_sort=/
+ *      per_page= attributes that actually differ from the bare
+ *      defaults (never an attribute that matches the default).
+ * Returns '' if $selected_keys is empty -- caller shows a prompt
+ * instead of a bogus columns="" shortcode.
+ */
+function spp_report_generator_live_shortcode( $selected_report, array $selected_keys, $no_sort, $per_page, array $full_columns, array $existing_variants ) {
+    if ( empty( $selected_keys ) ) {
+        return '';
+    }
+
+    $default_keys    = array_column( $full_columns, 'key' );
+    $is_bare_default = ( array_values( $selected_keys ) === $default_keys && $no_sort === false && $per_page === 'All' );
+
+    if ( ! $is_bare_default ) {
+        $matched = spp_report_generator_match_variant( $selected_keys, $no_sort, $per_page, $existing_variants );
+        if ( $matched !== null ) {
+            return '[spp_report table="' . $matched . '"]';
+        }
+    }
+
+    if ( $is_bare_default ) {
+        return '[spp_report table="' . $selected_report . '"]';
+    }
+
+    $attrs = '';
+    if ( array_values( $selected_keys ) !== $default_keys ) {
+        $attrs .= ' columns="' . implode( ',', $selected_keys ) . '"';
+    }
+    if ( $no_sort !== false ) {
+        $attrs .= ' no_sort="1"';
+    }
+    if ( $per_page !== 'All' ) {
+        $attrs .= ' per_page="' . $per_page . '"';
+    }
+    return '[spp_report table="' . $selected_report . '"' . $attrs . ']';
+}
+
+/**
+ * The live CSS style-editor + live preview panel. $preview_wrapper_id
+ * is the id of the element wrapping the actual spp_render_report_table()
+ * output -- the @scope root everything here confines itself to. See
+ * this file's version-history block (2.0.0) for the full design
+ * rationale (scoping, two-way sync, why the empty <style> tag's DOM
+ * position matters). Caller is responsible for placing that empty
+ * <style id="spp-rg-live-style"> tag AFTER the preview markup; this
+ * function only emits the controls/textarea/script, not that tag.
+ */
+function spp_render_report_style_editor() {
+    // Six colors need strict 6-digit hex for <input type="color">
+    // (browsers reject 3-digit/shorthand) -- normalized here even
+    // though the CSS reference above documents #ddd/#3766AB as the
+    // "real" defaults; both are valid CSS, this is just what the
+    // native color-picker widget requires.
+    $defaults = array(
+        '--spp-report-header-bg'        => '#2c3e50',
+        '--spp-report-header-text'      => '#ffffff',
+        '--spp-report-border-color'     => '#dddddd',
+        '--spp-report-row-alt-bg'       => '#f5f5f5',
+        '--spp-report-row-hover-bg'     => '#eef7f6',
+        '--spp-report-link-color'       => '#3766ab',
+        '--spp-report-max-width'        => 'none',
+        '--spp-report-radius'           => '0',
+        '--spp-report-margin'           => '0',
+        '--spp-report-font-size'        => '13px',
+        '--spp-report-cell-padding'     => '5px 10px',
+        '--spp-report-header-transform' => 'none',
+        '--spp-report-header-weight'    => 'bold',
+    );
+
+    $css_lines = array( '.spp-report-table {' );
+    foreach ( $defaults as $var => $val ) {
+        $css_lines[] = "  {$var}: {$val};";
+    }
+    $css_lines[]   = '}';
+    $default_css   = implode( "\n", $css_lines );
+    ?>
+    <h2>Style Editor</h2>
+    <p style="color:#666;max-width:700px;">
+        Live, client-side only -- nothing here is saved. Adjust a control or hand-edit the CSS below
+        to see the preview update immediately; copy the result into a Divi module's Custom CSS field
+        (see the reference at the bottom of this page) when you're happy with it.
+    </p>
+    <div id="spp-rg-style-editor" style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:20px;max-width:1100px;">
+        <div style="min-width:260px;">
+            <p><label>Header background<br><input type="color" data-var="--spp-report-header-bg" value="<?php echo esc_attr( $defaults['--spp-report-header-bg'] ); ?>"></label></p>
+            <p><label>Header text<br><input type="color" data-var="--spp-report-header-text" value="<?php echo esc_attr( $defaults['--spp-report-header-text'] ); ?>"></label></p>
+            <p><label>Border color<br><input type="color" data-var="--spp-report-border-color" value="<?php echo esc_attr( $defaults['--spp-report-border-color'] ); ?>"></label></p>
+            <p><label>Row alt background<br><input type="color" data-var="--spp-report-row-alt-bg" value="<?php echo esc_attr( $defaults['--spp-report-row-alt-bg'] ); ?>"></label></p>
+            <p><label>Row hover background<br><input type="color" data-var="--spp-report-row-hover-bg" value="<?php echo esc_attr( $defaults['--spp-report-row-hover-bg'] ); ?>"></label></p>
+            <p><label>Link color<br><input type="color" data-var="--spp-report-link-color" value="<?php echo esc_attr( $defaults['--spp-report-link-color'] ); ?>"></label></p>
+            <p><label>Max width<br><input type="text" data-var="--spp-report-max-width" value="<?php echo esc_attr( $defaults['--spp-report-max-width'] ); ?>" style="width:140px;"></label></p>
+            <p><label>Radius<br><input type="text" data-var="--spp-report-radius" value="<?php echo esc_attr( $defaults['--spp-report-radius'] ); ?>" style="width:140px;"></label></p>
+            <p><label>Margin<br><input type="text" data-var="--spp-report-margin" value="<?php echo esc_attr( $defaults['--spp-report-margin'] ); ?>" style="width:140px;"></label></p>
+            <p><label>Font size<br><input type="text" data-var="--spp-report-font-size" value="<?php echo esc_attr( $defaults['--spp-report-font-size'] ); ?>" style="width:140px;"></label></p>
+            <p><label>Cell padding<br><input type="text" data-var="--spp-report-cell-padding" value="<?php echo esc_attr( $defaults['--spp-report-cell-padding'] ); ?>" style="width:140px;"></label></p>
+            <p><label>Header transform<br>
+                <select data-var="--spp-report-header-transform">
+                    <option value="none">none</option>
+                    <option value="uppercase">uppercase</option>
+                    <option value="lowercase">lowercase</option>
+                    <option value="capitalize">capitalize</option>
+                </select>
+            </label></p>
+            <p><label>Header weight<br>
+                <select data-var="--spp-report-header-weight">
+                    <option value="normal">normal</option>
+                    <option value="bold" selected>bold</option>
+                </select>
+            </label></p>
+        </div>
+        <div style="flex:1;min-width:320px;">
+            <label for="spp_rg_css_editor"><strong>CSS (live, editable)</strong></label><br>
+            <textarea id="spp_rg_css_editor" rows="17" spellcheck="false"
+                      style="width:100%;font-family:monospace;font-size:12px;"><?php echo esc_textarea( $default_css ); ?></textarea>
+            <p id="spp_rg_css_balance" style="margin:4px 0;font-size:12px;color:#666;">Looks balanced.</p>
+        </div>
+    </div>
+    <?php
+}
+
+/**
+ * The <script> driving spp_render_report_style_editor(), plus the
+ * empty live-CSS <style> tag it targets. Split out from that function
+ * so the caller can place THIS after the preview markup (DOM order
+ * matters for the cascade -- see this file's 2.0.0 changelog entry)
+ * while the controls/textarea above can stay visually above it.
+ *
+ * @param string $preview_wrapper_id Id of the element wrapping the
+ *               preview's spp_render_report_table() output -- the
+ *               @scope root.
+ */
+function spp_render_report_style_editor_script( $preview_wrapper_id ) {
+    ?>
+    <style id="spp-rg-live-style"></style>
+    <script>
+    (function() {
+        'use strict';
+        var scopeId  = <?php echo wp_json_encode( $preview_wrapper_id ); ?>;
+        var textarea = document.getElementById( 'spp_rg_css_editor' );
+        var styleTag = document.getElementById( 'spp-rg-live-style' );
+        var balanceEl = document.getElementById( 'spp_rg_css_balance' );
+        var controls = document.querySelectorAll( '#spp-rg-style-editor [data-var]' );
+        if ( ! textarea || ! styleTag ) return;
+
+        function escapeRegExp( s ) {
+            return s.replace( /[.*+?^${}()|[\]\\]/g, '\\$&' );
+        }
+
+        // Scoped via @scope so genuinely arbitrary CSS the user types
+        // (any selector, not just the --spp-report-* properties the
+        // controls know about) takes effect only inside the preview's
+        // own container -- never site-wide, never any other
+        // .spp-report-table that might exist elsewhere on this page.
+        function applyLiveCss( text ) {
+            styleTag.textContent = '@scope (#' + scopeId + ') {\n' + text + '\n}';
+        }
+
+        // Not a real CSS parser -- just a brace/quote tally, enough to
+        // flag "you're missing a closing brace" while typing without
+        // pretending to validate the CSS itself.
+        function checkBalance( text ) {
+            var depth = 0, quote = null, ok = true;
+            for ( var i = 0; i < text.length; i++ ) {
+                var ch = text.charAt( i );
+                if ( quote ) {
+                    if ( ch === quote && text.charAt( i - 1 ) !== '\\' ) quote = null;
+                    continue;
+                }
+                if ( ch === '"' || ch === "'" ) { quote = ch; continue; }
+                if ( ch === '{' ) depth++;
+                else if ( ch === '}' ) { depth--; if ( depth < 0 ) ok = false; }
+            }
+            if ( depth !== 0 || quote !== null ) ok = false;
+            if ( balanceEl ) {
+                balanceEl.textContent = ok ? 'Looks balanced.' : 'Unbalanced braces or quotes.';
+                balanceEl.style.color = ok ? '#1e8449' : '#c0392b';
+            }
+        }
+
+        // Surgically replace (or insert, if absent) just one
+        // `--spp-report-x: value;` line -- never destroys unrelated
+        // hand-typed CSS elsewhere in the textarea.
+        function updateVarInText( text, varName, value ) {
+            var re = new RegExp( '(' + escapeRegExp( varName ) + '\\s*:\\s*)([^;]+)(;)', 'i' );
+            if ( re.test( text ) ) {
+                return text.replace( re, function( m, p1, p2, p3 ) { return p1 + value + p3; } );
+            }
+            var braceIdx = text.indexOf( '{' );
+            if ( braceIdx === -1 ) {
+                return '.spp-report-table {\n  ' + varName + ': ' + value + ';\n}\n' + text;
+            }
+            return text.slice( 0, braceIdx + 1 ) + '\n  ' + varName + ': ' + value + ';' + text.slice( braceIdx + 1 );
+        }
+
+        function extractVar( text, varName ) {
+            var re = new RegExp( escapeRegExp( varName ) + '\\s*:\\s*([^;]+);', 'i' );
+            var m  = re.exec( text );
+            return m ? m[1].trim() : null;
+        }
+
+        controls.forEach( function( control ) {
+            control.addEventListener( 'input', function() {
+                var newText = updateVarInText( textarea.value, control.dataset.var, control.value );
+                textarea.value = newText;
+                applyLiveCss( newText );
+                checkBalance( newText );
+            } );
+        } );
+
+        textarea.addEventListener( 'input', function() {
+            var text = textarea.value;
+            applyLiveCss( text );
+            checkBalance( text );
+            controls.forEach( function( control ) {
+                var val = extractVar( text, control.dataset.var );
+                if ( val === null ) return; // property not present in the text -- leave control as-is
+
+                if ( control.type === 'color' ) {
+                    // <input type="color"> only accepts strict #rrggbb --
+                    // a named color / rgb() / hsl() / 3-digit hex is left
+                    // alone rather than errored or reverted.
+                    if ( /^#[0-9a-f]{6}$/i.test( val ) ) {
+                        control.value = val.toLowerCase(); // plain assignment -- does not fire 'input', so this can't loop back
+                    }
+                } else if ( control.tagName === 'SELECT' ) {
+                    var matchedValue = null;
+                    for ( var i = 0; i < control.options.length; i++ ) {
+                        if ( control.options[ i ].value.toLowerCase() === val.toLowerCase() ) {
+                            matchedValue = control.options[ i ].value;
+                            break;
+                        }
+                    }
+                    if ( matchedValue !== null ) control.value = matchedValue;
+                } else {
+                    control.value = val;
+                }
+            } );
+        } );
+
+        // Initial sync so the preview/balance indicator reflect the
+        // server-rendered starting snippet immediately, no interaction needed.
+        applyLiveCss( textarea.value );
+        checkBalance( textarea.value );
+    })();
+    </script>
+    <?php
+}
+
 function spp_render_report_generator_page() {
     // Layer 2: the real gate. Deliberately not spp_is_admin_or_editor()
     // (admin-OR-editor is the wrong scope here) and deliberately an
@@ -197,14 +604,10 @@ function spp_render_report_generator_page() {
 
     echo '<div class="wrap"><h1>Report Generator</h1>';
 
-    // Always visible, not tied to $selected_report -- quick reference for
-    // setting up a page in Divi regardless of which report is loaded below.
-    spp_render_report_css_reference();
-
     // -- Step 1: choose a report (plain GET) ---------------------------------
     $selected_report = isset( $_GET['report'] ) ? sanitize_key( wp_unslash( $_GET['report'] ) ) : '';
     if ( isset( $_POST['report'] ) ) {
-        // A POST submission (preview/generate/save) carries the report
+        // A POST submission (preview/save/delete) carries the report
         // selection forward too, takes priority over the GET one.
         $selected_report = sanitize_key( wp_unslash( $_POST['report'] ) );
     }
@@ -230,6 +633,8 @@ function spp_render_report_generator_page() {
         if ( $selected_report !== '' ) {
             echo '<p style="color:#c0392b;">Unknown report.</p>';
         }
+        // Item 1: below the dropdown when no report is loaded yet.
+        spp_render_report_css_reference();
         echo '</div>';
         return;
     }
@@ -242,38 +647,63 @@ function spp_render_report_generator_page() {
     $full_columns = $definition['columns'];
     $rows         = $definition['rows'];
 
-    // -- Sticky form state: from a just-submitted POST, else all columns
-    //    included in their original order, no_sort unchecked. --------------
-    $action  = '';
-    $include = array(); // key => true
-    $order   = array(); // key => int
-    $no_sort = false;
-    $variant_name_input = '';
+    $existing_variants = spp_get_report_variants_for_base( $selected_report );
+
+    // -- Sticky form state ---------------------------------------------------
+    $action   = '';
     $messages = array(); // ['type'=>'error'|'success', 'text'=>string]
 
     $is_post_for_this_report = ( $_SERVER['REQUEST_METHOD'] === 'POST' && $selected_report !== '' );
 
     if ( $is_post_for_this_report ) {
         check_admin_referer( 'spp_report_generator', 'spp_report_generator_nonce' );
+        $action = isset( $_POST['spp_action'] ) ? sanitize_key( wp_unslash( $_POST['spp_action'] ) ) : '';
+    }
 
-        $action  = isset( $_POST['spp_action'] ) ? sanitize_key( wp_unslash( $_POST['spp_action'] ) ) : '';
-        $no_sort = isset( $_POST['no_sort'] ) && $_POST['no_sort'] === '1';
-        $variant_name_input = isset( $_POST['variant_name'] ) ? sanitize_text_field( wp_unslash( $_POST['variant_name'] ) ) : '';
+    if ( $is_post_for_this_report && $action === 'delete_variant' ) {
+        // The combined selector's own form posts here (via a
+        // formmethod="post" override on its Delete button) -- it only
+        // ever carries report/variant/spp_action/nonce, never the
+        // column-form fields, so this branch re-seeds state from
+        // scratch afterward rather than reading col_include/col_order.
+        $target = isset( $_POST['variant'] ) ? sanitize_key( wp_unslash( $_POST['variant'] ) ) : '';
+        if ( $target === '' ) {
+            $messages[]     = array( 'type' => 'error', 'text' => 'Select a variant to delete.' );
+            $loaded_variant = '';
+        } else {
+            $result = spp_delete_report_variant( $target );
+            if ( is_wp_error( $result ) ) {
+                $messages[]     = array( 'type' => 'error', 'text' => $result->get_error_message() );
+                $loaded_variant = $target;
+            } else {
+                $messages[]     = array( 'type' => 'success', 'text' => 'Variant "' . esc_html( $target ) . '" deleted.' );
+                $loaded_variant = ''; // reset to Default, per spec
+            }
+            $existing_variants = spp_get_report_variants_for_base( $selected_report ); // refresh -- it just changed
+        }
+        list( $include, $order, $no_sort, $per_page ) = spp_report_generator_seed_state( $loaded_variant, $existing_variants, $full_columns );
+
+    } elseif ( $is_post_for_this_report ) {
+        // Normal column-form POST (Update Preview / Save as New Variant).
+        $no_sort        = isset( $_POST['no_sort'] ) && $_POST['no_sort'] === '1';
+        $per_page       = isset( $_POST['per_page'] ) ? spp_report_sanitize_per_page( wp_unslash( $_POST['per_page'] ) ) : 'All';
+        $loaded_variant = isset( $_POST['loaded_variant'] ) ? sanitize_key( wp_unslash( $_POST['loaded_variant'] ) ) : '';
 
         $posted_include = isset( $_POST['col_include'] ) && is_array( $_POST['col_include'] ) ? wp_unslash( $_POST['col_include'] ) : array();
         $posted_order   = isset( $_POST['col_order'] ) && is_array( $_POST['col_order'] ) ? wp_unslash( $_POST['col_order'] ) : array();
 
+        $include = array();
+        $order   = array();
         foreach ( $full_columns as $i => $col ) {
             $key = $col['key'];
             $include[ $key ] = isset( $posted_include[ $key ] );
             $order[ $key ]   = isset( $posted_order[ $key ] ) ? (int) $posted_order[ $key ] : ( $i + 1 );
         }
     } else {
-        foreach ( $full_columns as $i => $col ) {
-            $key = $col['key'];
-            $include[ $key ] = true;
-            $order[ $key ]   = $i + 1;
-        }
+        // Fresh GET load -- seed from ?variant= (the combined selector's
+        // Load button) or Default.
+        $loaded_variant = isset( $_GET['variant'] ) ? sanitize_key( wp_unslash( $_GET['variant'] ) ) : '';
+        list( $include, $order, $no_sort, $per_page ) = spp_report_generator_seed_state( $loaded_variant, $existing_variants, $full_columns );
     }
 
     // -- Build the effective, ordered key list from the current form state --
@@ -287,37 +717,23 @@ function spp_render_report_generator_page() {
         return ( $order[ $a ] ?? 0 ) <=> ( $order[ $b ] ?? 0 );
     } );
 
-    // -- Handle the two real actions (generate / save) -- preview always
-    //    happens below regardless of which button was pressed. -------------
+    // -- Save action: always a new, auto-named variant -----------------------
     if ( $is_post_for_this_report && $action === 'save' ) {
-        $variant_key = sanitize_key( $variant_name_input );
-        if ( $variant_key === '' ) {
-            $messages[] = array( 'type' => 'error', 'text' => 'Enter a variant name.' );
-        } elseif ( isset( $registry[ $variant_key ] ) ) {
-            $messages[] = array( 'type' => 'error', 'text' => "\"{$variant_key}\" is already a registered report name -- choose a different variant name." );
-        } elseif ( spp_get_report_variant( $variant_key ) ) {
-            $messages[] = array( 'type' => 'error', 'text' => "A variant named \"{$variant_key}\" already exists -- choose a different name." );
-        } elseif ( empty( $selected_keys ) ) {
+        if ( empty( $selected_keys ) ) {
             $messages[] = array( 'type' => 'error', 'text' => 'Select at least one column before saving.' );
         } else {
-            $result = spp_save_report_variant( $variant_key, $selected_report, $selected_keys, $no_sort );
+            $variant_key = spp_next_report_variant_name( $selected_report );
+            $result      = spp_save_report_variant( $variant_key, $selected_report, $selected_keys, $no_sort, $per_page );
             if ( is_wp_error( $result ) ) {
                 $messages[] = array( 'type' => 'error', 'text' => $result->get_error_message() );
             } else {
                 $messages[] = array(
                     'type' => 'success',
-                    'text' => 'Variant saved. Embed it with: <code>[spp_report table="' . esc_html( $variant_key ) . '"]</code>',
+                    'text' => 'Variant saved as "' . esc_html( $variant_key ) . '". Embed it with: <code>[spp_report table="' . esc_html( $variant_key ) . '"]</code>',
                 );
+                $loaded_variant     = $variant_key;
+                $existing_variants  = spp_get_report_variants_for_base( $selected_report ); // refresh so the combined selector includes it
             }
-        }
-    }
-
-    $generated_shortcode = '';
-    if ( $is_post_for_this_report && $action === 'generate' ) {
-        if ( empty( $selected_keys ) ) {
-            $messages[] = array( 'type' => 'error', 'text' => 'Select at least one column before generating a shortcode.' );
-        } else {
-            $generated_shortcode = '[spp_report table="' . $selected_report . '" columns="' . implode( ',', $selected_keys ) . '" no_sort="' . ( $no_sort ? '1' : '0' ) . '"]';
         }
     }
 
@@ -328,12 +744,48 @@ function spp_render_report_generator_page() {
         echo '<div style="background:' . $bg . ';border:1px solid ' . $color . ';color:' . $color . ';padding:10px 14px;border-radius:6px;margin-bottom:14px;">' . $m['text'] . '</div>';
     }
 
-    if ( $generated_shortcode !== '' ) {
-        echo '<div style="margin-bottom:14px;">';
-        echo '<label for="spp_rg_shortcode_out"><strong>Shortcode:</strong></label><br>';
-        echo '<textarea id="spp_rg_shortcode_out" readonly rows="2" style="width:100%;max-width:700px;font-family:monospace;" onclick="this.select()">' . esc_textarea( $generated_shortcode ) . '</textarea>';
-        echo '</div>';
+    // -- Item 3: combined "Default + existing variants" selector, with delete --
+    ?>
+    <form method="get" style="margin-bottom:16px;">
+        <?php wp_nonce_field( 'spp_report_generator', 'spp_report_generator_nonce' ); ?>
+        <input type="hidden" name="post_type" value="page">
+        <input type="hidden" name="page" value="spp-report-generator">
+        <input type="hidden" name="report" value="<?php echo esc_attr( $selected_report ); ?>">
+        <label for="spp_rg_variant"><strong>Configuration:</strong></label>
+        <select name="variant" id="spp_rg_variant">
+            <option value="">Default</option>
+            <?php foreach ( $existing_variants as $v ) : ?>
+                <option value="<?php echo esc_attr( $v['variant_name'] ); ?>" <?php selected( $loaded_variant, $v['variant_name'] ); ?>>
+                    <?php echo esc_html( $v['variant_name'] ); ?>
+                </option>
+            <?php endforeach; ?>
+        </select>
+        <button type="submit" class="button">Load</button>
+        <?php
+        // formmethod="post" overrides just this button's submission to
+        // POST (with the same fields, including the select's current
+        // value as $_POST['variant']) -- lets Delete act on whatever's
+        // selected without needing Load clicked first, and without a
+        // second <form> duplicating the <select>.
+        ?>
+        <button type="submit" name="spp_action" value="delete_variant" class="button" style="color:#c0392b;"
+                formmethod="post" <?php disabled( empty( $existing_variants ) ); ?>
+                onclick="return confirm('Delete the selected variant? This cannot be undone.');">
+            Delete Selected
+        </button>
+    </form>
+
+    <?php
+    // -- Item 4: always-visible shortcode, computed fresh every render --------
+    $live_shortcode = spp_report_generator_live_shortcode( $selected_report, $selected_keys, $no_sort, $per_page, $full_columns, $existing_variants );
+    echo '<div style="margin-bottom:14px;">';
+    echo '<label for="spp_rg_shortcode_out"><strong>Shortcode:</strong></label><br>';
+    if ( $live_shortcode === '' ) {
+        echo '<p style="color:#c0392b;margin:4px 0;">Select at least one column to see its shortcode.</p>';
+    } else {
+        echo '<textarea id="spp_rg_shortcode_out" readonly rows="2" style="width:100%;max-width:700px;font-family:monospace;" onclick="this.select()">' . esc_textarea( $live_shortcode ) . '</textarea>';
     }
+    echo '</div>';
 
     // -- Column selection form --------------------------------------------
     ?>
@@ -341,6 +793,7 @@ function spp_render_report_generator_page() {
         <?php wp_nonce_field( 'spp_report_generator', 'spp_report_generator_nonce' ); ?>
         <input type="hidden" name="post_type" value="page">
         <input type="hidden" name="report" value="<?php echo esc_attr( $selected_report ); ?>">
+        <input type="hidden" name="loaded_variant" value="<?php echo esc_attr( $loaded_variant ); ?>">
 
         <table class="widefat" style="margin-bottom:14px;">
             <thead>
@@ -375,21 +828,34 @@ function spp_render_report_generator_page() {
         </p>
 
         <p>
+            <label for="spp_rg_per_page"><strong>Rows per page</strong></label><br>
+            <select name="per_page" id="spp_rg_per_page">
+                <?php foreach ( spp_report_per_page_choices() as $opt ) :
+                    $opt_str = (string) $opt;
+                    ?>
+                    <option value="<?php echo esc_attr( $opt_str ); ?>" <?php selected( $per_page, $opt_str ); ?>>
+                        <?php echo esc_html( $opt_str ); ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
+        </p>
+
+        <p>
             <button type="submit" name="spp_action" value="preview" class="button">Update Preview</button>
-            <button type="submit" name="spp_action" value="generate" class="button">Generate Shortcode</button>
         </p>
 
         <hr>
 
         <p>
-            <label for="spp_rg_variant_name"><strong>Save as a new report</strong></label><br>
-            <input type="text" id="spp_rg_variant_name" name="variant_name" value="<?php echo esc_attr( $variant_name_input ); ?>" placeholder="variant_name" style="width:250px;">
-            <button type="submit" name="spp_action" value="save" class="button button-primary">Save as New Report</button>
+            <button type="submit" name="spp_action" value="save" class="button button-primary">Save as New Variant</button>
         </p>
     </form>
 
-    <h2>Preview</h2>
     <?php
+    // -- Item 5: style editor (controls above the preview it targets) --------
+    spp_render_report_style_editor();
+
+    echo '<h2>Preview</h2>';
     $preview_columns = spp_report_filter_columns( $full_columns, $selected_keys );
     if ( empty( $preview_columns ) ) {
         $preview_columns = $full_columns; // nothing selected yet -- show everything rather than an empty table
@@ -406,13 +872,23 @@ function spp_render_report_generator_page() {
         ? $definition_default_sort
         : ( in_array( 'Rank', $preview_keys, true ) ? 'Rank' : ( $preview_keys[0] ?? '' ) );
 
+    echo '<div id="spp-rg-live-preview">';
     spp_render_report_table( $preview_columns, $rows, array(
         'id'               => 'preview',
         'default_sort'     => $preview_default_sort,
         'default_dir'      => 'asc',
-        'per_page_options' => array( 10, 25, 50 ),
-        'default_per_page' => 10,
+        'per_page_options' => spp_report_per_page_choices(),
+        'default_per_page' => $per_page,
     ) );
+    echo '</div>';
+
+    // Empty live-CSS <style> + its <script>, placed AFTER the preview's own
+    // inline <style> above -- see spp_render_report_style_editor_script()'s
+    // docblock for why the DOM order here is load-bearing, not cosmetic.
+    spp_render_report_style_editor_script( 'spp-rg-live-preview' );
+
+    // Item 1: below the rendered preview once a report is loaded.
+    spp_render_report_css_reference();
 
     echo '</div>';
 }

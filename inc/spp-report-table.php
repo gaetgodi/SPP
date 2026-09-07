@@ -1,8 +1,19 @@
 <?php
 /* =========================================================
    Shared Report Table Renderer
-   Version: 1.0.2
+   Version: 1.0.3
    Date: 2026-09-07
+
+   Changes from 1.0.2:
+   - Fixed the "Rows per page" <select>'s native dropdown arrow
+     rendering on top of the selected number (most visible on short
+     values like "10"/"25"): equal 4px/6px left-right padding left no
+     room for the browser's own arrow icon inside the select's
+     shrink-to-fit width. Widened the right padding to 22px (arrow
+     clearance) and kept 8px on the left -- styling only, no behavior
+     change. Reported against the Report Generator admin preview but
+     this control is shared with the live [spp_report] shortcode too,
+     so both are fixed by the one change.
 
    Changes from 1.0.1:
    - Added three more customization points, same pattern as
@@ -196,7 +207,11 @@ function spp_render_report_table( array $columns, array $rows, array $args = arr
         }
         .spp-report-table .spp-report-per-page select {
             font-size: var(--spp-report-font-size);
-            padding: 4px 6px;
+            /* Right padding wider than left -- clears the browser's own
+               dropdown-arrow icon, which otherwise overlaps a short
+               value like "10" when the select's shrink-to-fit width is
+               only as wide as its padding + content. */
+            padding: 4px 22px 4px 8px;
         }
         .spp-report-table .spp-report-summary {
             color: #666;

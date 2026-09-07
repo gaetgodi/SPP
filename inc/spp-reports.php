@@ -1,8 +1,27 @@
 <?php
 /* =========================================================
    Report Registry
-   Version: 1.2.0
+   Version: 1.3.0
    Date: 2026-09-07
+
+   Changes from 1.2.0:
+   - Rows-per-page is now a variant-configurable setting, same
+     treatment as columns=/no_sort=: added spp_report_per_page_choices()
+     (the canonical enum: 10/25/50/100/'All' -- used by the Report
+     Generator admin form's <select>, this shortcode's own
+     per_page_options, and to validate a saved variant's stored value)
+     and spp_report_sanitize_per_page() (validates/normalizes any
+     candidate value against that enum, falling back to 'All'). The
+     [spp_report] shortcode gets a new per_page= attribute, resolved
+     with the same explicit-attribute-wins-over-saved-variant
+     precedence as columns=/no_sort=. The system-wide fallback (no
+     variant, no attribute) is now 'All' (no pagination), replacing the
+     previous hardcoded 50 -- a deliberate behavior change, not just an
+     additive one: an existing [spp_report table="ladder_ratings"] with
+     no per_page= now renders unpaginated where it previously defaulted
+     to 50/page. spp_get_report_variant()/spp_save_report_variant()
+     (inc/spp-report-variants.php 1.1.0+) both grew a per_page
+     parameter/return key to carry this through.
 
    Changes from 1.1.0:
    - Added spp_report_membership(): the full, unfiltered membership
@@ -58,21 +77,21 @@
    definition function (e.g. spp_is_admin_or_editor() check), not here
    -- keeps that decision visible next to the data it protects.
 
-   UPDATE (2026-09-06) -- variant support, plus columns=/no_sort=
-   shortcode attributes, added for the new Report Generator admin
-   screen (inc/spp-report-generator-admin.php). Both are additive to
-   the shortcode handler below; the registry and every existing
+   UPDATE (2026-09-06) -- variant support, plus columns=/no_sort=/
+   per_page= shortcode attributes, added for the new Report Generator
+   admin screen (inc/spp-report-generator-admin.php). All are additive
+   to the shortcode handler below; the registry and every existing
    definition function (spp_report_ladder_ratings included) are
    unchanged. Resolution order, per-request:
      1. Is `table` a saved variant name (spp_get_report_variant(),
         inc/spp-report-variants.php)? If so, its base_table/columns/
-        no_sort become the starting point.
+        no_sort/per_page become the starting point.
      2. Otherwise, `table` must be a registry name directly -- exactly
         today's behavior, unchanged.
-     3. Explicit columns=/no_sort= attributes on the shortcode tag
-        itself, if present, override whatever step 1 or 2 produced --
-        an explicit attribute always wins over a saved variant's
-        stored defaults.
+     3. Explicit columns=/no_sort=/per_page= attributes on the
+        shortcode tag itself, if present, override whatever step 1 or 2
+        produced -- an explicit attribute always wins over a saved
+        variant's stored defaults.
    The effective column list is built by filtering/reordering the full
    report definition's own columns array to the requested key list
    (unknown keys ignored, not fatal); no_sort forces sortable=false on
@@ -172,6 +191,31 @@ function spp_report_membership() {
 }
 
 /**
+ * Canonical enum of rows-per-page choices, used everywhere per_page is
+ * surfaced: the Report Generator admin form's <select>, the actual
+ * [spp_report] shortcode's per_page_options (the dropdown a visitor
+ * sees), and validation of both a saved variant's per_page column and
+ * an explicit per_page= shortcode attribute. 'All' means no pagination
+ * -- the exact string spp_render_report_table() already tests for
+ * ($per_page_raw === 'All'), not 'all' or any other casing/spelling.
+ */
+function spp_report_per_page_choices() {
+    return array( 10, 25, 50, 100, 'All' );
+}
+
+/**
+ * Validate/normalize a per_page value (from a saved variant or an
+ * explicit shortcode attribute) against spp_report_per_page_choices().
+ * Anything not an exact string match falls back to 'All' -- the
+ * system-wide default -- rather than being fatal or silently ignored.
+ */
+function spp_report_sanitize_per_page( $value ) {
+    $choices = array_map( 'strval', spp_report_per_page_choices() );
+    $value   = (string) $value;
+    return in_array( $value, $choices, true ) ? $value : 'All';
+}
+
+/**
  * Given a full report definition's columns array and a requested list
  * of keys (subset + order), build the effective columns array: each
  * requested key that actually exists in the definition, in the
@@ -198,9 +242,10 @@ function spp_report_filter_columns( array $full_columns, array $requested_keys )
 
 add_shortcode( 'spp_report', function( $atts ) {
     $atts = shortcode_atts( array(
-        'table'   => '',
-        'columns' => '',
-        'no_sort' => '',
+        'table'    => '',
+        'columns'  => '',
+        'no_sort'  => '',
+        'per_page' => '',
     ), $atts, 'spp_report' );
 
     $name     = sanitize_key( $atts['table'] );
@@ -215,6 +260,7 @@ add_shortcode( 'spp_report', function( $atts ) {
     $base_table   = $variant ? $variant['base_table'] : $name;
     $columns_keys = $variant ? $variant['columns'] : null; // null = "use full definition's columns"
     $no_sort      = $variant ? $variant['no_sort'] : false;
+    $per_page     = $variant ? $variant['per_page'] : 'All';
 
     if ( ! isset( $registry[ $base_table ] ) || ! function_exists( $registry[ $base_table ] ) ) {
         return '<p>Unknown report.</p>';
@@ -232,6 +278,10 @@ add_shortcode( 'spp_report', function( $atts ) {
     if ( $atts['no_sort'] !== '' ) {
         $no_sort = ( $atts['no_sort'] === '1' );
     }
+    if ( $atts['per_page'] !== '' ) {
+        $per_page = $atts['per_page'];
+    }
+    $per_page = spp_report_sanitize_per_page( $per_page ); // validates variant-sourced and attribute-sourced values alike
 
     // -- Build the effective column list --
     $effective_columns = ( $columns_keys === null )
@@ -267,8 +317,8 @@ add_shortcode( 'spp_report', function( $atts ) {
         'id'               => $name,
         'default_sort'     => $default_sort,
         'default_dir'      => 'asc',
-        'per_page_options' => array( 25, 50, 100, 'All' ),
-        'default_per_page' => 50,
+        'per_page_options' => spp_report_per_page_choices(),
+        'default_per_page' => $per_page,
     ) );
     return ob_get_clean();
 } );
