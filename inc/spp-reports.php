@@ -241,7 +241,7 @@ function spp_report_master() {
                 first_name, last_name, travel, user_phone, user_email,
                 PCO, user_id
          FROM membership
-         where Ladder  'Yes'
+         where Ladder  = 'Yes'
          ORDER BY last_name ASC, first_name ASC",
         ARRAY_A
     );
