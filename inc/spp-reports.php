@@ -154,7 +154,7 @@ function spp_report_ladder_ratings() {
     global $wpdb;
 
     $rows = $wpdb->get_results(
-        "SELECT Rank, ClubRating, DUPR, first_name, last_name
+        "SELECT Rank, ClubRating, ClubGames, DUPR, first_name, last_name
          FROM membership
          WHERE Ladder = 'Yes'",
         ARRAY_A
@@ -163,6 +163,7 @@ function spp_report_ladder_ratings() {
     $columns = array(
         array( 'key' => 'Rank',       'label' => 'Rank',        'sortable' => true ),
         array( 'key' => 'ClubRating', 'label' => 'Club Rating', 'sortable' => true ),
+        array( 'key' => 'ClubGames', 'label' => 'Club Games', 'sortable' => true ),
         array( 'key' => 'DUPR',       'label' => 'DUPR',        'sortable' => true ),
         array( 'key' => 'first_name', 'label' => 'First Name',  'sortable' => true ),
         array( 'key' => 'last_name',  'label' => 'Last Name',   'sortable' => true ),
@@ -189,7 +190,7 @@ function spp_report_membership() {
     global $wpdb;
 
     $rows = $wpdb->get_results(
-        "SELECT Rank, Rating, ClubRating, DUPR, Ladder, Tag,
+        "SELECT Rank, Rating, ClubRating, ClubGames, DUPR, Ladder, Tag,
                 first_name, last_name, travel, user_phone, user_email,
                 PCO, user_id
          FROM membership
@@ -201,6 +202,7 @@ function spp_report_membership() {
         array( 'key' => 'Rank',       'label' => 'Rank',       'sortable' => true ),
         array( 'key' => 'Rating',     'label' => 'Rating',     'sortable' => true ),
         array( 'key' => 'ClubRating', 'label' => 'ClubRating', 'sortable' => true ),
+        array( 'key' => 'ClubGames', 'label' => 'ClubGames', 'sortable' => true ),
         array( 'key' => 'DUPR',       'label' => 'DUPR',       'sortable' => true ),
         array( 'key' => 'Ladder',     'label' => 'Ldr',        'sortable' => true ),
         array( 'key' => 'Tag',        'label' => 'Tag',        'sortable' => true ),
