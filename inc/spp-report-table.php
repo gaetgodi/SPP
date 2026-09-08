@@ -1,8 +1,33 @@
 <?php
 /* =========================================================
    Shared Report Table Renderer
-   Version: 1.1.0
-   Date: 2026-09-07
+   Version: 1.2.0
+   Date: 2026-09-08
+
+   Changes from 1.1.0:
+   - BUG FIX (found via today's read-only audit): $base_url only ever
+     stripped THIS render's own 4 id-prefixed params
+     (remove_query_arg() on $p_sort/$p_dir/$p_per_page/$p_paged) -- any
+     OTHER report/variant's leftover params from a time this page's
+     embedded [spp_report table=""] pointed at something else just rode
+     along in $base_url untouched, and every sort/pagination link this
+     render then generated carried them forward forever. FIXED: also
+     strip any $_GET key suffixed _sort/_dir/_per_page/_paged that
+     isn't this render's own -- confirmed both live [spp_report]
+     callers (Ranks & Ratings, Membership list) embed at most one
+     report each, so "every other suffixed param on this URL" and
+     "every other report/variant's own leftover params" are the same
+     set; confirmed no other file in this theme uses a $_GET key with
+     any of these four suffixes, so this can't clobber unrelated
+     query-string state.
+   - Found a SECOND leak of the same bug while testing the fix above:
+     the "Rows per page" <form>'s own hidden-field loop re-echoes every
+     current $_GET key except its own per_page/paged as a hidden field
+     (to preserve sort/etc. across a per-page change) -- an old
+     report/variant's leftover params kept propagating right back in
+     through there even with $base_url fixed, since that loop builds
+     its own field list independently. Fixed with the same
+     $stale_params exclusion.
 
    Changes from 1.0.3:
    - Fixed --spp-report-* custom properties (header-bg, radius, etc.)
@@ -206,7 +231,31 @@ function spp_render_report_table( array $columns, array $rows, array $args = arr
     }
 
     // -- URL helpers --------------------------------------------------------
-    $base_url = remove_query_arg( array( $p_sort, $p_dir, $p_per_page, $p_paged ) );
+    // Strip this render's own 4 id-prefixed params, AND any OTHER
+    // report/variant's leftover _sort/_dir/_per_page/_paged param still
+    // sitting on the URL -- a Divi page's embedded [spp_report table=""]
+    // can change to a different report or variant over time, and
+    // without this, an old id's params (e.g. membershipvariant1_per_page
+    // after the page switches to table="membership-variant-2") just
+    // ride along in every link this render generates, forever -- see
+    // this file's version-history block for the full story. In practice
+    // a page embeds at most one [spp_report] (confirmed against both
+    // live callers today), so "every param on this URL suffixed
+    // _sort/_dir/_per_page/_paged that isn't this render's own" and
+    // "every OTHER report/variant's own leftover params" are the same
+    // set -- stripped by suffix rather than needing to track what the
+    // old id even was. Confirmed no other file in this theme uses a
+    // $_GET key with any of these four suffixes, so this can't clobber
+    // unrelated query-string state.
+    $own_params   = array( $p_sort, $p_dir, $p_per_page, $p_paged );
+    $stale_params = array();
+    foreach ( array_keys( $_GET ) as $key ) {
+        if ( in_array( $key, $own_params, true ) ) continue;
+        if ( preg_match( '/_(sort|dir|per_page|paged)$/', $key ) ) {
+            $stale_params[] = $key;
+        }
+    }
+    $base_url = remove_query_arg( array_merge( $own_params, $stale_params ) );
 
     $sort_link = function( $key ) use ( $base_url, $p_sort, $p_dir, $sort, $dir ) {
         $new_dir = ( $sort === $key && $dir === 'asc' ) ? 'desc' : 'asc';
@@ -427,6 +476,13 @@ function spp_render_report_table( array $columns, array $rows, array $args = arr
             <form method="get" class="spp-report-per-page">
                 <?php foreach ( $_GET as $gk => $gv ) :
                     if ( in_array( $gk, array( $p_per_page, $p_paged ), true ) ) continue;
+                    // Same stale-param stripping as $base_url above -- this
+                    // form re-submits every other current $_GET key as a
+                    // hidden field (to preserve sort/etc. across a per-page
+                    // change), which was the second place an old report/
+                    // variant's leftover params kept propagating even after
+                    // the $base_url fix.
+                    if ( in_array( $gk, $stale_params, true ) ) continue;
                     if ( is_array( $gv ) ) continue;
                     ?>
                     <input type="hidden" name="<?php echo esc_attr( $gk ); ?>" value="<?php echo esc_attr( $gv ); ?>">

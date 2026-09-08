@@ -1,8 +1,39 @@
 <?php
 /* =========================================================
    Report Generator — Admin Screen
-   Version: 2.2.0
+   Version: 2.3.0
    Date: 2026-09-08
+
+   Changes from 2.2.0:
+   - BUG FIX (found via today's read-only audit, confirmed live against
+     real data before fixing): spp_report_generator_match_variant()'s
+     plain first-match linear scan meant that when two saved variants
+     for the same report share identical columns/no_sort/per_page (a
+     real live case: membership-variant-1 and membership-variant-2),
+     the live shortcode could only ever show the alphabetically-first
+     one's name, regardless of which was actually loaded or just
+     saved. Separately, spp_report_generator_live_shortcode()'s
+     bare-default carve-out unconditionally won over ANY variant match
+     whenever the current config equaled the report's own bare
+     defaults -- so a variant saved with that exact config (also a
+     real live case: membership-variant-3) could never show its own
+     shortcode at all, always falling through to the bare
+     [spp_report table="<report>"] instead.
+   - FIXED: both functions now take an optional $preferred_name --
+     the variant actually in context (just saved, or loaded via the
+     combined selector), passed as the already-existing $loaded_variant
+     at the one call site. match_variant() checks it first (only
+     counts if its own saved config still matches the current form
+     state exactly) before falling back to the unchanged generic scan.
+     live_shortcode()'s bare-default carve-out is now skipped
+     specifically when the match IS the preferred variant, so a
+     loaded/just-saved variant always shows its own name even if its
+     config happens to equal bare defaults -- a merely coincidental
+     match with no variant in context still defers to the bare
+     shortcode exactly as before. Re-verified against live production
+     data after the fix: all 4 existing membership variants (including
+     the two that previously never showed their own name) now
+     correctly resolve to their own shortcode.
 
    Changes from 2.1.1:
    - REVERSED the 2.1.0 diff-only decision for the style editor's CSS
@@ -406,14 +437,44 @@ function spp_report_generator_seed_state( $variant_name, array $existing_variant
  * an existing variant for this report? Returns that variant's name, or
  * null. Used by the always-visible shortcode's three-state logic
  * (state 1: show the variant's own simple shortcode).
+ *
+ * @param string $preferred_name The variant actually in context --
+ *               just saved, or currently loaded via the combined
+ *               selector (callers pass $loaded_variant). Checked
+ *               FIRST, but only counts as a match if its own saved
+ *               config still equals the current form state exactly;
+ *               otherwise falls through to the generic scan below,
+ *               same as when no preferred name is given at all. This
+ *               is what lets two variants with identical config (or a
+ *               variant whose config equals the report's own bare
+ *               defaults) each still show their OWN name while
+ *               they're the one loaded/just-saved, instead of a plain
+ *               first-match scan always picking the same one
+ *               regardless of which is actually in context.
  */
-function spp_report_generator_match_variant( array $selected_keys, $no_sort, $per_page, array $existing_variants ) {
+function spp_report_generator_match_variant( array $selected_keys, $no_sort, $per_page, array $existing_variants, $preferred_name = '' ) {
     $selected_keys = array_values( $selected_keys );
-    foreach ( $existing_variants as $v ) {
-        if ( $v['columns'] === $selected_keys
+
+    $is_match = function( $v ) use ( $selected_keys, $no_sort, $per_page ) {
+        return $v['columns'] === $selected_keys
             && (bool) $v['no_sort'] === (bool) $no_sort
-            && spp_report_sanitize_per_page( $v['per_page'] ) === $per_page
-        ) {
+            && spp_report_sanitize_per_page( $v['per_page'] ) === $per_page;
+    };
+
+    if ( $preferred_name !== '' ) {
+        foreach ( $existing_variants as $v ) {
+            if ( $v['variant_name'] === $preferred_name && $is_match( $v ) ) {
+                return $v['variant_name'];
+            }
+        }
+    }
+
+    // Generic scan -- unchanged from before this fix, and the only path
+    // taken when nothing is specifically in context (a fresh, never-
+    // saved configuration that happens to coincidentally match an
+    // existing variant).
+    foreach ( $existing_variants as $v ) {
+        if ( $is_match( $v ) ) {
             return $v['variant_name'];
         }
     }
@@ -424,17 +485,30 @@ function spp_report_generator_match_variant( array $selected_keys, $no_sort, $pe
  * The always-visible shortcode for the form's current state --
  * three-state logic:
  *   1. Current settings exactly match an existing variant for this
- *      report -> that variant's own simple shortcode.
+ *      report -> that variant's own simple shortcode. If more than
+ *      one variant shares that exact config, $preferred_name (the
+ *      variant actually in context -- just saved, or loaded via the
+ *      combined selector) wins over a plain first-match scan; see
+ *      spp_report_generator_match_variant().
  *   2. Else current settings exactly match the report's bare defaults
  *      (full column set in original order, sortable, per_page='All')
- *      -> the bare shortcode, no attributes.
+ *      -> the bare shortcode, no attributes. This carve-out is
+ *      skipped when state 1 matched the PREFERRED variant specifically
+ *      -- a variant whose saved config happens to equal the report's
+ *      own defaults must still show its own name while it's the one
+ *      loaded/just-saved, not silently fall through to the bare
+ *      report name. A merely coincidental match (no variant actually
+ *      in context) still defers to the bare shortcode here, unchanged.
  *   3. Else -> the explicit form, but only the columns=/no_sort=/
  *      per_page= attributes that actually differ from the bare
  *      defaults (never an attribute that matches the default).
  * Returns '' if $selected_keys is empty -- caller shows a prompt
  * instead of a bogus columns="" shortcode.
+ *
+ * @param string $preferred_name See spp_report_generator_match_variant().
+ *               Callers pass $loaded_variant.
  */
-function spp_report_generator_live_shortcode( $selected_report, array $selected_keys, $no_sort, $per_page, array $full_columns, array $existing_variants ) {
+function spp_report_generator_live_shortcode( $selected_report, array $selected_keys, $no_sort, $per_page, array $full_columns, array $existing_variants, $preferred_name = '' ) {
     if ( empty( $selected_keys ) ) {
         return '';
     }
@@ -442,15 +516,15 @@ function spp_report_generator_live_shortcode( $selected_report, array $selected_
     $default_keys    = array_column( $full_columns, 'key' );
     $is_bare_default = ( array_values( $selected_keys ) === $default_keys && $no_sort === false && $per_page === 'All' );
 
-    if ( ! $is_bare_default ) {
-        $matched = spp_report_generator_match_variant( $selected_keys, $no_sort, $per_page, $existing_variants );
-        if ( $matched !== null ) {
-            return '[spp_report table="' . $matched . '"]';
-        }
+    $matched             = spp_report_generator_match_variant( $selected_keys, $no_sort, $per_page, $existing_variants, $preferred_name );
+    $is_preferred_match  = ( $preferred_name !== '' && $matched === $preferred_name );
+
+    if ( $is_bare_default && ! $is_preferred_match ) {
+        return '[spp_report table="' . $selected_report . '"]';
     }
 
-    if ( $is_bare_default ) {
-        return '[spp_report table="' . $selected_report . '"]';
+    if ( $matched !== null ) {
+        return '[spp_report table="' . $matched . '"]';
     }
 
     $attrs = '';
@@ -963,7 +1037,14 @@ function spp_render_report_generator_page() {
 
     <?php
     // -- Item 4: always-visible shortcode, computed fresh every render --------
-    $live_shortcode = spp_report_generator_live_shortcode( $selected_report, $selected_keys, $no_sort, $per_page, $full_columns, $existing_variants );
+    // $loaded_variant is already tracked through every code path above
+    // (delete-reseed, normal POST via its hidden field, fresh GET load,
+    // and overwritten to the new variant's name right after a
+    // successful save) -- passed as the preferred-variant hint so the
+    // shortcode shown here always favors the variant actually just
+    // saved or explicitly loaded, not just "first alphabetical match
+    // with identical config."
+    $live_shortcode = spp_report_generator_live_shortcode( $selected_report, $selected_keys, $no_sort, $per_page, $full_columns, $existing_variants, $loaded_variant );
     echo '<div style="margin-bottom:14px;">';
     echo '<label for="spp_rg_shortcode_out"><strong>Shortcode:</strong></label><br>';
     if ( $live_shortcode === '' ) {
