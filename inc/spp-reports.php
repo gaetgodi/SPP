@@ -143,6 +143,7 @@ defined( 'ABSPATH' ) || exit;
 $GLOBALS['spp_report_registry'] = array(
     'ladder_ratings' => 'spp_report_ladder_ratings',
     'membership'     => 'spp_report_membership',
+    'master_list'     => 'spp_report_master',
 );
 
 /**
