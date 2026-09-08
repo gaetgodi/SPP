@@ -225,6 +225,7 @@ function spp_create_membership_table() {
                 MAX(CASE WHEN meta_key LIKE '%Ladder%'  THEN meta_value END) AS Ladder,
                 MAX(CASE WHEN meta_key = 'Rating'  THEN meta_value END) AS Rating,
                 MAX(CASE WHEN meta_key = 'spp_glicko_rating'  THEN meta_value END) AS ClubRating,
+                MAX(CASE WHEN meta_key = 'spp_glicko_rating_games'  THEN meta_value END) AS RatingGames,
                 MAX(CASE WHEN meta_key = 'spp_dupr_rating'  THEN meta_value END) AS DUPR,
                 MAX(CASE WHEN meta_key LIKE '%Expiry%'  THEN meta_value END) AS Expiry,
                 MAX(CASE WHEN meta_key LIKE 'YrEndDt'   THEN meta_value END) AS YrEndDt
@@ -250,7 +251,7 @@ function spp_create_membership_table() {
         CREATE TABLE {$master} AS
         SELECT t.Rank, t.user_id, t.first_name, t.last_name,
                t.user_phone, t.travel, t.user_email,
-               t.Ladder, t.Rating, t.ClubRating, t.DUPR, m.Tag
+               t.Ladder, t.Rating, t.ClubRating, t.RatingGames, t.DUPR, m.Tag
         FROM tmp t
         INNER JOIN MembershipTags m ON t.user_id = m.user_id
         WHERE t.Rank <> 0 AND t.Ladder = 'Yes'
@@ -266,7 +267,7 @@ function spp_create_membership_table() {
         CREATE TABLE {$masterY} AS
         SELECT t.Rank, t.user_id, t.first_name, t.last_name,
                t.user_phone, t.travel, t.user_email,
-               t.Ladder, t.Rating, t.ClubRating, t.DUPR, m.Tag
+               t.Ladder, t.Rating, t.ClubRating, t.RatingGames, t.DUPR, m.Tag
         FROM tmp t
         INNER JOIN MembershipTags m ON t.user_id = m.user_id
         WHERE t.Rank <> 0 AND t.Ladder = 'Yes'
@@ -282,7 +283,7 @@ function spp_create_membership_table() {
         CREATE TABLE {$membership} AS
         SELECT t.Rank, t.user_id, t.first_name, t.last_name,
                t.user_phone, t.travel, t.user_email,
-               t.Ladder, t.PCO, t.Rating, t.ClubRating, t.DUPR, m.Tag
+               t.Ladder, t.PCO, t.Rating, t.ClubRating, t.RatingGames, t.DUPR, m.Tag
         FROM tmp t
         LEFT JOIN MembershipTags m ON t.user_id = m.user_id
         ORDER BY last_name
@@ -299,7 +300,7 @@ function spp_create_membership_table() {
         CREATE TABLE {$membershipY} AS
         SELECT t.Rank, t.user_id, t.first_name, t.last_name,
                t.user_phone, t.travel, t.user_email,
-               t.Ladder, t.PCO, t.Rating, t.ClubRating, t.DUPR, m.Tag
+               t.Ladder, t.PCO, t.Rating, t.ClubRating, t.RatingGames, t.DUPR, m.Tag
         FROM tmp t
         LEFT JOIN MembershipTags m ON t.user_id = m.user_id
         ORDER BY last_name
