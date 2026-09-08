@@ -266,7 +266,7 @@ function spp_report_master() {
     return array(
         'columns'      => $columns,
         'rows'         => $rows,
-        'default_sort' => 'last_name',
+        'default_sort' => 'Rank',
     );
 }
 
