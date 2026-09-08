@@ -221,6 +221,53 @@ function spp_report_membership() {
         'default_sort' => 'last_name',
     );
 }
+/**
+ * Masterlist report: all tracked columns for every member of the ladder, unfiltered
+ * -- replaces the WPDA "Club Membership list" app (app_id=18, see that
+ * investigation). Same 11 columns/order/labels that app renders today,
+ * plus ClubRating and DUPR (selected in that app's own column picker
+ * but never actually wired into its rendered column list). Every
+ * column here is sortable, unlike the WPDA app (last_name only) --
+ * intentional improvement, not an oversight.
+ *
+ * ORDER BY last_name, first_name here 
+ */
+function spp_report_master() {
+    global $wpdb;
+ 
+    $rows = $wpdb->get_results(
+        "SELECT Rank, Rating, ClubRating, RatingGames, DUPR, Ladder, Tag,
+                first_name, last_name, travel, user_phone, user_email,
+                PCO, user_id
+         FROM membership
+         where Ladder  'Yes'
+         ORDER BY last_name ASC, first_name ASC",
+        ARRAY_A
+    );
+
+    $columns = array(
+        array( 'key' => 'Rank',       'label' => 'Rank',       'sortable' => true ),
+        array( 'key' => 'Rating',     'label' => 'Rating',     'sortable' => true ),
+        array( 'key' => 'ClubRating', 'label' => 'SPPRating', 'sortable' => true ),
+        array( 'key' => 'RatingGames', 'label' => 'Games', 'sortable' => true ),
+        array( 'key' => 'DUPR',       'label' => 'DUPR',       'sortable' => true ),
+        array( 'key' => 'Ladder',     'label' => 'Ldr',        'sortable' => true ),
+        array( 'key' => 'Tag',        'label' => 'Tag',        'sortable' => true ),
+        array( 'key' => 'first_name', 'label' => 'First Name', 'sortable' => true ),
+        array( 'key' => 'last_name',  'label' => 'Last Name',  'sortable' => true ),
+        array( 'key' => 'travel',     'label' => 'Travel',     'sortable' => true ),
+        array( 'key' => 'user_phone', 'label' => 'Phone',      'sortable' => true ),
+        array( 'key' => 'user_email', 'label' => 'Email',      'sortable' => true ),
+        array( 'key' => 'PCO',        'label' => 'PCO',        'sortable' => true ),
+        array( 'key' => 'user_id',    'label' => 'User',       'sortable' => true ),
+    );
+
+    return array(
+        'columns'      => $columns,
+        'rows'         => $rows,
+        'default_sort' => 'last_name',
+    );
+}
 
 /**
  * Canonical enum of rows-per-page choices, used everywhere per_page is
