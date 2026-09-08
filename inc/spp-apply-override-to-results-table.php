@@ -1,8 +1,48 @@
 <?php
 /* =========================================================
    Apply Override to Results Table
-   Version: 1.1.0
-   Date: 2026-09-07
+   Version: 1.3.0
+   Date: 2026-09-08
+
+   Changes from 1.2.0:
+   - Added a trial-recipient choice on the Stage 2 ("Confirm Results
+     Email") form: "Trial -- Send to: Convenor / Me (administrator)",
+     matching gl_publish_schedule's identical addition the same day.
+     Not on Stage 1 -- Stage 1 never sends email at all, so the
+     control would be inert there (same reasoning already applied to
+     that stage's notification-message placement). Not persisted --
+     always defaults to Convenor, matching prior behavior exactly
+     whenever the new hidden trial_recipient field is absent or
+     anything other than 'me'. Rides inside the existing Stage 2
+     nonce'd form via the same form="apply-override-stage2-form"
+     HTML5 attribute technique already used for the notification-
+     message textarea. Choosing "Me" changes only the delivery
+     address ($trial_email_target replaces $convenor_email in the
+     wp_mail() call and the status line) -- the results email itself
+     isn't personalized per-recipient, so no other content changes.
+
+   Changes from 1.1.0:
+   - Added an editable default notification message for the results-
+     publish email. A "Notification Message (optional)" textarea,
+     pre-filled from the spp_results_publish_intro_message option, is
+     on the STAGE 2 confirm screen ("Confirm Results Email") -- not
+     Stage 1, which only rewrites Results/Results_all/backup tables
+     and never sends an email at all. Stage 2 is this flow's real
+     analogue to gl_publish_schedule's single confirm stage: the
+     screen that sits directly before the actual send. Rides inside
+     the existing Stage 2 nonce'd form via the HTML5
+     form="apply-override-stage2-form" attribute (visually placed
+     above .confirm-box, same as the schedule-publish message box) --
+     no new gate, no new nonce. On confirmed send, whatever text is
+     present is (a) rendered into the results email via a new
+     $intro_note_html block spliced in right after the header,
+     alongside the existing rank/score content, never replacing it --
+     and (b) saved back to the same option as the new default for
+     next time, in one step. Renders nothing at all when blank.
+     Sanitized with sanitize_textarea_field() on save, escaped with
+     nl2br(esc_html()) on output, matching gl_publish_schedule's
+     identical addition the same day and this file's own existing
+     esc_html()/esc_attr() discipline.
 
    Changes from 1.0.0:
    - SECURITY FIX (Tier 1 access-control audit): zero server-side
@@ -178,6 +218,12 @@ function spp_apply_override_to_results_table() {
     // -- Email mode from option -- default to trial --------------------------------
     $email_mode = get_option( 'spp_email_mode', 'trial' );
 
+    // -- Notification intro message -- default from last time, editable per-send --
+    $intro_message_default = get_option( 'spp_results_publish_intro_message', '' );
+
+    // -- Trial-recipient choice -- not persisted, always defaults to convenor -----
+    $current_user_email = wp_get_current_user()->user_email;
+
     // -- Determine the event being published --------------------------------------
     // Read from the Results table (authoritative — it carries the event_id of the
     // PLAYED event, stamped by Create Results from Schedules.event_id). Do NOT use
@@ -195,6 +241,13 @@ function spp_apply_override_to_results_table() {
         LIMIT 1
     ", $results_event ) );
     if ( ! $convenor_email ) $convenor_email = 'abrooks@rogers.com';
+
+    // -- Resolve trial-recipient choice -- 'me' delivers the same results email
+    // to the administrator's own inbox instead of the convenor's, for previewing.
+    // Only meaningful on Stage 2 (the only stage that ever sends email), but
+    // resolved here once so both stages' forms could reference it if needed.
+    $trial_recipient    = ( isset($_POST['trial_recipient']) && $_POST['trial_recipient'] === 'me' ) ? 'me' : 'convenor';
+    $trial_email_target = ( $trial_recipient === 'me' ) ? $current_user_email : $convenor_email;
 
     // -- Stage confirmations ---------------------------------------------------------
     // Nonce required alongside each stage's own confirm flag -- neither
@@ -420,6 +473,10 @@ function spp_apply_override_to_results_table() {
             .email-mode-box input[type=radio] { margin-right:8px; }
             .mode-trial { color:#e67e22; font-weight:bold; }
             .mode-full  { color:#c0392b; font-weight:bold; }
+            .message-box { background:#f0f7ff; border:1px solid #3766AB; border-radius:6px; padding:16px; margin:16px 0; }
+            .message-box h4 { color:#3766AB; margin:0 0 10px; }
+            .message-box textarea { width:100%; box-sizing:border-box; padding:8px; font-family:Arial,sans-serif; font-size:14px; border:1px solid #ccc; border-radius:4px; resize:vertical; }
+            .message-box p { margin:6px 0 0; font-size:12px; color:#666; }
         </style>
         <div class="confirm-wrap">
             <p style="color:green;">OK: Results processed and menus updated successfully.</p>
@@ -428,12 +485,29 @@ function spp_apply_override_to_results_table() {
                 <h4>Email Notification Mode</h4>
                 <label>
                     <input type="radio" name="email_mode_preview" value="trial" <?php checked($email_mode,'trial'); ?> onchange="document.getElementById('mode_input2').value='trial';">
-                    <span class="mode-trial">Trial &mdash;</span> Send to convenor only (<?php echo esc_html($convenor_email); ?>)
+                    <span class="mode-trial">Trial &mdash;</span> Send to:
                 </label>
+                <div style="margin:2px 0 8px 26px;">
+                    <label style="font-weight:normal;">
+                        <input type="radio" name="trial_recipient_preview" value="convenor" checked onchange="document.getElementById('trial_recipient_input2').value='convenor';">
+                        Convenor (<?php echo esc_html($convenor_email); ?>)
+                    </label>
+                    <label style="font-weight:normal;">
+                        <input type="radio" name="trial_recipient_preview" value="me" onchange="document.getElementById('trial_recipient_input2').value='me';">
+                        Me &mdash; administrator (<?php echo esc_html($current_user_email); ?>)
+                    </label>
+                </div>
                 <label>
                     <input type="radio" name="email_mode_preview" value="full" <?php checked($email_mode,'full'); ?> onchange="document.getElementById('mode_input2').value='full';">
                     <span class="mode-full">Full send &mdash;</span> Send to all <?php echo $recipient_count; ?> Master list members
                 </label>
+            </div>
+            <input type="hidden" name="trial_recipient" id="trial_recipient_input2" form="apply-override-stage2-form" value="convenor">
+
+            <div class="message-box">
+                <h4>Notification Message (optional)</h4>
+                <textarea name="intro_message" form="apply-override-stage2-form" rows="4" placeholder="e.g. Congrats to everyone who moved up this week!"><?php echo esc_textarea($intro_message_default); ?></textarea>
+                <p>Appears in the results-posted email alongside the rank/score content. Saved as the new default the next time results are published.</p>
             </div>
 
             <div class="confirm-box">
@@ -441,7 +515,7 @@ function spp_apply_override_to_results_table() {
                 <p>Ready to send results notification.</p>
                 <p style="color:#c0392b;font-weight:bold;">This cannot be undone. Are you sure?</p>
             </div>
-            <form method="post">
+            <form method="post" id="apply-override-stage2-form">
                 <?php wp_nonce_field( 'spp_apply_override_to_results_table_action', 'spp_apply_override_to_results_table_nonce' ); ?>
                 <input type="hidden" name="apply_override_confirmed" value="1">
                 <input type="hidden" name="email_mode" id="mode_input2" value="<?php echo esc_attr($email_mode); ?>">
@@ -454,6 +528,28 @@ function spp_apply_override_to_results_table() {
     }
 
     // -- STAGE 2 CONFIRMED -- send results email -----------------------------------
+
+    // Whatever's in the textarea right now is both this send's message and the
+    // new saved default for next time -- no separate "save as default" step.
+    $intro_message = isset($_POST['intro_message'])
+        ? sanitize_textarea_field( wp_unslash( $_POST['intro_message'] ) )
+        : $intro_message_default;
+    update_option( 'spp_results_publish_intro_message', $intro_message );
+
+    // Optional admin-authored note -- sits alongside the existing rank/score
+    // content below, never replaces it. Empty string when blank, so an
+    // unedited default never adds a stray box to the email.
+    $intro_note_html = '';
+    if ( $intro_message !== '' ) {
+        $intro_note_html = '
+  <tr>
+    <td style="padding:16px 24px 0 24px;">
+      <div style="background:#f0f7ff;border:1px solid #3766AB;border-radius:6px;padding:12px 16px;font-size:14px;color:#333;">
+        ' . nl2br( esc_html( $intro_message ) ) . '
+      </div>
+    </td>
+  </tr>';
+    }
 
     // -- GL EVENTS: get event date from gl_event_occurrences ----------------------
     // Read directly from Results (authoritative, just written by Stage 1) rather
@@ -494,7 +590,7 @@ function spp_apply_override_to_results_table() {
         </tr>
       </table>
     </td>
-  </tr>
+  </tr>' . $intro_note_html . '
   <tr>
     <td style="padding:24px;">
       <p style="font-size:16px;font-weight:bold;color:#00897B;margin:0 0 12px 0;">Ladder Results are Posted!</p>
@@ -529,8 +625,8 @@ function spp_apply_override_to_results_table() {
     $is_trial = ($email_mode === 'trial');
 
     if ( $is_trial ) {
-        $ok = wp_mail($convenor_email, $subject . ' [TRIAL]', $body, $headers);
-        echo "<br><span style='font-size:14px;color:#339966;'>" . ($ok ? "OK: Trial results email sent to: {$convenor_email}" : "FAILED: Trial email failed") . "</span>";
+        $ok = wp_mail($trial_email_target, $subject . ' [TRIAL]', $body, $headers);
+        echo "<br><span style='font-size:14px;color:#339966;'>" . ($ok ? "OK: Trial results email sent to: {$trial_email_target}" : "FAILED: Trial email failed") . "</span>";
     } else {
         $recipients = $wpdb->get_col("SELECT user_email FROM Master WHERE user_email != '' ORDER BY last_name");
         $sent_count = 0; $fail_count = 0;

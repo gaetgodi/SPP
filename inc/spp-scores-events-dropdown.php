@@ -1,9 +1,23 @@
 <?php
 /* =========================================================
    Scores Events Dropdown
-   Version: 1.0.0
-   Date: 2026-09-05
+   Version: 1.1.0
+   Date: 2026-09-08
    Based on: Code Manager snippet "Scores Events drop down" (CM273)
+
+   Changes from 1.0.0:
+   - Event-id-to-real-date resolution (gl_event_occurrences LEFT JOIN
+     + event_date_lookup, COALESCE'd) now goes through the shared
+     spp_event_date_resolution_sql() helper (functions.php) instead
+     of an inline copy of the same two joins -- so this file and
+     spp_remove_inactive_ladder_users() (fixed the same day, see that
+     file's own changelog) share one resolution mechanism instead of
+     each maintaining its own. No behavior change: the join keys,
+     join order (gl_event_occurrences preferred over event_date_lookup
+     via COALESCE), and resulting event_date_display formatting are
+     identical to 1.0.0 -- verified DATE_FORMAT(COALESCE(a,b),...) ==
+     COALESCE(DATE_FORMAT(a,...), DATE_FORMAT(b,...)) holds here since
+     the two joins are mutually exclusive per event_id in practice.
 
    PURPOSE:
    Renders the event-selector dropdown used on the scores-viewing
@@ -99,25 +113,19 @@ function spp_scores_events_dropdown() {
     // ────────────────────────────────────────────────────────────────
 
     // Get all events that have a Schedules_Scores_ table
+    $event_id_expr = "CAST(REPLACE(t.table_name, 'Schedules_Scores_', '') AS UNSIGNED)";
+    $resolved      = spp_event_date_resolution_sql( $event_id_expr, 'sed' );
+
     $events = $wpdb->get_results( "
         SELECT
-            CAST(REPLACE(t.table_name, 'Schedules_Scores_', '') AS UNSIGNED) AS event_id,
-            COALESCE(
-                CONCAT(geo.event_date, ' ', geo.event_time),
-                edl.event_date
-            ) AS start_date,
-            COALESCE(
-                DATE_FORMAT(CONCAT(geo.event_date, ' ', geo.event_time), '%M %d, %Y %l:%i %p'),
-                DATE_FORMAT(edl.event_date, '%M %d, %Y %l:%i %p')
-            ) AS event_date_display
+            {$event_id_expr} AS event_id,
+            {$resolved['date_expr']} AS start_date,
+            DATE_FORMAT({$resolved['date_expr']}, '%M %d, %Y %l:%i %p') AS event_date_display
         FROM information_schema.tables t
-        LEFT JOIN {$prefix}gl_event_occurrences geo
-            ON CAST(REPLACE(t.table_name, 'Schedules_Scores_', '') AS UNSIGNED) = geo.id
-        LEFT JOIN event_date_lookup edl
-            ON CAST(REPLACE(t.table_name, 'Schedules_Scores_', '') AS UNSIGNED) = edl.event_id
+        {$resolved['join']}
         WHERE t.table_schema = DATABASE()
           AND t.table_name REGEXP '^Schedules_Scores_[0-9]+$'
-        ORDER BY COALESCE(CONCAT(geo.event_date, ' ', geo.event_time), edl.event_date) DESC
+        ORDER BY {$resolved['date_expr']} DESC
     ", ARRAY_A );
 
     // Prepend live event if not already in the snapshot list

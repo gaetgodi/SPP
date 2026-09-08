@@ -143,6 +143,50 @@ function spp_is_ladder_admin() {
         || in_array('ladder-cop', $roles);
 }
 /* =========================================================
+   EVENT DATE RESOLUTION HELPER
+   Resolves any event_id from Results_all/Schedules-style tables to
+   a real calendar date/time, regardless of which numbering epoch it
+   belongs to: gl_event_occurrences covers the current GL Events ids
+   (small, sequential); event_date_lookup (a small standalone
+   backfill table) covers everything gl_event_occurrences doesn't,
+   including the retired TEC/rtec-legacy ids (+30000000-offset).
+   COALESCE prefers gl_event_occurrences when both resolve.
+
+   This is the exact join+COALESCE logic spp_scores_events_dropdown()
+   (CM273) has used correctly all along -- lifted out here so any
+   other query needing "what real date did this event_id happen on"
+   reuses the same resolution instead of re-deriving its own. A
+   re-derived, narrower version of this same problem (a hardcoded
+   constant from one numbering epoch compared against ids from
+   another) is exactly what produced the event_id > 30000760 cutoff
+   bug in spp_remove_inactive_ladder_users() -- see that file's
+   changelog. Added when fixing that bug; also adopted by
+   spp_scores_events_dropdown() itself, replacing its own inline copy
+   of the same two joins.
+
+   Usage: splice the two LEFT JOINs from $join into the query's FROM
+   clause, then use $date_expr anywhere the resolved DATETIME is
+   needed (SELECT, WHERE, ORDER BY, ...). $event_id_expr is the
+   caller's own column/expression to resolve (e.g. 'r.event_id', or a
+   CAST(...) over an information_schema column). $alias lets a query
+   that needs this joined more than once (e.g. two different
+   event_id columns) avoid alias collisions between joins.
+   ========================================================= */
+function spp_event_date_resolution_sql( $event_id_expr, $alias = 'ed' ) {
+    global $wpdb;
+    $prefix = $wpdb->prefix;
+    $geo    = $alias . '_geo';
+    $edl    = $alias . '_edl';
+
+    $join = "
+        LEFT JOIN {$prefix}gl_event_occurrences {$geo} ON {$event_id_expr} = {$geo}.id
+        LEFT JOIN event_date_lookup {$edl} ON {$event_id_expr} = {$edl}.event_id
+    ";
+    $date_expr = "COALESCE(CONCAT({$geo}.event_date, ' ', {$geo}.event_time), {$edl}.event_date)";
+
+    return array( 'join' => $join, 'date_expr' => $date_expr );
+}
+/* =========================================================
    PAGE ACCESS RESTRICTION
    Restricts cmruncode pages to editors and admins only,
    with exceptions for member-facing pages.

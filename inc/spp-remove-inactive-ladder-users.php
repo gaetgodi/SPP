@@ -1,10 +1,63 @@
 <?php
 /* =========================================================
    Remove Inactive Ladder Users
-   Version: 1.1.0
-   Date: 2026-09-07
+   Version: 1.2.0
+   Date: 2026-09-08
    Based on: Code Manager snippet "Remove ladder users who have
    not played this year" (CM176)
+
+   Changes from 1.1.0:
+   - BUG FIX (found via a fresh preview-list investigation, not a
+     report of a bad removal -- the 2026-09-06 incident's 74 reverted
+     users happened to make this visible before anyone was actually
+     removed by it a second time): the selection query's cutoff,
+     event_id > 30000760, compared every candidate's Results_all rows
+     against a TEC/rtec-legacy event_id (+30000000-offset numbering
+     scheme that stopped being used around event_id 30000895, ~Sept
+     2025) while the live GL Events pipeline has used a completely
+     different, disjoint, small sequential event_id space (currently
+     around 160) ever since. No GL-era event_id can ever satisfy
+     "> 30000760", so the query was blind to all play recorded after
+     the migration -- it flagged 74 of 168 active ladder members (44%
+     of the ladder), every single one of whom had played as recently
+     as 2 weeks prior (verified against event 162, 2026-08-24).
+   - FIXED: cutoff comparison replaced entirely -- no hardcoded event
+     ids anywhere in the new query. A candidate now qualifies for
+     removal only if they have zero Results_all rows with a non-NULL
+     Score (NULL Score is a valid no-show/rank-decay state, not "no
+     row" -- confirmed against live data: ~51% of all Results_all
+     rows have NULL Score regardless of event or era, so row
+     existence alone is not evidence of play) whose REAL resolved
+     calendar date falls in the current year. "Real resolved date"
+     uses the same gl_event_occurrences/event_date_lookup resolution
+     spp_scores_events_dropdown() (CM273) already used correctly --
+     now shared via spp_event_date_resolution_sql() (functions.php)
+     instead of this file re-deriving its own version of the same
+     problem, which is exactly how the 30000760 constant happened in
+     the first place.
+   - Preview (Stage 1) now shows each candidate's actual last-played
+     date (most recent non-NULL-Score date, any year, same
+     resolution) alongside Rank and full name, so the list is
+     self-verifying at a glance -- pulled from Master.first_name/
+     last_name instead of Results_all.display_name, which was NULL
+     for most candidates anyway (it only populates when a row joins
+     on the old cutoff condition, which is exactly the query being
+     replaced here).
+   - Re-verified against live data after the fix: of the 74 people
+     the old query flagged, 67 clear immediately (real 2026 play);
+     the remaining 7 -- Lydia Bogle, Gerry Funk, Henry St. Louis,
+     Brian Mok, Kevin Tan, Nirmala Seshadri, Devi Dasan -- are
+     confirmed genuine candidates (zero non-NULL Score anywhere in
+     2026, and for six of them, zero non-NULL Score ever on record).
+     19 more genuinely-inactive-in-2026 people the old query MISSED
+     entirely (a false-negative side of the same bug: they have an
+     old non-NULL Score from the legacy 2025 window, which alone
+     satisfied the old ">30000760" check) are now correctly included.
+     Full detail in this migration's own investigation notes, not
+     duplicated here.
+   - No change to the write/confirm loop's mechanics (Ladder=No,
+     Rank archived to old_Rank with the existing delete-before-insert
+     guard) -- only the selection query and preview display changed.
 
    Changes from 1.0.0:
    - SECURITY FIX (Tier 1 access-control audit): the 2026-09-06
@@ -28,13 +81,13 @@
 
    PURPOSE:
    NOT read-only, despite the name -- for every Master-list player
-   with zero scored results since a fixed cutoff event
-   ($lowevent = 30000760, a TEC-era event ID), this permanently
-   removes them from the ladder: sets Ladder='No' and archives
-   their current Rank to old_Rank usermeta (so it can be restored
-   with a bias if they later rejoin, the same old_Rank mechanism
-   CM82/spp_random_ranks() read). A bulk, automated version of
-   CM82 "Remove user from Ladder"'s single-user action -- does not
+   with zero non-NULL-Score results in the current calendar year
+   (real resolved date, not a hardcoded event id -- see 1.2.0 above),
+   this permanently removes them from the ladder: sets Ladder='No'
+   and archives their current Rank to old_Rank usermeta (so it can be
+   restored with a bias if they later rejoin, the same old_Rank
+   mechanism CM82/spp_random_ranks() read). A bulk, automated version
+   of CM82 "Remove user from Ladder"'s single-user action -- does not
    call CM82, has its own independent copy of the same logic.
 
    CALLED FROM (as of this migration):
@@ -105,7 +158,6 @@ function spp_remove_inactive_ladder_users() {
     global $wpdb;
 
     $umetatable = $wpdb->prefix . 'usermeta';
-    $lowevent   = 30000760;
 
     // Nonce required alongside 'sriu_confirmed' -- closes the CSRF gap
     // the existing confirm step didn't cover on its own. Invalid/missing
@@ -114,29 +166,63 @@ function spp_remove_inactive_ladder_users() {
         && isset( $_POST['spp_remove_inactive_ladder_users_nonce'] )
         && wp_verify_nonce( $_POST['spp_remove_inactive_ladder_users_nonce'], 'spp_remove_inactive_ladder_users_action' );
 
-    $inactive = $wpdb->get_results( $wpdb->prepare( "
-        SELECT m.user_id, m.Rank, r.display_name
+    // Shared date-resolution logic (functions.php) -- same mechanism
+    // spp_scores_events_dropdown() uses, so this query never has to
+    // guess which event_id numbering epoch a row belongs to. See the
+    // 1.2.0 changelog above for why that guess (a hardcoded cutoff
+    // event id) was the bug.
+    $date_resolution = spp_event_date_resolution_sql( 'r.event_id', 'sriu' );
+    $date_expr       = $date_resolution['date_expr'];
+
+    // No hardcoded event ids: a candidate qualifies only if NONE of
+    // their Results_all rows have a non-NULL Score whose resolved
+    // real date falls in the current calendar year. NULL Score is a
+    // valid no-show/rank-decay state, not evidence of absence, so it
+    // never counts as play here -- and it's never mistaken for "no
+    // row at all" either, since row existence alone isn't play.
+    $inactive = $wpdb->get_results( "
+        SELECT m.user_id, m.Rank,
+               CONCAT(m.first_name, ' ', m.last_name) AS full_name,
+               MAX(CASE WHEN r.Score IS NOT NULL THEN {$date_expr} END) AS last_played_date
         FROM Master m
         LEFT JOIN Results_all r ON m.user_id = r.user_id
-            AND r.event_id > %d
+        {$date_resolution['join']}
         GROUP BY m.user_id
-        HAVING COUNT(r.Score) = 0
+        HAVING SUM(CASE WHEN r.Score IS NOT NULL AND YEAR({$date_expr}) = YEAR(CURDATE())
+                        THEN 1 ELSE 0 END) = 0
         ORDER BY Rank ASC
-    ", $lowevent ), ARRAY_A );
+    ", ARRAY_A );
+
+    // Formats a MySQL DATETIME (or NULL) into the self-verifying
+    // "<date> (<n> ago)" / "Never" display used by both the preview
+    // and the confirmed-removal log below, so what gets shown before
+    // removal and what gets logged during it always agree.
+    $format_last_played = function( $last_played_date ) {
+        if ( empty( $last_played_date ) ) {
+            return 'Never (no non-NULL Score on record)';
+        }
+        $ts = strtotime( $last_played_date );
+        return date_i18n( 'F j, Y', $ts ) . ' (' . human_time_diff( $ts, current_time( 'timestamp' ) ) . ' ago)';
+    };
 
     if ( ! $confirmed ) {
-        echo '<div style="max-width:600px;margin:20px auto;font-family:Arial,sans-serif;">';
+        echo '<div style="max-width:700px;margin:20px auto;font-family:Arial,sans-serif;">';
         if ( empty( $inactive ) ) {
-            echo '<p>No players currently qualify for removal (none with zero scored results since the cutoff event).</p>';
+            echo '<p>No players currently qualify for removal (none with zero non-NULL-Score results this year).</p>';
             return;
         }
         echo '<div style="background:#fdf3f2;border:2px solid #c0392b;border-radius:6px;padding:16px;margin:16px 0;">';
         echo '<p style="color:#c0392b;font-weight:bold;">This will remove ' . count( $inactive ) . ' player(s) from the ladder (Ladder=No, current Rank archived to old_Rank):</p>';
-        echo '<ul>';
+        echo '<table style="width:100%;max-width:100%;overflow-x:auto;border-collapse:collapse;font-size:0.9rem;">';
+        echo '<tr style="text-align:left;border-bottom:2px solid #c0392b;"><th style="padding:4px 8px;">Rank</th><th style="padding:4px 8px;">Name</th><th style="padding:4px 8px;">Last Played</th></tr>';
         foreach ( $inactive as $value ) {
-            echo '<li>' . esc_html( $value['user_id'] . ' ' . $value['display_name'] . ' (Rank ' . $value['Rank'] . ')' ) . '</li>';
+            echo '<tr style="border-bottom:1px solid #eee;">';
+            echo '<td style="padding:4px 8px;">' . esc_html( $value['Rank'] ) . '</td>';
+            echo '<td style="padding:4px 8px;">' . esc_html( $value['full_name'] ) . '</td>';
+            echo '<td style="padding:4px 8px;">' . esc_html( $format_last_played( $value['last_played_date'] ) ) . '</td>';
+            echo '</tr>';
         }
-        echo '</ul>';
+        echo '</table>';
         echo '</div>';
         echo '<form method="post">';
         wp_nonce_field( 'spp_remove_inactive_ladder_users_action', 'spp_remove_inactive_ladder_users_nonce' );
@@ -153,9 +239,10 @@ function spp_remove_inactive_ladder_users() {
     foreach ( $inactive as $value ) {
         $user_id      = (int) $value['user_id'];
         $rank         = $value['Rank'];
-        $display_name = $value['display_name'];
+        $display_name = $value['full_name'];
+        $last_played  = $format_last_played( $value['last_played_date'] );
 
-        echo "<br>$user_id $display_name $rank";
+        echo "<br>$user_id $display_name $rank -- last played: $last_played";
 
         $wpdb->query( $wpdb->prepare( "DELETE FROM {$umetatable} WHERE user_id=%d AND meta_key='Ladder'", $user_id ) );
         $wpdb->query( $wpdb->prepare( "INSERT INTO {$umetatable} (user_id, meta_key, meta_value) VALUES (%d,'Ladder','No')", $user_id ) );

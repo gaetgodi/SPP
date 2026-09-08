@@ -1,9 +1,46 @@
 <?php
 /* =========================================================
    GL Publish Schedule
-   Version: 2.8.0
-   Date: 2026-09-07
+   Version: 2.10.0
+   Date: 2026-09-08
    Based on: Publish Schedule 2.7 (CM snippet code_id 64)
+
+   Changes from 2.9.0:
+   - Added a trial-recipient choice: "Trial -- Send to: Convenor / Me
+     (administrator)", nested under the existing Trial radio in the
+     Stage 1 email-mode box. Not persisted (no new option) -- always
+     defaults to Convenor, matching prior behavior exactly whenever
+     the new hidden trial_recipient field is absent or anything other
+     than 'me'. Rides inside the same nonce'd Stage 1 form via the
+     same form="publish-schedule-form" HTML5 attribute technique
+     already used for the notification-message textarea. Choosing
+     "Me" changes only the delivery address ($trial_email_target
+     replaces $convenor_email as the synthetic trial recipient's
+     user_email) -- user_id/first_name/last_name stay the convenor's,
+     so "Me" delivers the exact same rendered content (personalized
+     or generic, whichever branch the convenor's own group membership
+     selects) to the administrator's own inbox instead, for
+     previewing before the convenor or full membership see it.
+
+   Changes from 2.8.0:
+   - Added an editable default notification message. A "Notification
+     Message (optional)" textarea on the Stage 1 confirm screen,
+     pre-filled from the spp_schedule_publish_intro_message option,
+     rides inside the existing nonce'd confirm form (via the HTML5
+     form="publish-schedule-form" attribute, since it's visually
+     placed above the .confirm-box while the <form> itself starts
+     below it -- no new gate, no new nonce). On confirmed publish,
+     whatever text is present is (a) rendered into every schedule
+     email -- personalized and generic alike, via a new
+     build_intro_note() closure spliced in right after the header,
+     alongside the existing court/group-assignment content, never
+     replacing it -- and (b) saved back to the same option as the new
+     default for next time, in one step (no separate "save default"
+     action). Renders nothing at all when blank, so an unedited
+     default never adds an empty box to the email. Sanitized with
+     sanitize_textarea_field() on save, escaped with
+     nl2br(esc_html()) on output -- same escaping discipline already
+     used elsewhere in this file.
 
    Changes from 2.7.1:
    - SECURITY FIX (Tier 1 access-control audit): zero server-side
@@ -83,6 +120,12 @@ function gl_publish_schedule_run() {
     // ── Email mode from option -- default to trial ────────────────────────────────
     $email_mode = get_option( 'spp_email_mode', 'trial' );
 
+    // ── Notification intro message -- default from last time, editable per-send ───
+    $intro_message_default = get_option( 'spp_schedule_publish_intro_message', '' );
+
+    // ── Trial-recipient choice -- not persisted, always defaults to convenor ──────
+    $current_user_email = wp_get_current_user()->user_email;
+
     // ── Get event ID from option ──────────────────────────────────────────────────
     $Event = (int) get_option('spp_current_event', 0);
     if (!$Event) {
@@ -113,6 +156,12 @@ function gl_publish_schedule_run() {
     $convenor_name   = trim( $occ['convenor_first_name'] . ' ' . $occ['convenor_last_name'] );
     $convenor_phone  = $occ['convenor_phone'];
     $convenor_email  = $occ['convenor_email'] ?: 'abrooks@rogers.com';
+
+    // ── Resolve trial-recipient choice -- 'me' delivers the exact same rendered
+    // content the convenor would get (same personalized-or-generic branch, same
+    // body), just to the administrator's own inbox instead, for previewing.
+    $trial_recipient    = ( isset($_POST['trial_recipient']) && $_POST['trial_recipient'] === 'me' ) ? 'me' : 'convenor';
+    $trial_email_target = ( $trial_recipient === 'me' ) ? $current_user_email : $convenor_email;
 
     // ── Handle email mode toggle from confirmation form ───────────────────────────
     if ( isset($_POST['email_mode']) && in_array($_POST['email_mode'], ['trial','full']) ) {
@@ -147,6 +196,10 @@ function gl_publish_schedule_run() {
             .email-mode-box input[type=radio] { margin-right:8px; }
             .mode-trial { color:#e67e22; font-weight:bold; }
             .mode-full  { color:#c0392b; font-weight:bold; }
+            .message-box { background:#f0f7ff; border:1px solid #3766AB; border-radius:6px; padding:16px; margin:16px 0; }
+            .message-box h4 { color:#3766AB; margin:0 0 10px; }
+            .message-box textarea { width:100%; box-sizing:border-box; padding:8px; font-family:Arial,sans-serif; font-size:14px; border:1px solid #ccc; border-radius:4px; resize:vertical; }
+            .message-box p { margin:6px 0 0; font-size:12px; color:#666; }
         </style>
         <div class="confirm-wrap">
             <h2>Publish Schedule<br><?php echo esc_html($title); ?></h2>
@@ -155,12 +208,29 @@ function gl_publish_schedule_run() {
                 <h4>Email Notification Mode</h4>
                 <label>
                     <input type="radio" name="email_mode_preview" value="trial" <?php checked($email_mode,'trial'); ?> onchange="document.getElementById('mode_input').value='trial';">
-                    <span class="mode-trial">Trial &mdash;</span> Send to convenor only (<?php echo esc_html($convenor_email); ?>)
+                    <span class="mode-trial">Trial &mdash;</span> Send to:
                 </label>
+                <div style="margin:2px 0 8px 26px;">
+                    <label style="font-weight:normal;">
+                        <input type="radio" name="trial_recipient_preview" value="convenor" checked onchange="document.getElementById('trial_recipient_input').value='convenor';">
+                        Convenor (<?php echo esc_html($convenor_email); ?>)
+                    </label>
+                    <label style="font-weight:normal;">
+                        <input type="radio" name="trial_recipient_preview" value="me" onchange="document.getElementById('trial_recipient_input').value='me';">
+                        Me &mdash; administrator (<?php echo esc_html($current_user_email); ?>)
+                    </label>
+                </div>
                 <label>
                     <input type="radio" name="email_mode_preview" value="full" <?php checked($email_mode,'full'); ?> onchange="document.getElementById('mode_input').value='full';">
                     <span class="mode-full">Full send &mdash;</span> Send to all <?php echo $total_count; ?> Master list members
                 </label>
+            </div>
+            <input type="hidden" name="trial_recipient" id="trial_recipient_input" form="publish-schedule-form" value="convenor">
+
+            <div class="message-box">
+                <h4>Notification Message (optional)</h4>
+                <textarea name="intro_message" form="publish-schedule-form" rows="4" placeholder="e.g. Reminder: bring your own paddle covers this week!"><?php echo esc_textarea($intro_message_default); ?></textarea>
+                <p>Appears in every schedule email (personalized and generic) alongside the court/group assignments. Saved as the new default the next time you publish.</p>
             </div>
 
             <div class="confirm-box">
@@ -172,7 +242,7 @@ function gl_publish_schedule_run() {
                 </ul>
                 <p style="color:#c0392b;font-weight:bold;">This cannot be undone. Are you sure?</p>
             </div>
-            <form method="post">
+            <form method="post" id="publish-schedule-form">
                 <?php wp_nonce_field( 'gl_publish_schedule_action', 'gl_publish_schedule_nonce' ); ?>
                 <input type="hidden" name="publish_confirmed" value="1">
                 <input type="hidden" name="email_mode" id="mode_input" value="<?php echo esc_attr($email_mode); ?>">
@@ -185,6 +255,13 @@ function gl_publish_schedule_run() {
     }
 
     // ── CONFIRMED -- publish and send ─────────────────────────────────────────────
+
+    // Whatever's in the textarea right now is both this send's message and the
+    // new saved default for next time -- no separate "save as default" step.
+    $intro_message = isset($_POST['intro_message'])
+        ? sanitize_textarea_field( wp_unslash( $_POST['intro_message'] ) )
+        : $intro_message_default;
+    update_option( 'spp_schedule_publish_intro_message', $intro_message );
 
     // Strip P- prefix
     $wpdb->query("UPDATE Schedules SET first_name = SUBSTRING(first_name, 3) WHERE first_name LIKE 'P-%'");
@@ -337,6 +414,21 @@ function gl_publish_schedule_run() {
         return $html;
     };
 
+    // Optional admin-authored note -- sits alongside the personalized/generic
+    // content below, never replaces it. Renders nothing at all when blank, so
+    // an unset message never adds a stray empty box to the email.
+    $build_intro_note = function() use ($intro_message) {
+        if ( $intro_message === '' ) return '';
+        return '
+  <tr>
+    <td style="padding:16px 24px 0 24px;">
+      <div style="background:#f0f7ff;border:1px solid #3766AB;border-radius:6px;padding:12px 16px;font-size:14px;color:#333;">
+        ' . nl2br( esc_html( $intro_message ) ) . '
+      </div>
+    </td>
+  </tr>';
+    };
+
     $build_score_entry_row = function() {
         return '
   <tr>
@@ -393,7 +485,7 @@ function gl_publish_schedule_run() {
             'user_id'    => (int) $occ['convenor_user_id'],
             'first_name' => $occ['convenor_first_name'],
             'last_name'  => $occ['convenor_last_name'],
-            'user_email' => $convenor_email,
+            'user_email' => $trial_email_target,
         ) );
         $is_trial = true;
     } else {
@@ -419,9 +511,9 @@ function gl_publish_schedule_run() {
             $gid      = $user_group[$uid];
             $players  = $groups[$gid];
             $pairings = count($players) >= 5 ? $pairings_5 : $pairings_4;
-            $body     = $header . $build_group_table($players, $pairings, $uid) . $build_score_entry_row() . $footer;
+            $body     = $header . $build_intro_note() . $build_group_table($players, $pairings, $uid) . $build_score_entry_row() . $footer;
         } else {
-            $body = $header . $build_generic_body() . $footer;
+            $body = $header . $build_intro_note() . $build_generic_body() . $footer;
             $generic_count++;
         }
 
@@ -431,7 +523,7 @@ function gl_publish_schedule_run() {
     }
 
     if ( $is_trial ) {
-        echo '<br>' . ($sent_count ? "OK: Trial email sent to: {$convenor_email}" : 'FAILED: Trial email failed') . '<br>';
+        echo '<br>' . ($sent_count ? "OK: Trial email sent to: {$trial_email_target}" : 'FAILED: Trial email failed') . '<br>';
     } else {
         echo "<br>OK: Personalized schedule emails sent to $sent_count players ($generic_count generic)." . ($fail_count > 0 ? " FAILED: $fail_count failed." : '') . '<br>';
     }
