@@ -202,7 +202,7 @@ function spp_report_membership() {
         array( 'key' => 'Rank',       'label' => 'Rank',       'sortable' => true ),
         array( 'key' => 'Rating',     'label' => 'Rating',     'sortable' => true ),
         array( 'key' => 'ClubRating', 'label' => 'ClubRating', 'sortable' => true ),
-        array( 'key' => 'ClubGames', 'label' => 'ClubGames', 'sortable' => true ),
+        array( 'key' => 'ClubGames', 'label' => 'RatingGames', 'sortable' => true ),
         array( 'key' => 'DUPR',       'label' => 'DUPR',       'sortable' => true ),
         array( 'key' => 'Ladder',     'label' => 'Ldr',        'sortable' => true ),
         array( 'key' => 'Tag',        'label' => 'Tag',        'sortable' => true ),
