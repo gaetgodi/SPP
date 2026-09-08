@@ -1,10 +1,26 @@
 <?php
 /* =========================================================
    Membership Tags Refresh UI
-   Version: 1.0.0
-   Date: 2026-09-05
+   Version: 1.1.0
+   Date: 2026-09-07
    Based on: Code Manager snippet "Membership tags table refresh"
    (CM208)
+
+   Changes from 1.0.0:
+   - SECURITY FIX (Tier 1 access-control audit): the 2026-09-06
+     confirm-gate below added a propose/confirm step but no identity
+     check and no nonce. Ultimate Member's restriction on this page's
+     Main menu link (administrator+editor, confirmed from this week's
+     UM menu audit) only hides that link; both the confirm screen and
+     the real refresh-then-display action were reachable by anyone,
+     logged in or not. Fixed with spp_is_admin_or_editor(), checked
+     first thing in the add_shortcode() wrapper -- the same place this
+     file's own 2026-09-06 note already said the gate belongs. A nonce
+     (wp_nonce_field()/wp_verify_nonce(), action
+     'spp_membership_tags_refresh_ui_action') added to the existing
+     confirm form, required alongside
+     'membership_tags_refresh_confirmed'.
+   - No other behavior change.
 
    PURPOSE:
    Admin-facing wrapper: refreshes MembershipTags (the same sync
@@ -66,9 +82,20 @@ function spp_membership_tags_refresh_ui() {
 }
 
 add_shortcode( 'spp_membership_tags_refresh_ui', function( $atts ) {
+    // Administrator + editor, per this page's Ultimate Member menu
+    // restriction -- confirmed from this week's UM menu audit. Checked
+    // before the confirm-gate below, before anything else.
+    if ( ! spp_is_admin_or_editor() ) {
+        return '<p>You do not have permission to use this tool.</p>';
+    }
+
     ob_start();
 
-    $confirmed = isset( $_POST['membership_tags_refresh_confirmed'] ) && $_POST['membership_tags_refresh_confirmed'] === '1';
+    // Nonce required alongside 'membership_tags_refresh_confirmed' --
+    // closes the CSRF gap the existing confirm step didn't cover.
+    $confirmed = isset( $_POST['membership_tags_refresh_confirmed'] ) && $_POST['membership_tags_refresh_confirmed'] === '1'
+        && isset( $_POST['spp_membership_tags_refresh_ui_nonce'] )
+        && wp_verify_nonce( $_POST['spp_membership_tags_refresh_ui_nonce'], 'spp_membership_tags_refresh_ui_action' );
 
     if ( $confirmed ) {
         spp_membership_tags_refresh_ui();
@@ -79,6 +106,7 @@ add_shortcode( 'spp_membership_tags_refresh_ui', function( $atts ) {
                 <p>This will sync the MembershipTags table for any currently-untagged member.</p>
             </div>
             <form method="post">
+                <?php wp_nonce_field( 'spp_membership_tags_refresh_ui_action', 'spp_membership_tags_refresh_ui_nonce' ); ?>
                 <input type="hidden" name="membership_tags_refresh_confirmed" value="1">
                 <button type="submit" style="padding:10px 24px;background:#3766AB;color:#fff;border:none;border-radius:4px;cursor:pointer;">Yes, Refresh Now</button>
             </form>

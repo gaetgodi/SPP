@@ -14,8 +14,30 @@
  * - Available only while spp_schedule_published = 1.
  * - Paper score sheets + Score Scanner remain the verification layer.
  *
- * Version: 1.3.1
- * Date:    2026-06-30
+ * Version: 1.4.0
+ * Date:    2026-09-07
+ *
+ * Changes from 1.3.1:
+ *   - SECURITY FIX (Tier 2 access-control audit, item 6): $is_admin
+ *     (both here and in the wp_ajax_spp_player_score_entry handler
+ *     below) was current_user_can( 'edit_posts' ) -- granted to any
+ *     currently-active member via spp_sync_blog_author_caps(), not
+ *     just editors/admins (confirmed empirically against a real
+ *     active-member test account: the group-select dropdown rendered
+ *     enabled for them). Since $is_admin is what lets a submitter
+ *     override group_id to something other than their own scheduled
+ *     group, this let any active member submit/overwrite scores for
+ *     a group they weren't part of -- confirmed live: the AJAX
+ *     handler's own group-membership fallback (elseif ($own_group))
+ *     is correct and unchanged, it was only ever reachable for
+ *     non-"admin" callers because $is_admin was wrong. Fixed by
+ *     changing $is_admin to spp_is_admin_or_editor() in both places
+ *     (must match -- an inconsistency between what the UI offers and
+ *     what the AJAX handler allows would itself be a bug). No other
+ *     behavior change: the self-service own-group flow, the nonce
+ *     (already correctly checked first in the AJAX handler), and the
+ *     admin/editor cross-group override feature itself are all
+ *     unaffected -- only who qualifies for that override is corrected.
  *
  * Changes from 1.2.0:
  *   - UX: tap the LOSING team instead of the winning team.
@@ -118,7 +140,7 @@ function spp_score_entry_shortcode() {
     }
 
     $user_id  = get_current_user_id();
-    $is_admin = current_user_can( 'edit_posts' );
+    $is_admin = spp_is_admin_or_editor();
 
     $all_groups = $wpdb->get_results(
         "SELECT s.group_id, g.GP_name, c.Crt_name, t.T_desc, COUNT(*) as players
@@ -481,7 +503,7 @@ add_action( 'wp_ajax_spp_player_score_entry', function() {
     }
 
     $user_id     = get_current_user_id();
-    $is_admin    = current_user_can( 'edit_posts' );
+    $is_admin    = spp_is_admin_or_editor();
     $round       = intval( $_POST['round'] ?? 0 );
     $winner      = sanitize_text_field( $_POST['winner'] ?? '' );
     $loser_score = intval( $_POST['loser_score'] ?? -1 );

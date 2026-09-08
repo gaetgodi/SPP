@@ -1,8 +1,64 @@
 <?php
 /* =========================================================
    Report Generator — Admin Screen
-   Version: 2.0.0
+   Version: 2.1.1
    Date: 2026-09-07
+
+   Changes from 2.1.0:
+   - Added a placeholder + title (hover tooltip) to each of the style
+     editor's five length-valued text inputs (max-width, radius, margin,
+     font-size, cell-padding), e.g. "e.g. 8px" -- prompted by a real
+     live bug: a Divi Custom CSS paste with --spp-report-radius:10 (no
+     unit) is invalid CSS and silently no-ops. Both attributes carry the
+     same hint text; title is what a user actually sees day-to-day since
+     every one of these fields always has a value (its property's own
+     default), so placeholder alone would never display under normal
+     use -- kept anyway for the rare case of a field cleared outright.
+     Hint text only, no new validation logic, no behavior change.
+
+   Changes from 2.0.0:
+   - CSS snippet is now diff-only, same principle as the live shortcode
+     (spp_report_generator_live_shortcode()): the style editor's textarea
+     only ever contains a --spp-report-* declaration for a property
+     whose control value differs from that property's own default.
+     Moving a control back to its default value removes the line
+     entirely rather than writing the default back out explicitly.
+     Starting state (Default configuration, nothing customized) is now
+     an empty `.spp-report-table {\n}` rule instead of a full 13-property
+     dump. Hand-typed textarea edits are unaffected -- this only changes
+     what a *control* edit writes; the textarea itself still accepts
+     (and round-trips) genuinely arbitrary CSS exactly as before.
+   - CSS is now persisted (reversing this file's own 2.0.0 "purely
+     client-side and ephemeral" decision, now that saved variants have
+     somewhere to put it -- see inc/spp-report-variants.php 1.2.0's new
+     css column). Saving a variant stores the textarea's current
+     diff-only snippet alongside its columns/no_sort/per_page. The
+     column-selection <form> doesn't itself contain the CSS textarea
+     (it lives below that form, next to the preview it targets), so the
+     textarea carries `name="css_snapshot" form="spp_rg_column_form"` --
+     native HTML, associates it with that form for submission without
+     JS or a mirrored hidden field. This also means an "Update Preview"
+     click (not just Save) now round-trips the in-progress CSS text
+     across the page reload, which it silently dropped before (back to
+     the hardcoded default dump) -- a side effect of the same wiring,
+     not a separately-requested fix, but a strict improvement.
+   - Loading a variant (the "Configuration" selector) now repopulates
+     the style editor's textarea from that variant's saved css (or the
+     empty diff-only default, for "Default" / a variant saved before
+     this feature existed). spp_render_report_style_editor() takes a
+     new $initial_css param for this. Controls are resynced from
+     whatever text ends up in the textarea -- the resync loop formerly
+     inline inside the textarea's own 'input' handler is now a named
+     function (spp_render_report_style_editor_script()'s
+     resyncControlsFromText()) called both there and once on script
+     init, so a server-rendered starting snippet (loaded variant or
+     preserved postback) updates the controls immediately without
+     waiting for a hand-typed edit -- same skip-if-not-representable
+     behavior as before (color needs strict 6-digit hex, select needs
+     an exact option match, everything else updates normally).
+   - spp_report_generator_seed_state() returns a 5th element, $css, from
+     the seeded variant (or '' for Default) -- same shape change
+     pattern as the per_page addition in 2.0.0.
 
    Changes from 1.0.3:
    - CSS Customization Reference no longer prints unconditionally at
@@ -269,7 +325,7 @@ function spp_render_report_css_reference() {
  * column-form fields of its own -- see the delete handling in
  * spp_render_report_generator_page()).
  *
- * @return array [ $include, $order, $no_sort, $per_page ]
+ * @return array [ $include, $order, $no_sort, $per_page, $css ]
  */
 function spp_report_generator_seed_state( $variant_name, array $existing_variants, array $full_columns ) {
     $seed = null;
@@ -303,14 +359,14 @@ function spp_report_generator_seed_state( $variant_name, array $existing_variant
                 $order[ $key ]   = ++$i;
             }
         }
-        return array( $include, $order, $seed['no_sort'], spp_report_sanitize_per_page( $seed['per_page'] ) );
+        return array( $include, $order, $seed['no_sort'], spp_report_sanitize_per_page( $seed['per_page'] ), $seed['css'] ?? '' );
     }
 
     foreach ( $full_columns as $i => $col ) {
         $include[ $col['key'] ] = true;
         $order[ $col['key'] ]   = $i + 1;
     }
-    return array( $include, $order, false, 'All' );
+    return array( $include, $order, false, 'All', '' );
 }
 
 /**
@@ -387,13 +443,23 @@ function spp_report_generator_live_shortcode( $selected_report, array $selected_
  * position matters). Caller is responsible for placing that empty
  * <style id="spp-rg-live-style"> tag AFTER the preview markup; this
  * function only emits the controls/textarea/script, not that tag.
+ *
+ * @param string $initial_css Starting textarea content -- a loaded
+ *               variant's saved (diff-only) snippet, a postback's
+ *               preserved css_snapshot, or '' (Default / nothing saved
+ *               yet), which renders as an empty `.spp-report-table {}`
+ *               rule rather than the old full 13-property dump (see
+ *               this file's 2.1.0 changelog entry).
  */
-function spp_render_report_style_editor() {
+function spp_render_report_style_editor( $initial_css = '' ) {
     // Six colors need strict 6-digit hex for <input type="color">
     // (browsers reject 3-digit/shorthand) -- normalized here even
     // though the CSS reference above documents #ddd/#3766AB as the
     // "real" defaults; both are valid CSS, this is just what the
-    // native color-picker widget requires.
+    // native color-picker widget requires. Also each control's
+    // data-default -- the value the CSS-diffing JS compares against to
+    // decide whether its --spp-report-x line belongs in the (diff-only)
+    // textarea at all.
     $defaults = array(
         '--spp-report-header-bg'        => '#2c3e50',
         '--spp-report-header-text'      => '#ffffff',
@@ -410,34 +476,41 @@ function spp_render_report_style_editor() {
         '--spp-report-header-weight'    => 'bold',
     );
 
-    $css_lines = array( '.spp-report-table {' );
-    foreach ( $defaults as $var => $val ) {
-        $css_lines[] = "  {$var}: {$val};";
-    }
-    $css_lines[]   = '}';
-    $default_css   = implode( "\n", $css_lines );
+    // Diff-only starting snippet: an empty rule unless a variant/postback
+    // handed us actual customized CSS -- never the full property dump
+    // (that would just be every property "unchanged from its own
+    // default", which is exactly what a diff-only snippet omits).
+    $starting_css = ( $initial_css !== '' ) ? $initial_css : ".spp-report-table {\n}\n";
     ?>
     <h2>Style Editor</h2>
     <p style="color:#666;max-width:700px;">
-        Live, client-side only -- nothing here is saved. Adjust a control or hand-edit the CSS below
-        to see the preview update immediately; copy the result into a Divi module's Custom CSS field
-        (see the reference at the bottom of this page) when you're happy with it.
+        Adjust a control or hand-edit the CSS below to see the preview update immediately; copy the
+        result into a Divi module's Custom CSS field (see the reference at the bottom of this page)
+        when you're happy with it, or click "Save as New Variant" below to keep it with that variant.
     </p>
     <div id="spp-rg-style-editor" style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:20px;max-width:1100px;">
         <div style="min-width:260px;">
-            <p><label>Header background<br><input type="color" data-var="--spp-report-header-bg" value="<?php echo esc_attr( $defaults['--spp-report-header-bg'] ); ?>"></label></p>
-            <p><label>Header text<br><input type="color" data-var="--spp-report-header-text" value="<?php echo esc_attr( $defaults['--spp-report-header-text'] ); ?>"></label></p>
-            <p><label>Border color<br><input type="color" data-var="--spp-report-border-color" value="<?php echo esc_attr( $defaults['--spp-report-border-color'] ); ?>"></label></p>
-            <p><label>Row alt background<br><input type="color" data-var="--spp-report-row-alt-bg" value="<?php echo esc_attr( $defaults['--spp-report-row-alt-bg'] ); ?>"></label></p>
-            <p><label>Row hover background<br><input type="color" data-var="--spp-report-row-hover-bg" value="<?php echo esc_attr( $defaults['--spp-report-row-hover-bg'] ); ?>"></label></p>
-            <p><label>Link color<br><input type="color" data-var="--spp-report-link-color" value="<?php echo esc_attr( $defaults['--spp-report-link-color'] ); ?>"></label></p>
-            <p><label>Max width<br><input type="text" data-var="--spp-report-max-width" value="<?php echo esc_attr( $defaults['--spp-report-max-width'] ); ?>" style="width:140px;"></label></p>
-            <p><label>Radius<br><input type="text" data-var="--spp-report-radius" value="<?php echo esc_attr( $defaults['--spp-report-radius'] ); ?>" style="width:140px;"></label></p>
-            <p><label>Margin<br><input type="text" data-var="--spp-report-margin" value="<?php echo esc_attr( $defaults['--spp-report-margin'] ); ?>" style="width:140px;"></label></p>
-            <p><label>Font size<br><input type="text" data-var="--spp-report-font-size" value="<?php echo esc_attr( $defaults['--spp-report-font-size'] ); ?>" style="width:140px;"></label></p>
-            <p><label>Cell padding<br><input type="text" data-var="--spp-report-cell-padding" value="<?php echo esc_attr( $defaults['--spp-report-cell-padding'] ); ?>" style="width:140px;"></label></p>
+            <p><label>Header background<br><input type="color" data-var="--spp-report-header-bg" data-default="<?php echo esc_attr( $defaults['--spp-report-header-bg'] ); ?>" value="<?php echo esc_attr( $defaults['--spp-report-header-bg'] ); ?>"></label></p>
+            <p><label>Header text<br><input type="color" data-var="--spp-report-header-text" data-default="<?php echo esc_attr( $defaults['--spp-report-header-text'] ); ?>" value="<?php echo esc_attr( $defaults['--spp-report-header-text'] ); ?>"></label></p>
+            <p><label>Border color<br><input type="color" data-var="--spp-report-border-color" data-default="<?php echo esc_attr( $defaults['--spp-report-border-color'] ); ?>" value="<?php echo esc_attr( $defaults['--spp-report-border-color'] ); ?>"></label></p>
+            <p><label>Row alt background<br><input type="color" data-var="--spp-report-row-alt-bg" data-default="<?php echo esc_attr( $defaults['--spp-report-row-alt-bg'] ); ?>" value="<?php echo esc_attr( $defaults['--spp-report-row-alt-bg'] ); ?>"></label></p>
+            <p><label>Row hover background<br><input type="color" data-var="--spp-report-row-hover-bg" data-default="<?php echo esc_attr( $defaults['--spp-report-row-hover-bg'] ); ?>" value="<?php echo esc_attr( $defaults['--spp-report-row-hover-bg'] ); ?>"></label></p>
+            <p><label>Link color<br><input type="color" data-var="--spp-report-link-color" data-default="<?php echo esc_attr( $defaults['--spp-report-link-color'] ); ?>" value="<?php echo esc_attr( $defaults['--spp-report-link-color'] ); ?>"></label></p>
+            <?php
+            // placeholder alone would never actually be seen here -- every
+            // one of these fields always carries a value (the property's
+            // default), and a placeholder only shows on an empty field.
+            // title= adds a hover tooltip with the same text so the hint is
+            // actually visible day-to-day; placeholder is kept too, for the
+            // rare case someone clears the field outright before retyping.
+            ?>
+            <p><label>Max width<br><input type="text" data-var="--spp-report-max-width" data-default="<?php echo esc_attr( $defaults['--spp-report-max-width'] ); ?>" value="<?php echo esc_attr( $defaults['--spp-report-max-width'] ); ?>" placeholder="e.g. 700px" title="e.g. 700px, or none" style="width:140px;"></label></p>
+            <p><label>Radius<br><input type="text" data-var="--spp-report-radius" data-default="<?php echo esc_attr( $defaults['--spp-report-radius'] ); ?>" value="<?php echo esc_attr( $defaults['--spp-report-radius'] ); ?>" placeholder="e.g. 8px" title="e.g. 8px -- a bare number like &quot;8&quot; is not valid CSS" style="width:140px;"></label></p>
+            <p><label>Margin<br><input type="text" data-var="--spp-report-margin" data-default="<?php echo esc_attr( $defaults['--spp-report-margin'] ); ?>" value="<?php echo esc_attr( $defaults['--spp-report-margin'] ); ?>" placeholder="e.g. 0 auto" title="e.g. 0 auto, or 10px 0" style="width:140px;"></label></p>
+            <p><label>Font size<br><input type="text" data-var="--spp-report-font-size" data-default="<?php echo esc_attr( $defaults['--spp-report-font-size'] ); ?>" value="<?php echo esc_attr( $defaults['--spp-report-font-size'] ); ?>" placeholder="e.g. 13px" title="e.g. 13px -- a bare number like &quot;13&quot; is not valid CSS" style="width:140px;"></label></p>
+            <p><label>Cell padding<br><input type="text" data-var="--spp-report-cell-padding" data-default="<?php echo esc_attr( $defaults['--spp-report-cell-padding'] ); ?>" value="<?php echo esc_attr( $defaults['--spp-report-cell-padding'] ); ?>" placeholder="e.g. 5px 10px" title="e.g. 5px 10px -- bare numbers are not valid CSS" style="width:140px;"></label></p>
             <p><label>Header transform<br>
-                <select data-var="--spp-report-header-transform">
+                <select data-var="--spp-report-header-transform" data-default="<?php echo esc_attr( $defaults['--spp-report-header-transform'] ); ?>">
                     <option value="none">none</option>
                     <option value="uppercase">uppercase</option>
                     <option value="lowercase">lowercase</option>
@@ -445,7 +518,7 @@ function spp_render_report_style_editor() {
                 </select>
             </label></p>
             <p><label>Header weight<br>
-                <select data-var="--spp-report-header-weight">
+                <select data-var="--spp-report-header-weight" data-default="<?php echo esc_attr( $defaults['--spp-report-header-weight'] ); ?>">
                     <option value="normal">normal</option>
                     <option value="bold" selected>bold</option>
                 </select>
@@ -453,9 +526,13 @@ function spp_render_report_style_editor() {
         </div>
         <div style="flex:1;min-width:320px;">
             <label for="spp_rg_css_editor"><strong>CSS (live, editable)</strong></label><br>
-            <textarea id="spp_rg_css_editor" rows="17" spellcheck="false"
-                      style="width:100%;font-family:monospace;font-size:12px;"><?php echo esc_textarea( $default_css ); ?></textarea>
+            <textarea id="spp_rg_css_editor" name="css_snapshot" form="spp_rg_column_form" rows="17" spellcheck="false"
+                      style="width:100%;font-family:monospace;font-size:12px;"><?php echo esc_textarea( $starting_css ); ?></textarea>
             <p id="spp_rg_css_balance" style="margin:4px 0;font-size:12px;color:#666;">Looks balanced.</p>
+            <p style="color:#666;font-size:12px;">
+                Only properties that differ from their default appear here (diff-only, same as the
+                shortcode above) -- saved with the variant when you click "Save as New Variant" below.
+            </p>
         </div>
     </div>
     <?php
@@ -535,25 +612,40 @@ function spp_render_report_style_editor_script( $preview_wrapper_id ) {
             return text.slice( 0, braceIdx + 1 ) + '\n  ' + varName + ': ' + value + ';' + text.slice( braceIdx + 1 );
         }
 
+        // Diff-only counterpart to updateVarInText() -- removes a
+        // `--spp-report-x: value;` line entirely (whitespace before it
+        // too, so no blank line is left behind) rather than writing the
+        // default back out explicitly. Same principle as the live
+        // shortcode above only including columns=/no_sort=/per_page=
+        // when they differ from the report's bare defaults.
+        function removeVarFromText( text, varName ) {
+            var re = new RegExp( '[ \\t]*' + escapeRegExp( varName ) + '\\s*:\\s*[^;]+;\\n?', 'i' );
+            return text.replace( re, '' );
+        }
+
         function extractVar( text, varName ) {
             var re = new RegExp( escapeRegExp( varName ) + '\\s*:\\s*([^;]+);', 'i' );
             var m  = re.exec( text );
             return m ? m[1].trim() : null;
         }
 
-        controls.forEach( function( control ) {
-            control.addEventListener( 'input', function() {
-                var newText = updateVarInText( textarea.value, control.dataset.var, control.value );
-                textarea.value = newText;
-                applyLiveCss( newText );
-                checkBalance( newText );
-            } );
-        } );
+        // Is `value` this control's own default (case-/surrounding-
+        // whitespace-insensitive -- not a CSS value parser, just enough
+        // to tell "the user dialed it back to default" from "the user
+        // typed something else that happens to look similar").
+        function isControlDefault( control, value ) {
+            var def = control.dataset.default;
+            return def !== undefined && value.trim().toLowerCase() === def.trim().toLowerCase();
+        }
 
-        textarea.addEventListener( 'input', function() {
-            var text = textarea.value;
-            applyLiveCss( text );
-            checkBalance( text );
+        // Sync every control's displayed value FROM the given CSS text --
+        // shared by the textarea's own 'input' handler (hand-typed edits)
+        // and by the initial load below (a loaded variant's saved
+        // snippet, or a postback's preserved css_snapshot, may set only
+        // some of the 13 properties -- the rest must stay at their own
+        // default, which is exactly what "leave control as-is" already
+        // gives us, since every control's markup default IS its data-default).
+        function resyncControlsFromText( text ) {
             controls.forEach( function( control ) {
                 var val = extractVar( text, control.dataset.var );
                 if ( val === null ) return; // property not present in the text -- leave control as-is
@@ -578,12 +670,34 @@ function spp_render_report_style_editor_script( $preview_wrapper_id ) {
                     control.value = val;
                 }
             } );
+        }
+
+        controls.forEach( function( control ) {
+            control.addEventListener( 'input', function() {
+                var newText = isControlDefault( control, control.value )
+                    ? removeVarFromText( textarea.value, control.dataset.var )
+                    : updateVarInText( textarea.value, control.dataset.var, control.value );
+                textarea.value = newText;
+                applyLiveCss( newText );
+                checkBalance( newText );
+            } );
         } );
 
-        // Initial sync so the preview/balance indicator reflect the
-        // server-rendered starting snippet immediately, no interaction needed.
+        textarea.addEventListener( 'input', function() {
+            var text = textarea.value;
+            applyLiveCss( text );
+            checkBalance( text );
+            resyncControlsFromText( text );
+        } );
+
+        // Initial sync so the preview/balance indicator/controls reflect
+        // the server-rendered starting snippet immediately -- a loaded
+        // variant's saved CSS or a postback's preserved css_snapshot may
+        // already set some properties away from their control defaults,
+        // and this needs no interaction to show that.
         applyLiveCss( textarea.value );
         checkBalance( textarea.value );
+        resyncControlsFromText( textarea.value );
     })();
     </script>
     <?php
@@ -681,13 +795,23 @@ function spp_render_report_generator_page() {
             }
             $existing_variants = spp_get_report_variants_for_base( $selected_report ); // refresh -- it just changed
         }
-        list( $include, $order, $no_sort, $per_page ) = spp_report_generator_seed_state( $loaded_variant, $existing_variants, $full_columns );
+        list( $include, $order, $no_sort, $per_page, $css ) = spp_report_generator_seed_state( $loaded_variant, $existing_variants, $full_columns );
 
     } elseif ( $is_post_for_this_report ) {
         // Normal column-form POST (Update Preview / Save as New Variant).
         $no_sort        = isset( $_POST['no_sort'] ) && $_POST['no_sort'] === '1';
         $per_page       = isset( $_POST['per_page'] ) ? spp_report_sanitize_per_page( wp_unslash( $_POST['per_page'] ) ) : 'All';
         $loaded_variant = isset( $_POST['loaded_variant'] ) ? sanitize_key( wp_unslash( $_POST['loaded_variant'] ) ) : '';
+        // The style editor's textarea (name="css_snapshot") is outside
+        // this <form> in the DOM but associated with it via its own
+        // form="spp_rg_column_form" attribute, so it rides along on
+        // every submit of this form -- both Update Preview and Save as
+        // New Variant. Not sanitized beyond wp_unslash(): this screen is
+        // administrator-only (see this file's ACCESS CONTROL note), the
+        // only place it's ever redisplayed is back into this same
+        // <textarea> via esc_textarea(), and stripping tags here would
+        // mangle otherwise-valid CSS (e.g. content: "<";).
+        $css            = isset( $_POST['css_snapshot'] ) ? wp_unslash( $_POST['css_snapshot'] ) : '';
 
         $posted_include = isset( $_POST['col_include'] ) && is_array( $_POST['col_include'] ) ? wp_unslash( $_POST['col_include'] ) : array();
         $posted_order   = isset( $_POST['col_order'] ) && is_array( $_POST['col_order'] ) ? wp_unslash( $_POST['col_order'] ) : array();
@@ -703,7 +827,7 @@ function spp_render_report_generator_page() {
         // Fresh GET load -- seed from ?variant= (the combined selector's
         // Load button) or Default.
         $loaded_variant = isset( $_GET['variant'] ) ? sanitize_key( wp_unslash( $_GET['variant'] ) ) : '';
-        list( $include, $order, $no_sort, $per_page ) = spp_report_generator_seed_state( $loaded_variant, $existing_variants, $full_columns );
+        list( $include, $order, $no_sort, $per_page, $css ) = spp_report_generator_seed_state( $loaded_variant, $existing_variants, $full_columns );
     }
 
     // -- Build the effective, ordered key list from the current form state --
@@ -723,7 +847,7 @@ function spp_render_report_generator_page() {
             $messages[] = array( 'type' => 'error', 'text' => 'Select at least one column before saving.' );
         } else {
             $variant_key = spp_next_report_variant_name( $selected_report );
-            $result      = spp_save_report_variant( $variant_key, $selected_report, $selected_keys, $no_sort, $per_page );
+            $result      = spp_save_report_variant( $variant_key, $selected_report, $selected_keys, $no_sort, $per_page, $css );
             if ( is_wp_error( $result ) ) {
                 $messages[] = array( 'type' => 'error', 'text' => $result->get_error_message() );
             } else {
@@ -789,7 +913,7 @@ function spp_render_report_generator_page() {
 
     // -- Column selection form --------------------------------------------
     ?>
-    <form method="post" style="max-width:700px;">
+    <form method="post" id="spp_rg_column_form" style="max-width:700px;">
         <?php wp_nonce_field( 'spp_report_generator', 'spp_report_generator_nonce' ); ?>
         <input type="hidden" name="post_type" value="page">
         <input type="hidden" name="report" value="<?php echo esc_attr( $selected_report ); ?>">
@@ -853,7 +977,7 @@ function spp_render_report_generator_page() {
 
     <?php
     // -- Item 5: style editor (controls above the preview it targets) --------
-    spp_render_report_style_editor();
+    spp_render_report_style_editor( $css );
 
     echo '<h2>Preview</h2>';
     $preview_columns = spp_report_filter_columns( $full_columns, $selected_keys );

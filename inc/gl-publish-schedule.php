@@ -1,9 +1,26 @@
 <?php
 /* =========================================================
    GL Publish Schedule
-   Version: 2.7.1
-   Date: 2026-07-13
+   Version: 2.8.0
+   Date: 2026-09-07
    Based on: Publish Schedule 2.7 (CM snippet code_id 64)
+
+   Changes from 2.7.1:
+   - SECURITY FIX (Tier 1 access-control audit): zero server-side
+     check and no nonce -- Ultimate Member's restriction on this
+     page's Main menu link ("Publish Schedule", administrator+editor,
+     confirmed from this week's UM menu audit) only hides that link;
+     the confirm screen and the real publish-and-mass-email action
+     underneath were both reachable by anyone, logged in or not, since
+     the confirm form carried no identity check or nonce. Fixed with
+     spp_is_admin_or_editor(), checked as the first statement in
+     gl_publish_schedule_run() -- before the email-mode/event lookups,
+     before anything else. A nonce (wp_nonce_field()/wp_verify_nonce(),
+     action 'gl_publish_schedule_action') added to the confirm form,
+     required alongside 'publish_confirmed'. Gate in the function
+     body: confirmed fresh this function has no internal callers
+     besides its own add_shortcode() wrapper.
+   - No other behavior change.
 
    Changes from 2.7:
    - Migrated from Code Manager snippet (CM 64) to a tracked
@@ -48,6 +65,14 @@ function gl_publish_schedule_shortcode() {
 }
 
 function gl_publish_schedule_run() {
+
+    // Administrator + editor, per this page's Ultimate Member menu
+    // restriction -- confirmed from this week's UM menu audit. Checked
+    // before anything else in this function.
+    if ( ! spp_is_admin_or_editor() ) {
+        echo '<p>You do not have permission to use this tool.</p>';
+        return;
+    }
 
     if ( session_status() !== PHP_SESSION_ACTIVE ) { session_start(); }
 
@@ -96,7 +121,11 @@ function gl_publish_schedule_run() {
     }
 
     // ── Confirmation gate ─────────────────────────────────────────────────────────
-    $confirmed = isset($_POST['publish_confirmed']) && $_POST['publish_confirmed'] === '1';
+    // Nonce required alongside 'publish_confirmed' -- closes the CSRF
+    // gap the existing confirm step didn't cover on its own.
+    $confirmed = isset($_POST['publish_confirmed']) && $_POST['publish_confirmed'] === '1'
+        && isset($_POST['gl_publish_schedule_nonce'])
+        && wp_verify_nonce($_POST['gl_publish_schedule_nonce'], 'gl_publish_schedule_action');
 
     if (!$confirmed) {
         $playing_count = $wpdb->get_var("SELECT COUNT(DISTINCT user_id) FROM Schedules WHERE group_id != 99");
@@ -144,6 +173,7 @@ function gl_publish_schedule_run() {
                 <p style="color:#c0392b;font-weight:bold;">This cannot be undone. Are you sure?</p>
             </div>
             <form method="post">
+                <?php wp_nonce_field( 'gl_publish_schedule_action', 'gl_publish_schedule_nonce' ); ?>
                 <input type="hidden" name="publish_confirmed" value="1">
                 <input type="hidden" name="email_mode" id="mode_input" value="<?php echo esc_attr($email_mode); ?>">
                 <button type="submit" class="confirm-btn">Yes, Publish Schedule and Send Emails</button>

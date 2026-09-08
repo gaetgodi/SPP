@@ -1,8 +1,25 @@
 <?php
 /* =========================================================
    Remove User From Ladder
-   Version: 1.0.0
-   Date: 2026-09-05
+   Version: 1.1.0
+   Date: 2026-09-07
+
+   Changes from 1.0.0:
+   - SECURITY FIX (Tier 1 access-control audit): zero server-side
+     check and no nonce -- worse than most, since this one also had no
+     confirmation step of any kind (immediate mutation on a bare
+     POST). Ultimate Member's role restriction on this page's Main
+     menu link (administrator+editor, confirmed from this week's UM
+     menu audit) only hides that link; it doesn't touch this shortcode
+     or the page itself. Fixed with spp_is_admin_or_editor(), checked
+     first thing in this function -- before the $ladder SELECT, before
+     $_POST is read, before anything else -- plus a nonce
+     (wp_nonce_field()/wp_verify_nonce(), action
+     'spp_remove_user_from_ladder_action') added to the existing form,
+     required alongside the role check. Gate placed in the function
+     body, not a separate wrapper layer: confirmed fresh this function
+     has no internal callers besides its own add_shortcode() closure.
+   - No other behavior change.
    Based on: Code Manager snippet "Remove user from Ladder" (CM82)
 
    PURPOSE:
@@ -49,6 +66,15 @@
 defined( 'ABSPATH' ) || exit;
 
 function spp_remove_user_from_ladder() {
+    // Administrator + editor, per this page's Ultimate Member menu
+    // restriction -- confirmed from this week's UM menu audit. Checked
+    // before anything else: no query, no $_POST read, no output beyond
+    // this message, for anyone who doesn't pass.
+    if ( ! spp_is_admin_or_editor() ) {
+        echo '<p>You do not have permission to use this tool.</p>';
+        return;
+    }
+
     global $wpdb;
 
     echo '<pre>';
@@ -62,8 +88,15 @@ function spp_remove_user_from_ladder() {
     $sql_all = "select * from $ladder where $ladder.Ladder like 'Yes' order by last_name, first_name";
     $all     = $wpdb->get_results( $sql_all, ARRAY_A );
 
+    // Nonce required alongside the role check above -- this form had
+    // none before, and none of it required any confirmation step
+    // either. An invalid/missing nonce is treated as no submission at
+    // all: falls through to the plain form, nothing acted on.
+    $nonce_ok = isset( $_POST['spp_remove_user_from_ladder_nonce'] )
+        && wp_verify_nonce( $_POST['spp_remove_user_from_ladder_nonce'], 'spp_remove_user_from_ladder_action' );
+
     $results = [];
-    if ( $_SERVER['REQUEST_METHOD'] === 'POST' && isset( $_POST['User'] ) ) {
+    if ( $nonce_ok && $_SERVER['REQUEST_METHOD'] === 'POST' && isset( $_POST['User'] ) ) {
         $user = (int) $_POST['User'];
         $results = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$prefix}users WHERE ID = %d", $user ), ARRAY_A );
     }
@@ -102,6 +135,7 @@ function spp_remove_user_from_ladder() {
     }
     ?>
     <form id="User" name="User" method="post">
+        <?php wp_nonce_field( 'spp_remove_user_from_ladder_action', 'spp_remove_user_from_ladder_nonce' ); ?>
         <label for="User">Remove from Ladder table:</label>
         <select name="User">
             <option value="0">--- select ---</option>

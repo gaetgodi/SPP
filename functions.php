@@ -120,6 +120,17 @@ function spp_is_admin_or_editor() {
     return in_array('administrator', $roles) || in_array('editor', $roles);
 }
 /* =========================================================
+   ADMIN-ONLY ROLE HELPER
+   Same checks-actual-roles convention as spp_is_admin_or_editor(),
+   narrowed to administrator only -- for the handful of tools whose
+   UM menu restriction is administrator-only, not admin-or-editor
+   (e.g. spp_change_new_user_rank, spp_remove_inactive_ladder_users).
+   ========================================================= */
+function spp_is_admin() {
+    $roles = (array) wp_get_current_user()->roles;
+    return in_array('administrator', $roles);
+}
+/* =========================================================
    LADDER ADMIN ROLE HELPER
    Checks for roles that can access ladder admin features
    such as rank history for any player.

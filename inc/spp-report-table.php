@@ -1,8 +1,58 @@
 <?php
 /* =========================================================
    Shared Report Table Renderer
-   Version: 1.0.3
+   Version: 1.1.0
    Date: 2026-09-07
+
+   Changes from 1.0.3:
+   - Fixed --spp-report-* custom properties (header-bg, radius, etc.)
+     silently not applying when set via Divi's Custom CSS field on a
+     real front-end page, despite working in the Report Generator admin
+     preview. Root cause: this file's own default declaration,
+     `.spp-report-table { --spp-report-header-bg: #2c3e50; ... }`, and a
+     page-level Divi override share the exact same selector/specificity
+     (0,1,0) -- a tie the cascade then breaks by source order. Divi's
+     module/row/page Custom CSS compiles into a stylesheet that loads in
+     <head>; this file's own <style> block is echoed inline every time
+     spp_render_report_table() runs, inside the page body -- always
+     later in the document -- so the default always won, unconditionally,
+     regardless of what was pasted into Divi. (The admin preview never
+     hit this: spp_render_report_style_editor_script() deliberately
+     places its live-preview <style> tag AFTER this file's base <style>
+     specifically to win this same tie via order -- see that function's
+     own docblock. That's a preview-only mechanism; nothing analogous
+     existed for the real shortcode render path.)
+     Fixed by wrapping ONLY the --spp-report-* default assignments in
+     `:where(.spp-report-table) { ... }` -- :where() zeroes the
+     specificity of whatever it wraps, so this default block now loses
+     any specificity tie unconditionally, regardless of source order, to
+     literally any other rule that also targets `.spp-report-table`
+     (Divi Custom CSS included) and sets the same property. Deliberately
+     NOT applied to:
+       - The rest of this same rule (font-family, font-size, max-width)
+         -- those aren't part of the bug being fixed, and lowering their
+         specificity too could change how they cascade against unrelated
+         page-level rules that happen to also target .spp-report-table
+         and currently lose to it; left at normal specificity, unchanged.
+       - The @media (max-width: 600px) block's own --spp-report-font-size
+         / --spp-report-cell-padding re-declarations -- that block's
+         whole job (see the CSS Customization Reference's "Mobile
+         breakpoint" note) is to WIN over a desktop-scoped override at
+         narrow viewports unless the override itself also targets that
+         breakpoint; :where()-ing it would invert that, letting a
+         desktop-only override always beat the mobile default instead.
+         Left at normal specificity, exactly as documented/intended.
+     spp_render_report_style_editor_script()'s existing order-based
+     mechanism (placing its live-preview <style> after this file's base
+     style) is unaffected and still needed: it wins ties against the
+     *non-custom-property* declarations above (font-family/font-size/
+     max-width, still normal specificity) for arbitrary hand-typed CSS
+     in that panel that might target those, and is now simply redundant
+     -- not conflicting -- for the --spp-report-* properties themselves,
+     which win via specificity regardless of order after this fix. Left
+     in place rather than simplified away: removing it would only ever
+     matter for the properties it's now redundant for, and keeping it
+     costs nothing.
 
    Changes from 1.0.2:
    - Fixed the "Rows per page" <select>'s native dropdown arrow
@@ -175,7 +225,14 @@ function spp_render_report_table( array $columns, array $rows, array $args = arr
     // -- Render ---------------------------------------------------------------
     ?>
     <style>
-        .spp-report-table {
+        /* :where() zeroes specificity on this block ONLY -- these are
+           just fallback defaults for a page-level override (e.g. Divi
+           Custom CSS) to beat unconditionally, regardless of which of
+           the two loads/prints first in the document. See this file's
+           1.1.0 changelog entry for the full cascade-tie story this
+           fixes. Real properties (font-family/font-size/max-width)
+           stay on the normal-specificity selector below, unchanged. */
+        :where(.spp-report-table) {
             --spp-report-header-bg: #2c3e50;
             --spp-report-header-text: #ffffff;
             --spp-report-border-color: #ddd;
@@ -190,6 +247,8 @@ function spp_render_report_table( array $columns, array $rows, array $args = arr
             --spp-report-margin: 0;
             --spp-report-header-weight: bold;
             --spp-report-header-transform: none;
+        }
+        .spp-report-table {
             font-family: Arial, sans-serif;
             font-size: var(--spp-report-font-size);
             max-width: 100%;

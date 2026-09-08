@@ -1,8 +1,31 @@
 <?php
 /* =========================================================
    Report Registry
-   Version: 1.3.0
+   Version: 1.4.0
    Date: 2026-09-07
+
+   Changes from 1.3.0:
+   - [spp_report] now requires a logged-in visitor, full stop -- one
+     is_user_logged_in() check at the very top of the shortcode handler,
+     before shortcode_atts() or any report definition runs. This is a
+     site-wide policy gate, not a per-report judgment call: it covers
+     every report in the registry and every saved variant, present and
+     future, with no per-report opt-out and no exceptions (including
+     ladder_ratings, previously reasoned to be fine ungated -- see the
+     now-corrected ACCESS note below). Logged-out visitors get a plain
+     message, same pattern/tone as spp_score_entry_shortcode()'s own
+     login gate (inc/spp-score-entry.php): '<p>Please log in to view
+     this report.</p>'.
+     Prompted by spp_report_membership() (1.1.0, above): unlike
+     ladder_ratings, it returns all 452 members unfiltered, including
+     phone/email -- real PII that was reachable by anyone with the URL,
+     logged in or not, since this shortcode had no gate of its own.
+     The Report Generator admin screen's live preview is unaffected --
+     it calls spp_render_report_table() directly (inc/spp-report-
+     generator-admin.php), never through do_shortcode() or this
+     closure, so it was never subject to this gate (or its absence) in
+     the first place; it has its own, separate wp-admin-level gate
+     (admin screen's own administrator-only check).
 
    Changes from 1.2.0:
    - Rows-per-page is now a variant-configurable setting, same
@@ -67,15 +90,22 @@
      -- this shortcode and every definition function below only SELECT;
      none of them write to the database.
 
-   ACCESS: no capability check here deliberately -- matches the
-   existing pattern for read-only, non-admin-tool reports elsewhere in
-   this theme (e.g. spp_rank_history, spp_scores_events_dropdown), and
+   ACCESS (superseded by 1.4.0, kept for history -- see that entry
+   above): this used to read "no capability check here deliberately...
    the source query is filtered to Ladder='Yes' members only, not
    anything sensitive beyond what's already shown on the public-facing
-   Ladder - Master List / Club Membership list pages. If a future
-   report needs restricting, gate it inside that report's own
-   definition function (e.g. spp_is_admin_or_editor() check), not here
-   -- keeps that decision visible next to the data it protects.
+   Ladder - Master List / Club Membership list pages." That reasoning
+   covered spp_report_ladder_ratings() but was never revisited when
+   spp_report_membership() (1.1.0) added an unfiltered, all-columns,
+   all-452-members report (phone/email included) to the exact same
+   ungated shortcode -- real PII, reachable by anyone with the URL.
+   1.4.0 replaces this per-report judgment call with a single, blanket
+   is_user_logged_in() gate in the shortcode handler itself: every
+   report and every variant now requires a logged-in visitor, no
+   exceptions, no per-report opt-out. A future report that needs
+   stricter-than-logged-in gating (e.g. admin-only) still adds that
+   inside its own definition function, same as before -- this file's
+   gate is a floor, not a ceiling.
 
    UPDATE (2026-09-06) -- variant support, plus columns=/no_sort=/
    per_page= shortcode attributes, added for the new Report Generator
@@ -241,6 +271,17 @@ function spp_report_filter_columns( array $full_columns, array $requested_keys )
 }
 
 add_shortcode( 'spp_report', function( $atts ) {
+    // Site-wide policy, not a per-report judgment call: every report
+    // and every variant requires a logged-in visitor, no exceptions,
+    // no per-report opt-out. First thing in the handler, before
+    // shortcode_atts() or any report definition runs -- see this
+    // file's 1.4.0 changelog entry and the (superseded) ACCESS note
+    // above for why. Same message pattern/tone as
+    // spp_score_entry_shortcode()'s own login gate (inc/spp-score-entry.php).
+    if ( ! is_user_logged_in() ) {
+        return '<p>Please log in to view this report.</p>';
+    }
+
     $atts = shortcode_atts( array(
         'table'    => '',
         'columns'  => '',

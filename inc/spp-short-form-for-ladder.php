@@ -1,9 +1,18 @@
 <?php
 /* =========================================================
    Short Form For Ladder
-   Version: 1.0.0
-   Date: 2026-09-05
+   Version: 1.1.0
+   Date: 2026-09-07
    Based on: Code Manager snippet "Short form for ladder" (CM271)
+
+   Changes from 1.0.0:
+   - SECURITY FIX (Tier 1 access-control audit follow-up): added
+     wp_nonce_field( 'spp_gl_ladder_events_dropdown_action',
+     'spp_gl_ladder_events_dropdown_nonce' ) to this form -- verified
+     by spp_gl_ladder_events_dropdown() (inc/spp-gl-ladder-events-
+     dropdown.php 1.1.0) before honoring the PBEvent selection. See
+     that file's own changelog for the full reasoning. No other
+     behavior change.
 
    PURPOSE:
    Renders the ladder-event dropdown form without the carpool rank
@@ -43,6 +52,7 @@ defined( 'ABSPATH' ) || exit;
 function spp_short_form_for_ladder( array $all ) {
     ?>
     <form id="dropform" name="PBEvent" method="post">
+        <?php wp_nonce_field( 'spp_gl_ladder_events_dropdown_action', 'spp_gl_ladder_events_dropdown_nonce' ); ?>
         <label for="PBEvent">Ladder List:</label>
         <select id="PBEvent" name="PBEvent">
             <option selected hidden value="">--- No Ladder selected ---</option>

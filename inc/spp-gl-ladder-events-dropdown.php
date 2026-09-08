@@ -1,9 +1,29 @@
 <?php
 /* =========================================================
    GL Ladder Events Dropdown
-   Version: 1.0.0
-   Date: 2026-09-05
+   Version: 1.1.0
+   Date: 2026-09-07
    Based on: Code Manager snippet "GL Ladder Events Dropdown" (CM275)
+
+   Changes from 1.0.0:
+   - SECURITY FIX (Tier 1 access-control audit follow-up): this file's
+     own PBEvent POST had no nonce -- flagged as a residual gap when
+     spp_create_schedule (gl-schedule-production.php 2.0.8) was gated,
+     since spp_run_schedule_production() has no form of its own; the
+     actual "run production for the selected event" trigger IS this
+     file's PBEvent submission. Closed with the same pattern as every
+     other Tier-1 fix: a nonce (wp_nonce_field()/wp_verify_nonce(),
+     action 'spp_gl_ladder_events_dropdown_action') added to both
+     spp_full_form_for_ladder() and spp_short_form_for_ladder()'s
+     forms, required alongside 'PBEvent' before $GLOBALS['Event'] is
+     set. Invalid/missing nonce is treated as no selection at all --
+     falls through to the same 'else { return; }' branch a plain GET
+     already takes, consistent with the fall-back-to-safe-state
+     convention used everywhere else today. Not a role check (this
+     file was never in scope for one -- it does no mutation itself,
+     only resolves a selection into globals for other shortcodes to
+     read), purely CSRF closure.
+   - No other behavior change.
 
    PURPOSE:
    Builds the list of upcoming ladder events (from gl_event_occurrences
@@ -97,8 +117,14 @@ function spp_gl_ladder_events_dropdown( bool $show_tolerance = false ) {
     }
 
     // ── Handle POST ───────────────────────────────────────────────────
+    // Nonce required alongside 'PBEvent' -- this form had none before.
+    // Invalid/missing nonce is treated exactly like no selection: falls
+    // through to the plain 'else { return; }' branch below, same as a
+    // bare GET.
+    $nonce_ok = isset( $_POST['spp_gl_ladder_events_dropdown_nonce'] )
+        && wp_verify_nonce( $_POST['spp_gl_ladder_events_dropdown_nonce'], 'spp_gl_ladder_events_dropdown_action' );
 
-    if ( $_SERVER['REQUEST_METHOD'] === 'POST' && ! empty( $_POST['PBEvent'] ) ) {
+    if ( $nonce_ok && $_SERVER['REQUEST_METHOD'] === 'POST' && ! empty( $_POST['PBEvent'] ) ) {
 
         $Event = intval( $_POST['PBEvent'] );
 

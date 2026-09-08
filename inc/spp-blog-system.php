@@ -2,8 +2,26 @@
 /**
  * SPP Blog System
  * File: inc/spp-blog-system.php
- * Version: 1.4.1
- * Date: 2026-06-13
+ * Version: 1.5.0
+ * Date: 2026-09-07
+ *
+ * Changes from 1.4.1:
+ * - SECURITY FIX (Tier 2 access-control audit, item 5): every
+ *   current_user_can( 'publish_posts' ) check in this file (six of
+ *   them -- spp_blog_edit_shortcode, spp_pending_posts_shortcode,
+ *   spp_ajax_publish_post, spp_ajax_save_pending_post,
+ *   spp_ajax_reject_post, spp_ajax_delete_post) replaced with
+ *   spp_is_admin_or_editor(). Root cause confirmed directly, not
+ *   assumed: the 'subscriber' role itself carries 'publish_posts' as
+ *   a base WordPress capability site-wide (get_role('subscriber')
+ *   ->capabilities), unrelated to spp_sync_blog_author_caps() --
+ *   every logged-in member, active or not, satisfied the old check.
+ *   Empirically confirmed against a fresh, never-active subscriber
+ *   test account: full access to /pending-posts/ moderation. The four
+ *   AJAX handlers already had correct nonces (spp_pending_action /
+ *   spp_delete_post) -- only the role check was wrong in all six
+ *   places. No internal callers found for any of the six (confirmed
+ *   fresh).
  *
  * Changes from 1.4.0:
  * - Edit form now returns to /pending-posts/ for pending posts and
@@ -246,7 +264,7 @@ function spp_blog_edit_shortcode() {
     if ( ! is_user_logged_in() ) {
         return '<p>Please <a href="/login/">login</a> to edit posts.</p>';
     }
-    if ( ! current_user_can( 'publish_posts' ) ) {
+    if ( ! spp_is_admin_or_editor() ) {
         return '<p>You do not have permission to edit posts.</p>';
     }
 
@@ -425,7 +443,7 @@ function spp_pending_posts_shortcode() {
         return '<p>Please <a href="/login/">login</a> to access this page.</p>';
     }
 
-    if ( ! current_user_can( 'publish_posts' ) ) {
+    if ( ! spp_is_admin_or_editor() ) {
         return '<p>You do not have permission to view this page.</p>';
     }
 
@@ -780,7 +798,7 @@ function spp_ajax_publish_post() {
     if ( ! wp_verify_nonce( $_POST['nonce'], 'spp_pending_action' ) ) {
         wp_send_json_error( 'Invalid nonce' );
     }
-    if ( ! current_user_can( 'publish_posts' ) ) {
+    if ( ! spp_is_admin_or_editor() ) {
         wp_send_json_error( 'Permission denied' );
     }
 
@@ -821,7 +839,7 @@ function spp_ajax_save_pending_post() {
     if ( ! wp_verify_nonce( $_POST['nonce'], 'spp_pending_action' ) ) {
         wp_send_json_error( 'Invalid nonce' );
     }
-    if ( ! current_user_can( 'publish_posts' ) ) {
+    if ( ! spp_is_admin_or_editor() ) {
         wp_send_json_error( 'Permission denied' );
     }
 
@@ -850,7 +868,7 @@ function spp_ajax_reject_post() {
     if ( ! wp_verify_nonce( $_POST['nonce'], 'spp_pending_action' ) ) {
         wp_send_json_error( 'Invalid nonce' );
     }
-    if ( ! current_user_can( 'publish_posts' ) ) {
+    if ( ! spp_is_admin_or_editor() ) {
         wp_send_json_error( 'Permission denied' );
     }
 
@@ -872,7 +890,7 @@ function spp_ajax_delete_post() {
     if ( ! wp_verify_nonce( $_POST['nonce'], 'spp_delete_post' ) ) {
         wp_send_json_error( 'Invalid nonce' );
     }
-    if ( ! current_user_can( 'publish_posts' ) ) {
+    if ( ! spp_is_admin_or_editor() ) {
         wp_send_json_error( 'Permission denied' );
     }
 

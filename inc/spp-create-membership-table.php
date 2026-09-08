@@ -1,10 +1,41 @@
 <?php
 /* =========================================================
    Create Membership Table
-   Version: 1.3.0
-   Date: 2026-09-06
+   Version: 1.4.0
+   Date: 2026-09-07
    Based on: Code Manager snippet "Create membership table" (CM102),
    version 1.1
+
+   Changes from 1.3.0:
+   - SECURITY FIX (Tier 1 access-control audit), by explicit decision,
+     reversing this project's own prior stance: CM102/this shortcode
+     was previously documented elsewhere as "intentionally ungated
+     (idempotent, high-frequency routine-view page)". Confirmed today
+     it's used unconditionally -- no button, no confirm, runs a full
+     four-table rebuild on every bare page view -- on TWO pages with
+     different Ultimate Member menu restrictions: "Remove user from
+     Ladder" (administrator+editor) and "Club Membership list"
+     (logged-in-only, no specific role). Gated to administrator+editor
+     (matching the higher-stakes page) by explicit user decision: an
+     unconditional full-table-rebuild-on-view has no good reason to be
+     triggerable by an ordinary member, even though the underlying
+     rebuild is read-safe/idempotent for the *data* -- the site's
+     access-control posture shouldn't depend on that. Known, accepted
+     consequence: the "Club Membership list" page's on-view rebuild no
+     longer runs for ordinary logged-in members; they now see whatever
+     an admin/editor last triggered elsewhere (this function's own
+     nine other internal callers still rebuild it regularly).
+     Gate placed ONLY in the standalone add_shortcode() wrapper below,
+     never inside spp_create_membership_table() itself: confirmed
+     fresh (grep across inc/, mu-plugins/, functions.php) real internal
+     callers exist from spp_change_new_user_rank(),
+     spp_apply_override_to_results_table(),
+     spp_copy_ranks_to_user_profile(),
+     spp_assign_ranks_to_registered_players() (x2), spp_score_correction(),
+     and spp_run_schedule_production() -- all bare function calls, not
+     through this shortcode/wrapper, so all nine keep working exactly
+     as today, ungated, unaffected.
+   - No other behavior change.
 
    Changes from 1.2.0:
    - Added two new pivot columns, ClubRating and DUPR, following the
@@ -284,6 +315,17 @@ function spp_create_membership_table() {
 }
 
 add_shortcode( 'spp_create_membership_table', function( $atts ) {
+    // Administrator + editor -- see this file's 1.4.0 changelog entry
+    // for the full reasoning (this shortcode is shared by two pages
+    // with different UM-intended roles; gated to the stricter one by
+    // explicit decision). Checked before the rebuild runs at all --
+    // this shortcode has no form/confirm step of its own to nonce
+    // (it's a bare, unconditional rebuild-on-view, not a distinct
+    // "confirmed" action), so the role check is the complete fix here.
+    if ( ! spp_is_admin_or_editor() ) {
+        return '<p>You do not have permission to use this tool.</p>';
+    }
+
     ob_start();
     spp_create_membership_table();
     return ob_get_clean();

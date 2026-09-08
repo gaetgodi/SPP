@@ -1,8 +1,24 @@
 <?php
 /* =========================================================
    Report Variants — DB Table + Lookup Helper
-   Version: 1.1.0
+   Version: 1.2.0
    Date: 2026-09-07
+
+   Changes from 1.1.0:
+   - Added a css LONGTEXT NULL column (dbDelta ADD COLUMN, same
+     version-gate mechanism as the 1.1.0 per_page addition). Reverses
+     the Report Generator's earlier "purely client-side and ephemeral"
+     decision for its style-editor panel (inc/spp-report-generator-
+     admin.php 2.0.0) -- a variant's diff-only CSS snippet (see that
+     file's 2.1.0 notes) is now saved and reloaded alongside its
+     columns/no_sort/per_page. Nullable (not NOT NULL DEFAULT '') since
+     "no custom CSS" and "empty string" mean the same thing to every
+     caller here -- isset()-with-fallback-to-'' at read time, same
+     treatment per_page already gets for a pre-migration row.
+     spp_get_report_variant() and spp_get_report_variants_for_base()
+     both grew a 'css' return key; spp_save_report_variant() grew a
+     trailing optional $css parameter (default '', so every existing
+     caller keeps working unchanged).
 
    Changes from 1.0.0:
    - Added a per_page VARCHAR(20) NOT NULL DEFAULT 'All' column
@@ -54,7 +70,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'SPP_REPORT_VARIANTS_DB_VERSION', '1.1.0' );
+define( 'SPP_REPORT_VARIANTS_DB_VERSION', '1.2.0' );
 
 /**
  * Fully-qualified table name (helper so callers don't repeat
@@ -92,6 +108,7 @@ function spp_report_variants_create_table() {
         columns      LONGTEXT            NOT NULL,
         no_sort      TINYINT(1)          NOT NULL DEFAULT 0,
         per_page     VARCHAR(20)         NOT NULL DEFAULT 'All',
+        css          LONGTEXT            NULL,
         created_at   DATETIME            NOT NULL DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY  (id),
         UNIQUE KEY   variant_name (variant_name)
@@ -111,8 +128,8 @@ add_action( 'after_setup_theme', 'spp_report_variants_create_table' );
  *                      caller (the shortcode already does this for
  *                      its table="" attribute before calling here).
  * @return array|null ['variant_name'=>, 'base_table'=>, 'columns'=>array,
- *                      'no_sort'=>bool, 'per_page'=>string] or null if
- *                      no match / bad data.
+ *                      'no_sort'=>bool, 'per_page'=>string, 'css'=>string]
+ *                      or null if no match / bad data.
  */
 function spp_get_report_variant( $name ) {
     global $wpdb;
@@ -138,6 +155,10 @@ function spp_get_report_variant( $name ) {
         // isset() fallback covers a row read mid-migration (old schema,
         // column not added yet) rather than a fresh SELECT * miss.
         'per_page'     => isset( $row['per_page'] ) && $row['per_page'] !== '' ? $row['per_page'] : 'All',
+        // Same isset() fallback, plus css is nullable (unlike per_page)
+        // so a row saved before this column existed, or saved with no
+        // customization at all, reads back as '' either way.
+        'css'          => isset( $row['css'] ) ? (string) $row['css'] : '',
     );
 }
 
@@ -149,10 +170,10 @@ function spp_get_report_variant( $name ) {
  * (inc/spp-report-generator-admin.php's always-visible shortcode).
  *
  * @return array List of ['variant_name'=>, 'base_table'=>,
- *               'columns'=>array, 'no_sort'=>bool, 'per_page'=>string],
- *               ordered by variant_name. A corrupt row (bad JSON) is
- *               silently skipped, same degrade-not-break stance as
- *               spp_get_report_variant().
+ *               'columns'=>array, 'no_sort'=>bool, 'per_page'=>string,
+ *               'css'=>string], ordered by variant_name. A corrupt row
+ *               (bad JSON) is silently skipped, same degrade-not-break
+ *               stance as spp_get_report_variant().
  */
 function spp_get_report_variants_for_base( $base_table ) {
     global $wpdb;
@@ -173,6 +194,7 @@ function spp_get_report_variants_for_base( $base_table ) {
             'columns'      => $columns,
             'no_sort'      => (bool) $row['no_sort'],
             'per_page'     => isset( $row['per_page'] ) && $row['per_page'] !== '' ? $row['per_page'] : 'All',
+            'css'          => isset( $row['css'] ) ? (string) $row['css'] : '',
         );
     }
     return $out;
@@ -215,9 +237,14 @@ function spp_next_report_variant_name( $base_table ) {
  * auto-generated name from spp_next_report_variant_name(), which can't
  * collide with a registry key.
  *
+ * @param string $css Optional diff-only CSS snippet from the Report
+ *                     Generator's style editor (see inc/spp-report-
+ *                     generator-admin.php 2.1.0) -- '' means no
+ *                     customization, same as never having set the
+ *                     column at all.
  * @return true|WP_Error
  */
-function spp_save_report_variant( $variant_name, $base_table, array $columns, $no_sort, $per_page = 'All' ) {
+function spp_save_report_variant( $variant_name, $base_table, array $columns, $no_sort, $per_page = 'All', $css = '' ) {
     global $wpdb;
 
     $variant_name = sanitize_key( $variant_name );
@@ -246,8 +273,9 @@ function spp_save_report_variant( $variant_name, $base_table, array $columns, $n
             'columns'      => wp_json_encode( array_values( $columns ) ),
             'no_sort'      => $no_sort ? 1 : 0,
             'per_page'     => $per_page,
+            'css'          => (string) $css,
         ),
-        array( '%s', '%s', '%s', '%d', '%s' )
+        array( '%s', '%s', '%s', '%d', '%s', '%s' )
     );
 
     if ( $result === false ) {

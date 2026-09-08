@@ -1,10 +1,30 @@
 <?php
 /* =========================================================
    Remove Inactive Ladder Users
-   Version: 1.0.0
-   Date: 2026-09-05
+   Version: 1.1.0
+   Date: 2026-09-07
    Based on: Code Manager snippet "Remove ladder users who have
    not played this year" (CM176)
+
+   Changes from 1.0.0:
+   - SECURITY FIX (Tier 1 access-control audit): the 2026-09-06
+     incident below already showed this function shouldn't run
+     unconditionally -- but the fix at the time only added a
+     POST-confirm stage, not an actual identity check. Ultimate
+     Member's restriction on this page's Main menu link
+     (administrator only, confirmed from this week's UM menu audit)
+     only hides that link; the page and this shortcode were still
+     reachable, and still run their SELECT/preview stage, for anyone
+     at all. Fixed with spp_is_admin(), checked before the Master/
+     Results_all query even runs -- not just before the write loop.
+     A nonce (wp_nonce_field()/wp_verify_nonce(), action
+     'spp_remove_inactive_ladder_users_action') added to the existing
+     confirm form, required alongside 'sriu_confirmed' before the
+     removal loop runs. Gate in the function body: confirmed fresh
+     this function has no internal callers besides its own
+     add_shortcode() closure.
+   - No other behavior change -- same cutoff event, same selection
+     query, same fields written once confirmed.
 
    PURPOSE:
    NOT read-only, despite the name -- for every Master-list player
@@ -72,12 +92,27 @@
 defined( 'ABSPATH' ) || exit;
 
 function spp_remove_inactive_ladder_users() {
+    // Administrator only, per this page's Ultimate Member menu
+    // restriction -- confirmed from this week's UM menu audit. Checked
+    // before the SELECT below even runs, not just before the removal
+    // loop -- the 2026-09-06 incident was a bare GET reaching this far
+    // at all, not just the confirm step being skippable.
+    if ( ! spp_is_admin() ) {
+        echo '<p>You do not have permission to use this tool.</p>';
+        return;
+    }
+
     global $wpdb;
 
     $umetatable = $wpdb->prefix . 'usermeta';
     $lowevent   = 30000760;
 
-    $confirmed = isset( $_POST['sriu_confirmed'] ) && $_POST['sriu_confirmed'] === '1';
+    // Nonce required alongside 'sriu_confirmed' -- closes the CSRF gap
+    // the existing confirm step didn't cover on its own. Invalid/missing
+    // nonce is treated as not confirmed at all.
+    $confirmed = isset( $_POST['sriu_confirmed'] ) && $_POST['sriu_confirmed'] === '1'
+        && isset( $_POST['spp_remove_inactive_ladder_users_nonce'] )
+        && wp_verify_nonce( $_POST['spp_remove_inactive_ladder_users_nonce'], 'spp_remove_inactive_ladder_users_action' );
 
     $inactive = $wpdb->get_results( $wpdb->prepare( "
         SELECT m.user_id, m.Rank, r.display_name
@@ -104,6 +139,7 @@ function spp_remove_inactive_ladder_users() {
         echo '</ul>';
         echo '</div>';
         echo '<form method="post">';
+        wp_nonce_field( 'spp_remove_inactive_ladder_users_action', 'spp_remove_inactive_ladder_users_nonce' );
         echo '<input type="hidden" name="sriu_confirmed" value="1">';
         echo '<button type="submit" style="padding:10px 24px;background:#c0392b;color:#fff;border:none;border-radius:4px;cursor:pointer;">Yes, Remove These Players</button>';
         echo ' <a href="' . esc_url( $_SERVER['REQUEST_URI'] ) . '" style="margin-left:12px;color:#888;">Cancel</a>';

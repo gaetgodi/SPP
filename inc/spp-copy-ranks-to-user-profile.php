@@ -1,8 +1,29 @@
 <?php
 /* =========================================================
    Copy Ranks to User Profile
-   Version: 1.0.0
-   Date: 2026-09-05
+   Version: 1.1.0
+   Date: 2026-09-07
+
+   Changes from 1.0.0:
+   - SECURITY FIX (Tier 1 access-control audit): the 2026-09-06 fix
+     below added a confirm-gate but no identity check and no nonce.
+     Ultimate Member's restriction on this shortcode's live page
+     ("GL Publish Results after overrides", 20010176, administrator+
+     editor -- confirmed from this week's UM menu audit) only hides
+     that page's menu link; the confirm screen and the real copy-ranks
+     action underneath were both reachable by anyone, logged in or
+     not. Fixed with spp_is_admin_or_editor(), checked first thing in
+     the add_shortcode() wrapper -- same location as the existing
+     confirm-gate, for the same reason: spp_copy_ranks_to_user_profile()
+     itself is called internally, unconditionally, by
+     spp_apply_override_to_results_table()'s Stage 2 (now gated at
+     its own entry point, 1.1.0), so the role/nonce check must live in
+     this wrapper, not the function body, or that internal call would
+     break. A nonce (wp_nonce_field()/wp_verify_nonce(), action
+     'spp_copy_ranks_to_user_profile_action') added to the existing
+     confirm form, required alongside 'copy_ranks_confirmed'.
+   - No other behavior change. The function body and every internal
+     caller remain untouched, exactly as the 2026-09-06 fix intended.
    Based on: Code Manager snippet "Copy Ranks to user profile" (CM66)
    fresh-pulled tonight (1699 bytes,
    sha256 86fecfe9fe9381eedd9ad6d966c12f68f235754d65a2887ea29b5293cdbb030e).
@@ -149,9 +170,21 @@ function spp_copy_ranks_to_user_profile() {
 }
 
 add_shortcode( 'spp_copy_ranks_to_user_profile', function( $atts ) {
+    // Administrator + editor, per this shortcode's live page's
+    // Ultimate Member menu restriction -- confirmed from this week's
+    // UM menu audit. Checked before the confirm-gate below, before
+    // anything else.
+    if ( ! spp_is_admin_or_editor() ) {
+        return '<p>You do not have permission to use this tool.</p>';
+    }
+
     ob_start();
 
-    $confirmed = isset( $_POST['copy_ranks_confirmed'] ) && $_POST['copy_ranks_confirmed'] === '1';
+    // Nonce required alongside 'copy_ranks_confirmed' -- closes the
+    // CSRF gap the existing confirm step didn't cover on its own.
+    $confirmed = isset( $_POST['copy_ranks_confirmed'] ) && $_POST['copy_ranks_confirmed'] === '1'
+        && isset( $_POST['spp_copy_ranks_to_user_profile_nonce'] )
+        && wp_verify_nonce( $_POST['spp_copy_ranks_to_user_profile_nonce'], 'spp_copy_ranks_to_user_profile_action' );
 
     if ( ! $confirmed ) {
         global $wpdb;
@@ -162,6 +195,7 @@ add_shortcode( 'spp_copy_ranks_to_user_profile', function( $atts ) {
                 <p>This will copy the current Results.Rank into usermeta for <strong><?php echo $count; ?></strong> user(s), then rebuild the membership/Master tables.</p>
             </div>
             <form method="post">
+                <?php wp_nonce_field( 'spp_copy_ranks_to_user_profile_action', 'spp_copy_ranks_to_user_profile_nonce' ); ?>
                 <input type="hidden" name="copy_ranks_confirmed" value="1">
                 <button type="submit" style="padding:10px 24px;background:#3766AB;color:#fff;border:none;border-radius:4px;cursor:pointer;">Yes, Copy Ranks Now</button>
                 <a href="<?php echo esc_url( $_SERVER['REQUEST_URI'] ); ?>" style="margin-left:12px;color:#888;">Cancel</a>

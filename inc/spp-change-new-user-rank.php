@@ -1,10 +1,31 @@
 <?php
 /* =========================================================
    Change New User Rank
-   Version: 1.0.0
-   Date: 2026-09-06
+   Version: 1.1.0
+   Date: 2026-09-07
    Based on: Code Manager snippet "Change New User Rank" (CM219),
    version 2.0
+
+   Changes from 1.0.0:
+   - SECURITY FIX (Tier 1 access-control audit): this form had no
+     server-side check of any kind and no nonce -- the 1.0.0 note
+     below claiming "its security boundary is the page-level
+     editor/admin-only restriction" was wrong: that restriction only
+     hides the Main-menu link (Ultimate Member's um_nav_roles filters
+     wp_nav_menu_objects, a display filter -- it does not touch the
+     page or this shortcode at all). Anyone who could reach the URL
+     could POST User=/rank= directly and set any member's rank, no
+     login required. Fixed with spp_is_admin() (UM menu for this page,
+     ID 20006919, is restricted to administrator only -- confirmed
+     from this week's UM menu audit, not assumed) checked first thing
+     in this function, before $_POST is read at all; a nonce
+     (wp_nonce_field()/wp_verify_nonce(), action
+     'spp_change_new_user_rank_action') added to the existing form,
+     required alongside the role check before honoring the post.
+     Same gate-in-the-function-body placement as every other
+     Tier-1-fixed tool with no internal callers (confirmed fresh: only
+     caller is this file's own add_shortcode() wrapper).
+   - No other behavior change.
 
    PURPOSE:
    Manual admin form: pick a member from a searchable dropdown, set
@@ -73,14 +94,30 @@
 defined( 'ABSPATH' ) || exit;
 
 function spp_change_new_user_rank() {
+    // Administrator-only, per this page's Ultimate Member menu
+    // restriction (ID 20006919) -- confirmed from this week's UM menu
+    // audit. Checked before anything else in this function: no $_POST
+    // read, no query, no output beyond this message, for anyone who
+    // doesn't pass.
+    if ( ! spp_is_admin() ) {
+        echo '<p>You do not have permission to use this tool.</p>';
+        return;
+    }
+
     global $wpdb;
     $prefix     = $wpdb->prefix;
     $umetatable = $prefix . 'usermeta';
     $membership = 'membership';
 
     // ── Handle form submission ───────────────────────────────────────────────
+    // Nonce required alongside the role check above -- closes the CSRF
+    // gap (this form had none before). An invalid/missing nonce is
+    // treated exactly like no submission at all: falls through to the
+    // plain form below, nothing is read from $_POST.
+    $nonce_ok    = isset( $_POST['spp_change_new_user_rank_nonce'] )
+        && wp_verify_nonce( $_POST['spp_change_new_user_rank_nonce'], 'spp_change_new_user_rank_action' );
     $success_msg = '';
-    if ( $_SERVER['REQUEST_METHOD'] === 'POST' && isset( $_POST['User'], $_POST['rank'] ) ) {
+    if ( $nonce_ok && $_SERVER['REQUEST_METHOD'] === 'POST' && isset( $_POST['User'], $_POST['rank'] ) ) {
         $user = intval( $_POST['User'] );
         $rank = intval( $_POST['rank'] );
 
@@ -165,6 +202,7 @@ function spp_change_new_user_rank() {
         <?php endif; ?>
 
         <form method="post" action="" id="sur-form">
+            <?php wp_nonce_field( 'spp_change_new_user_rank_action', 'spp_change_new_user_rank_nonce' ); ?>
 
             <div class="sur-field">
                 <label for="sur_search">Search Member</label>

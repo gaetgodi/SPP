@@ -1,8 +1,30 @@
 <?php
 /* =========================================================
    Apply Override to Results Table
-   Version: 1.0.0
-   Date: 2026-09-05
+   Version: 1.1.0
+   Date: 2026-09-07
+
+   Changes from 1.0.0:
+   - SECURITY FIX (Tier 1 access-control audit): zero server-side
+     check and no nonce -- Ultimate Member's restriction on this
+     page's Main menu link ("GL Publish Results after overrides",
+     administrator+editor, confirmed from this week's UM menu audit)
+     only hides that link; the two-stage confirm flow underneath
+     (rewriting the live Results table, updating every member's rank/
+     ClubRating, and mass-emailing the membership) was reachable by
+     anyone who could construct the POST, logged in or not, since
+     neither stage checked identity or carried a nonce. Fixed with
+     spp_is_admin_or_editor(), checked as the very first statement in
+     this function -- before the email-mode lookup, before the
+     results-event lookup, before anything else. A nonce
+     (wp_nonce_field()/wp_verify_nonce(), action
+     'spp_apply_override_to_results_table_action') added to both
+     Stage 1 and Stage 2 forms, required alongside each stage's own
+     existing confirm flag. Gate in the function body: confirmed fresh
+     this function has no internal callers besides its own
+     add_shortcode() closure -- it calls spp_create_membership_table()
+     and spp_copy_ranks_to_user_profile() internally, unaffected.
+   - No other behavior change.
    Based on: Code Manager snippet "Apply Override to Results table"
    (CM52), fresh-pulled v2.5 (2026-08-27), confirmed byte-identical
    to the copy already reviewed tonight before drafting this file
@@ -136,6 +158,15 @@ defined( 'ABSPATH' ) || exit;
 
 function spp_apply_override_to_results_table() {
 
+    // Administrator + editor, per this page's Ultimate Member menu
+    // restriction -- confirmed from this week's UM menu audit. Checked
+    // first thing, before the email-mode/results-event lookups below,
+    // before any $_POST is read.
+    if ( ! spp_is_admin_or_editor() ) {
+        echo '<p>You do not have permission to use this tool.</p>';
+        return;
+    }
+
     global $wpdb, $Event;
 
     $prefix        = $wpdb->prefix;
@@ -165,9 +196,14 @@ function spp_apply_override_to_results_table() {
     ", $results_event ) );
     if ( ! $convenor_email ) $convenor_email = 'abrooks@rogers.com';
 
-    // -- Stage confirmations -------------------------------------------------------
-    $stage1_confirmed = isset($_POST['apply_override_stage1']) && $_POST['apply_override_stage1'] === '1';
-    $stage2_confirmed = isset($_POST['apply_override_confirmed']) && $_POST['apply_override_confirmed'] === '1';
+    // -- Stage confirmations ---------------------------------------------------------
+    // Nonce required alongside each stage's own confirm flag -- neither
+    // stage carried one before. Invalid/missing nonce is treated as not
+    // confirmed at all (falls back to that stage's own confirm screen).
+    $nonce_ok = isset($_POST['spp_apply_override_to_results_table_nonce'])
+        && wp_verify_nonce($_POST['spp_apply_override_to_results_table_nonce'], 'spp_apply_override_to_results_table_action');
+    $stage1_confirmed = $nonce_ok && isset($_POST['apply_override_stage1']) && $_POST['apply_override_stage1'] === '1';
+    $stage2_confirmed = $nonce_ok && isset($_POST['apply_override_confirmed']) && $_POST['apply_override_confirmed'] === '1';
 
     // -- Handle email mode toggle from Stage 1 or Stage 2 form --------------------
     if ( ($stage1_confirmed || $stage2_confirmed) && isset($_POST['email_mode']) && in_array($_POST['email_mode'], ['trial','full']) ) {
@@ -233,6 +269,7 @@ function spp_apply_override_to_results_table() {
                 <p style="color:#c0392b;font-weight:bold;">The player schedule view will be deactivated. Are you sure results are final?</p>
             </div>
             <form method="post">
+                <?php wp_nonce_field( 'spp_apply_override_to_results_table_action', 'spp_apply_override_to_results_table_nonce' ); ?>
                 <input type="hidden" name="apply_override_stage1" value="1">
                 <input type="hidden" name="email_mode" id="mode_input1" value="<?php echo esc_attr($email_mode); ?>">
                 <button type="submit" class="confirm-btn">Yes, Apply Override Now</button>
@@ -405,6 +442,7 @@ function spp_apply_override_to_results_table() {
                 <p style="color:#c0392b;font-weight:bold;">This cannot be undone. Are you sure?</p>
             </div>
             <form method="post">
+                <?php wp_nonce_field( 'spp_apply_override_to_results_table_action', 'spp_apply_override_to_results_table_nonce' ); ?>
                 <input type="hidden" name="apply_override_confirmed" value="1">
                 <input type="hidden" name="email_mode" id="mode_input2" value="<?php echo esc_attr($email_mode); ?>">
                 <button type="submit" class="confirm-btn">Yes, Send Results Emails Now</button>

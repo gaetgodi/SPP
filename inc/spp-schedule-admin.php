@@ -10,8 +10,19 @@
  *   - Add a walk-in player to a group
  *   - Re-send personalized group emails to affected players + CC convenor
  *
- * Version: 1.1.0
- * Date:    2026-06-10
+ * Version: 1.2.0
+ * Date:    2026-09-07
+ *
+ * Changes from 1.1.0:
+ *   - SECURITY FIX (Tier 2 access-control audit): current_user_can(
+ *     'edit_posts' ) is the exact known-bad pattern this codebase's own
+ *     CLAUDE.md documents -- any currently-active member has edit_posts
+ *     via spp_sync_blog_author_caps()'s blog-authoring grant, confirmed
+ *     empirically against a real test account. Ultimate Member intends
+ *     administrator/editor for this page. Fixed with
+ *     spp_is_admin_or_editor(). Existing nonces (spp_schedule_admin,
+ *     spp_print_sheets) were already correct -- only the role check
+ *     itself was wrong. No internal callers (confirmed fresh).
  *
  * Changes from 1.0.0:
  *   - Track modified groups in spp_modified_groups option (JSON array).
@@ -25,7 +36,7 @@ defined( 'ABSPATH' ) || exit;
 add_shortcode( 'spp_schedule_admin', 'spp_schedule_admin_shortcode' );
 
 function spp_schedule_admin_shortcode() {
-    if ( ! current_user_can( 'edit_posts' ) ) {
+    if ( ! spp_is_admin_or_editor() ) {
         return '<p class="gl-error">You do not have permission to access this page.</p>';
     }
 

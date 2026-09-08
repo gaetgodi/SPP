@@ -1,8 +1,43 @@
 <?php
 /* =========================================================
    GL Schedule Production
-   Version: 2.0.7
-   Date: 2026-09-05
+   Version: 2.0.8
+   Date: 2026-09-07
+
+   Changes from 2.0.7:
+   - SECURITY FIX (Tier 1 access-control audit): zero server-side
+     check anywhere in this file. Ultimate Member's restriction on
+     this page's Main menu link ("GL Create Schedule", administrator+
+     editor, confirmed from this week's UM menu audit) only hides
+     that link; the core scheduling algorithm itself -- the single
+     highest-stakes function in this codebase -- was reachable by
+     anyone, logged in or not, with no role check at all. (The
+     existing spp_reschedule_nonce only guards one inner branch, the
+     republish-over-a-published-schedule bypass; it never covered the
+     main entry point.) Fixed with spp_is_admin_or_editor(), checked
+     as the first statement in spp_run_schedule_production() -- before
+     the event-selected check, before anything else. Gate in the
+     function body: confirmed fresh this function has no internal
+     callers besides its own add_shortcode() wrapper (it calls
+     spp_create_membership_table(), spp_assign_ranks_to_registered_players(),
+     etc., but nothing calls it). The existing spp_reschedule_nonce
+     bypass-confirmation is unaffected and unchanged.
+   - NOT added here: a nonce covering the main "run production for the
+     selected event" action itself. This function has no form/$_POST
+     of its own for that path -- $Event arrives via $GLOBALS['Event'],
+     set by spp_gl_ladder_events_dropdown() (inc/spp-gl-ladder-events-
+     dropdown.php) from ITS OWN, separate, un-nonced 'PBEvent' POST,
+     rendered earlier on the same page. That file is not one of
+     today's 9 in-scope functions. The role check above is still the
+     primary fix (blocks any unauthenticated/unauthorized run
+     outright, which is the vast majority of the exposure); closing
+     the residual CSRF gap against an already-logged-in admin/editor
+     would mean adding a nonce field to that sibling file's form too --
+     flagged as a fast, tiny follow-up, not done here without being
+     asked, since it touches a file outside today's named scope.
+     RESOLVED same day: inc/spp-gl-ladder-events-dropdown.php 1.1.0
+     added that nonce. No change needed in this file itself -- this
+     function never read $_POST directly for that path.
 
    Changes from 2.0.6:
    - Call spp_assign_ranks_to_registered_players( (int) $Event )
@@ -159,6 +194,15 @@ function spp_create_schedule_shortcode() {
 }
 
 function spp_run_schedule_production() {
+
+// Administrator + editor, per this page's Ultimate Member menu
+// restriction -- confirmed from this week's UM menu audit. Checked
+// before anything else in this function, including the event-selected
+// check below.
+if ( ! spp_is_admin_or_editor() ) {
+    echo '<p>You do not have permission to use this tool.</p>';
+    return;
+}
 
 if (!session_status() == PHP_SESSION_ACTIVE) {
 session_start();
