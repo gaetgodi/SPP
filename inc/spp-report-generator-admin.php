@@ -1,8 +1,40 @@
 <?php
 /* =========================================================
    Report Generator — Admin Screen
-   Version: 2.1.1
-   Date: 2026-09-07
+   Version: 2.2.0
+   Date: 2026-09-08
+
+   Changes from 2.1.1:
+   - REVERSED the 2.1.0 diff-only decision for the style editor's CSS
+     textarea, by explicit request: it now always shows all 13
+     --spp-report-* properties with their current value (default or
+     customized), a complete self-contained reference, rather than
+     only the properties that differ. Control edits now always
+     update their own line in place (updateVarInText()) instead of
+     removing it when dialed back to default -- the diff-only removal
+     path (removeVarFromText()/isControlDefault()) is gone.
+   - Added a new ensureFullDump() step, run once on load: expands
+     whatever starting text the server handed over (Default's empty
+     rule, a loaded variant's saved snippet, or a preserved postback)
+     into the complete 13-property dump before display, filling in
+     only the properties the source text didn't already set. This is
+     what keeps a variant saved diff-only under 2.1.0 fully compatible
+     with the new always-full display: its saved (possibly partial)
+     values are merged onto the documented defaults, producing the
+     exact same effective style, just spelled out in full rather than
+     partially. Saving a variant from now on stores the full dump the
+     textarea already shows, going forward.
+   - Added a "Reset to Defaults" button next to the textarea label:
+     restores exactly the 13 known properties to the values in the
+     CSS Customization Reference table below (resetAllToDefaults(),
+     built the same way as ensureFullDump() -- both are just
+     updateVarInText() run 13 times), leaving any other hand-typed
+     content in the textarea (another selector, a comment) untouched.
+   - None of this touches the live shortcode's own columns=/no_sort=/
+     per_page= diff-only attribute logic above (a separate mechanism,
+     unaffected) or the CSS Customization Reference's example
+     snippets (correctly minimal/diff-style for pasting into Divi,
+     which is a different context from this editor's own textarea).
 
    Changes from 2.1.0:
    - Added a placeholder + title (hover tooltip) to each of the style
@@ -445,11 +477,14 @@ function spp_report_generator_live_shortcode( $selected_report, array $selected_
  * function only emits the controls/textarea/script, not that tag.
  *
  * @param string $initial_css Starting textarea content -- a loaded
- *               variant's saved (diff-only) snippet, a postback's
- *               preserved css_snapshot, or '' (Default / nothing saved
- *               yet), which renders as an empty `.spp-report-table {}`
- *               rule rather than the old full 13-property dump (see
- *               this file's 2.1.0 changelog entry).
+ *               variant's saved snippet (diff-only, from before 2.2.0,
+ *               or a full dump, from 2.2.0 on -- both work identically,
+ *               see below), a postback's preserved css_snapshot, or ''
+ *               (Default / nothing saved yet). Whatever comes in here,
+ *               the script below always expands it into a complete
+ *               13-property dump before display -- see
+ *               spp_render_report_style_editor_script()'s
+ *               ensureFullDump().
  */
 function spp_render_report_style_editor( $initial_css = '' ) {
     // Six colors need strict 6-digit hex for <input type="color">
@@ -457,9 +492,9 @@ function spp_render_report_style_editor( $initial_css = '' ) {
     // though the CSS reference above documents #ddd/#3766AB as the
     // "real" defaults; both are valid CSS, this is just what the
     // native color-picker widget requires. Also each control's
-    // data-default -- the value the CSS-diffing JS compares against to
-    // decide whether its --spp-report-x line belongs in the (diff-only)
-    // textarea at all.
+    // data-default -- both what a control reverts to on "Reset to
+    // Defaults" and what ensureFullDump() below fills in for a
+    // property the starting snippet didn't set.
     $defaults = array(
         '--spp-report-header-bg'        => '#2c3e50',
         '--spp-report-header-text'      => '#ffffff',
@@ -476,10 +511,11 @@ function spp_render_report_style_editor( $initial_css = '' ) {
         '--spp-report-header-weight'    => 'bold',
     );
 
-    // Diff-only starting snippet: an empty rule unless a variant/postback
-    // handed us actual customized CSS -- never the full property dump
-    // (that would just be every property "unchanged from its own
-    // default", which is exactly what a diff-only snippet omits).
+    // Whatever text comes in (a saved snippet, diff-only or full; a
+    // preserved postback; or nothing yet) is just the seed -- the
+    // script's ensureFullDump() expands it into a complete 13-property
+    // dump on load, so an empty rule here is a sufficient starting
+    // point for Default too.
     $starting_css = ( $initial_css !== '' ) ? $initial_css : ".spp-report-table {\n}\n";
     ?>
     <h2>Style Editor</h2>
@@ -525,13 +561,19 @@ function spp_render_report_style_editor( $initial_css = '' ) {
             </label></p>
         </div>
         <div style="flex:1;min-width:320px;">
-            <label for="spp_rg_css_editor"><strong>CSS (live, editable)</strong></label><br>
+            <label for="spp_rg_css_editor"><strong>CSS (live, editable)</strong></label>
+            <button type="button" id="spp_rg_css_reset_btn" class="button" style="margin-left:10px;">Reset to Defaults</button>
+            <br>
             <textarea id="spp_rg_css_editor" name="css_snapshot" form="spp_rg_column_form" rows="17" spellcheck="false"
                       style="width:100%;font-family:monospace;font-size:12px;"><?php echo esc_textarea( $starting_css ); ?></textarea>
             <p id="spp_rg_css_balance" style="margin:4px 0;font-size:12px;color:#666;">Looks balanced.</p>
             <p style="color:#666;font-size:12px;">
-                Only properties that differ from their default appear here (diff-only, same as the
-                shortcode above) -- saved with the variant when you click "Save as New Variant" below.
+                All 13 properties are always shown here with their current value, whether that's the
+                default or something you've customized -- a complete, self-contained reference you can
+                copy from directly. Saved with the variant when you click "Save as New Variant" below.
+                "Reset to Defaults" restores just these 13 properties to the values in the reference
+                table below; anything else you've hand-typed here (another selector, a comment) is left
+                alone.
             </p>
         </div>
     </div>
@@ -612,30 +654,40 @@ function spp_render_report_style_editor_script( $preview_wrapper_id ) {
             return text.slice( 0, braceIdx + 1 ) + '\n  ' + varName + ': ' + value + ';' + text.slice( braceIdx + 1 );
         }
 
-        // Diff-only counterpart to updateVarInText() -- removes a
-        // `--spp-report-x: value;` line entirely (whitespace before it
-        // too, so no blank line is left behind) rather than writing the
-        // default back out explicitly. Same principle as the live
-        // shortcode above only including columns=/no_sort=/per_page=
-        // when they differ from the report's bare defaults.
-        function removeVarFromText( text, varName ) {
-            var re = new RegExp( '[ \\t]*' + escapeRegExp( varName ) + '\\s*:\\s*[^;]+;\\n?', 'i' );
-            return text.replace( re, '' );
-        }
-
         function extractVar( text, varName ) {
             var re = new RegExp( escapeRegExp( varName ) + '\\s*:\\s*([^;]+);', 'i' );
             var m  = re.exec( text );
             return m ? m[1].trim() : null;
         }
 
-        // Is `value` this control's own default (case-/surrounding-
-        // whitespace-insensitive -- not a CSS value parser, just enough
-        // to tell "the user dialed it back to default" from "the user
-        // typed something else that happens to look similar").
-        function isControlDefault( control, value ) {
-            var def = control.dataset.default;
-            return def !== undefined && value.trim().toLowerCase() === def.trim().toLowerCase();
+        // Expands `text` into a complete 13-property dump: for each
+        // known --spp-report-x, keep its current value if the text
+        // already sets one, else fill in that control's own default.
+        // Built entirely out of updateVarInText(), so -- same as any
+        // single-property edit -- anything else already in the text
+        // (another selector, a hand-typed comment) is left untouched.
+        // Used on load so every starting state (Default, a loaded
+        // variant saved diff-only before 2.2.0 or as a full dump from
+        // 2.2.0 on, or a preserved postback) always displays as a
+        // complete reference, not a partial one.
+        function ensureFullDump( text ) {
+            controls.forEach( function( control ) {
+                var current = extractVar( text, control.dataset.var );
+                text = updateVarInText( text, control.dataset.var, current !== null ? current : control.dataset.default );
+            } );
+            return text;
+        }
+
+        // "Reset to Defaults": same shape as ensureFullDump(), but
+        // unconditionally overwrites all 13 -- not just the missing
+        // ones -- with their own default, regardless of their current
+        // value. Only ever touches these 13 lines; anything else
+        // hand-typed in the textarea is left exactly as-is.
+        function resetAllToDefaults( text ) {
+            controls.forEach( function( control ) {
+                text = updateVarInText( text, control.dataset.var, control.dataset.default );
+            } );
+            return text;
         }
 
         // Sync every control's displayed value FROM the given CSS text --
@@ -674,9 +726,7 @@ function spp_render_report_style_editor_script( $preview_wrapper_id ) {
 
         controls.forEach( function( control ) {
             control.addEventListener( 'input', function() {
-                var newText = isControlDefault( control, control.value )
-                    ? removeVarFromText( textarea.value, control.dataset.var )
-                    : updateVarInText( textarea.value, control.dataset.var, control.value );
+                var newText = updateVarInText( textarea.value, control.dataset.var, control.value );
                 textarea.value = newText;
                 applyLiveCss( newText );
                 checkBalance( newText );
@@ -690,11 +740,23 @@ function spp_render_report_style_editor_script( $preview_wrapper_id ) {
             resyncControlsFromText( text );
         } );
 
-        // Initial sync so the preview/balance indicator/controls reflect
-        // the server-rendered starting snippet immediately -- a loaded
-        // variant's saved CSS or a postback's preserved css_snapshot may
-        // already set some properties away from their control defaults,
-        // and this needs no interaction to show that.
+        var resetBtn = document.getElementById( 'spp_rg_css_reset_btn' );
+        if ( resetBtn ) {
+            resetBtn.addEventListener( 'click', function() {
+                var newText = resetAllToDefaults( textarea.value );
+                textarea.value = newText;
+                applyLiveCss( newText );
+                checkBalance( newText );
+                resyncControlsFromText( newText );
+            } );
+        }
+
+        // Initial load: expand whatever the server handed us (Default's
+        // empty rule, a loaded variant's saved snippet -- diff-only or
+        // full, a preserved postback) into a complete 13-property dump,
+        // then sync the preview/balance/controls to match -- no
+        // interaction needed to see the full reference immediately.
+        textarea.value = ensureFullDump( textarea.value );
         applyLiveCss( textarea.value );
         checkBalance( textarea.value );
         resyncControlsFromText( textarea.value );
