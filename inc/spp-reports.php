@@ -162,8 +162,8 @@ function spp_report_ladder_ratings() {
 
     $columns = array(
         array( 'key' => 'Rank',       'label' => 'Rank',        'sortable' => true ),
-        array( 'key' => 'ClubRating', 'label' => 'Club Rating', 'sortable' => true ),
-        array( 'key' => 'RatingGames', 'label' => 'Rating Games', 'sortable' => true ),
+        array( 'key' => 'ClubRating', 'label' => 'SPP Rating', 'sortable' => true ),
+        array( 'key' => 'RatingGames', 'label' => 'Games', 'sortable' => true ),
         array( 'key' => 'DUPR',       'label' => 'DUPR',        'sortable' => true ),
         array( 'key' => 'first_name', 'label' => 'First Name',  'sortable' => true ),
         array( 'key' => 'last_name',  'label' => 'Last Name',   'sortable' => true ),
@@ -201,8 +201,8 @@ function spp_report_membership() {
     $columns = array(
         array( 'key' => 'Rank',       'label' => 'Rank',       'sortable' => true ),
         array( 'key' => 'Rating',     'label' => 'Rating',     'sortable' => true ),
-        array( 'key' => 'ClubRating', 'label' => 'ClubRating', 'sortable' => true ),
-        array( 'key' => 'RatingGames', 'label' => 'RatingGames', 'sortable' => true ),
+        array( 'key' => 'ClubRating', 'label' => 'SPPRating', 'sortable' => true ),
+        array( 'key' => 'RatingGames', 'label' => 'Games', 'sortable' => true ),
         array( 'key' => 'DUPR',       'label' => 'DUPR',       'sortable' => true ),
         array( 'key' => 'Ladder',     'label' => 'Ldr',        'sortable' => true ),
         array( 'key' => 'Tag',        'label' => 'Tag',        'sortable' => true ),
