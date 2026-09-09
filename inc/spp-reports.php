@@ -144,7 +144,37 @@ $GLOBALS['spp_report_registry'] = array(
     'ladder_ratings' => 'spp_report_ladder_ratings',
     'membership'     => 'spp_report_membership',
     'master_list'     => 'spp_report_master',
+    'results'     => 'spp_report_results',
 );
+
+/**
+ * Results override edit report: 
+ * source the results and membership table.
+ */
+function spp_report_ladder_results() {
+    global $wpdb;
+
+    $rows = $wpdb->get_results(
+        "SELECT Rank, RankPrev, RankCalc, RankOverride, RankCalc_Shadow, group_id, Score, event_id, display_name
+         FROM Results",
+        ARRAY_A
+    );
+
+    $columns = array(
+        array( 'key' => 'Rank',       'label' => 'Rank',        'sortable' => true ),
+        array( 'key' => 'RankPrev', 'label' => 'RankPrev', 'sortable' => true ),
+        array( 'key' => 'RankCalc', 'label' => 'RankCalc', 'sortable' => true ),
+        array( 'key' => 'RankOverride', 'RankOverride' => 'DUPR','sortable' => true, 'editable' => true),
+        array( 'key' => 'RankCalc_Shadow', 'label' => 'RankCalc_Shadow',  'sortable' => true ),
+        array( 'key' => 'group_id',  'label' => 'Group',   'sortable' => true ),
+        array( 'key' => 'Score',  'label' => 'Score',   'sortable' => true ),
+        array( 'key' => 'event_id',  'label' => 'Event',   'sortable' => true ),
+        array( 'key' => 'display_name',  'label' => 'Name',   'sortable' => true ),
+    );
+
+    return array( 'columns' => $columns, 'rows' => $rows, 'default_sort' => 'Rank', );
+}
+
 
 /**
  * Ladder Ratings report: Rank, Club Rating, DUPR, First Name, Last Name
