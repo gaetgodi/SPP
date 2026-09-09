@@ -178,6 +178,9 @@ defined( 'ABSPATH' ) || exit;
 function spp_render_report_table( array $columns, array $rows, array $args = array() ) {
 
     $id = isset( $args['id'] ) ? preg_replace( '/[^a-z0-9_]/', '', strtolower( $args['id'] ) ) : 'rpt';
+    $edit_report = isset( $args['edit_report'] )
+    ? sanitize_text_field( (string) $args['edit_report'] )
+    : $id;
     if ( $id === '' ) $id = 'rpt';
 
     $p_sort     = "{$id}_sort";
@@ -534,7 +537,7 @@ function spp_render_report_table( array $columns, array $rows, array $args = arr
     </style>
 
     <div class="spp-report-table"<?php if ( $can_edit ) : ?>
-        data-spp-edit-report="<?php echo esc_attr( $id ); ?>"
+        data-spp-edit-report="<?php echo esc_attr( $edit_report ); ?>"
         data-spp-edit-nonce="<?php echo esc_attr( $edit_nonce ); ?>"
         data-spp-edit-ajax="<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>"
     <?php endif; ?>>

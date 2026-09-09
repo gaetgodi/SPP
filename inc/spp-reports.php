@@ -453,6 +453,7 @@ add_shortcode( 'spp_report', function( $atts ) {
     ob_start();
     spp_render_report_table( $effective_columns, $definition['rows'], array(
         'id'               => $name,
+        'edit_report'      => $name,
         'default_sort'     => $default_sort,
         'default_dir'      => 'asc',
         'per_page_options' => spp_report_per_page_choices(),
