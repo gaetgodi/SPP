@@ -92,9 +92,8 @@ require_once get_stylesheet_directory() . '/inc/gl-player-schedule-view.php';
 require_once get_stylesheet_directory() . '/inc/spp-report-table.php'; // must load before spp-reports.php below, which calls spp_render_report_table()
 require_once get_stylesheet_directory() . '/inc/spp-report-variants.php'; // must load before spp-reports.php below, which calls spp_get_report_variant()
 require_once get_stylesheet_directory() . '/inc/spp-reports.php';
+require_once get_stylesheet_directory() . '/inc/spp-report-edit.php'; // generic report-cell AJAX save handler
 require_once get_stylesheet_directory() . '/inc/spp-report-generator-admin.php'; // must load after spp-reports.php, which defines spp_report_filter_columns()
-require_once get_stylesheet_directory() . '/inc/spp-report-edit.php';
-
 add_filter('template_include', function($template) {
     if (is_singular('tribe_events')) {
         error_log('TEC single event template: ' . $template);

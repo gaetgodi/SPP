@@ -173,15 +173,7 @@ function spp_report_results() {
         array( 'key' => 'display_name',  'label' => 'Name',   'sortable' => true ),
     );
 
-    return array(
-        'columns'      => $columns,
-        'rows'         => $rows,
-        'default_sort' => 'Rank',
-        'edit'         => array(
-            'table'      => 'Results',
-            'key_column' => 'user_id',
-        ),
-    );
+    return array( 'columns' => $columns, 'rows' => $rows, 'default_sort' => 'Rank', );
 }
 
 
@@ -449,7 +441,6 @@ add_shortcode( 'spp_report', function( $atts ) {
         'default_dir'      => 'asc',
         'per_page_options' => spp_report_per_page_choices(),
         'default_per_page' => $per_page,
-        'edit'             => $definition['edit'] ?? array(),
     ) );
     return ob_get_clean();
 } );

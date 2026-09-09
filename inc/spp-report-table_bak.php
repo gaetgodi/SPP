@@ -165,15 +165,14 @@ defined( 'ABSPATH' ) || exit;
  * Render a generic sortable, paginated report table.
  *
  * @param array $columns Each entry: ['key'=>string, 'label'=>string,
- *                        'sortable'=>bool, 'default_visible'=>bool,
- *                        'editable'=>bool]. 'editable' defaults to false.
+ *                        'sortable'=>bool, 'default_visible'=>bool].
+ *                        'default_visible' defaults to true if omitted.
  * @param array $rows    Plain array of associative arrays (row data),
  *                        already fetched by the caller.
  * @param array $args    Optional: default_sort, default_dir (asc/desc),
  *                        per_page_options (array, e.g. [25,50,100,'All']),
  *                        default_per_page, id (string, param prefix,
- *                        default 'rpt'), edit (array with 'table' and
- *                        'key_column' for persistence).
+ *                        default 'rpt').
  */
 function spp_render_report_table( array $columns, array $rows, array $args = array() ) {
 
@@ -191,35 +190,6 @@ function spp_render_report_table( array $columns, array $rows, array $args = arr
     $default_dir      = ( ( $args['default_dir'] ?? 'asc' ) === 'desc' ) ? 'desc' : 'asc';
     $per_page_options = $args['per_page_options']  ?? array( 25, 50, 100, 'All' );
     $default_per_page = $args['default_per_page']  ?? ( $per_page_options[0] ?? 25 );
-
-    // -- Optional inline editing --------------------------------------------
-    $edit_config = ( isset( $args['edit'] ) && is_array( $args['edit'] ) )
-        ? $args['edit']
-        : array();
-
-    $edit_table = isset( $edit_config['table'] ) ? (string) $edit_config['table'] : '';
-    $edit_key_column = isset( $edit_config['key_column'] ) ? (string) $edit_config['key_column'] : '';
-
-    $can_edit = (
-        $edit_table !== ''
-        && $edit_key_column !== ''
-        && function_exists( 'spp_is_admin_or_editor' )
-        && spp_is_admin_or_editor()
-    );
-
-    $editable_columns = array();
-    if ( $can_edit ) {
-        foreach ( $columns as $col ) {
-            if ( ! empty( $col['editable'] ) && isset( $col['key'] ) ) {
-                $editable_columns[ $col['key'] ] = true;
-            }
-        }
-        if ( empty( $editable_columns ) ) {
-            $can_edit = false;
-        }
-    }
-
-    $edit_nonce = $can_edit ? wp_create_nonce( 'spp_report_edit' ) : '';
 
     // -- Read state from the URL --------------------------------------------
     $sort = isset( $_GET[ $p_sort ] ) ? sanitize_text_field( wp_unslash( $_GET[ $p_sort ] ) ) : $default_sort;
@@ -465,45 +435,6 @@ function spp_render_report_table( array $columns, array $rows, array $args = arr
             color: #666;
             font-style: italic;
         }
-
-        /* Inline report editing */
-        .spp-report-table .spp-report-editable {
-            box-sizing: border-box;
-            min-width: 4.5em;
-            width: 100%;
-            max-width: 12em;
-            margin: -2px 0;
-            padding: 3px 6px;
-            border: 1px solid transparent;
-            border-radius: 3px;
-            background: transparent;
-            font: inherit;
-            color: inherit;
-        }
-        .spp-report-table .spp-report-editable:hover,
-        .spp-report-table .spp-report-editable:focus {
-            border-color: #bbb;
-            background: #fff;
-            outline: none;
-        }
-        .spp-report-table .spp-report-editable.spp-edit-saving {
-            opacity: 0.6;
-        }
-        .spp-report-table .spp-edit-success {
-            animation: spp-report-edit-success 1.2s ease-out;
-        }
-        .spp-report-table .spp-edit-error {
-            animation: spp-report-edit-error 1.2s ease-out;
-        }
-        @keyframes spp-report-edit-success {
-            0% { background-color: #c6efce; }
-            100% { background-color: transparent; }
-        }
-        @keyframes spp-report-edit-error {
-            0% { background-color: #ffc7ce; }
-            100% { background-color: transparent; }
-        }
-
         @media (max-width: 600px) {
             .spp-report-table {
                 --spp-report-font-size: 12px;
@@ -520,11 +451,7 @@ function spp_render_report_table( array $columns, array $rows, array $args = arr
         }
     </style>
 
-    <div class="spp-report-table"<?php if ( $can_edit ) : ?>
-        data-spp-edit-report="<?php echo esc_attr( $id ); ?>"
-        data-spp-edit-nonce="<?php echo esc_attr( $edit_nonce ); ?>"
-        data-spp-edit-ajax="<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>"
-    <?php endif; ?>>
+    <div class="spp-report-table">
         <div class="spp-report-controls">
             <div class="spp-report-summary">
                 <?php
@@ -607,29 +534,13 @@ function spp_render_report_table( array $columns, array $rows, array $args = arr
                         </tr>
                     </thead>
                     <tbody>
-                        <?php foreach ( $page_rows as $row ) :
-                            $row_edit_key = $can_edit ? (string) ( $row[ $edit_key_column ] ?? '' ) : '';
-                            ?>
-                            <tr<?php if ( $can_edit ) : ?> data-spp-edit-key="<?php echo esc_attr( $row_edit_key ); ?>"<?php endif; ?>>
+                        <?php foreach ( $page_rows as $row ) : ?>
+                            <tr>
                                 <?php foreach ( $columns as $col ) :
                                     if ( isset( $col['default_visible'] ) && ! $col['default_visible'] ) continue;
                                     $key = $col['key'];
-                                    $value = $row[ $key ] ?? '';
                                     ?>
-                                    <td>
-                                        <?php if ( $can_edit && isset( $editable_columns[ $key ] ) ) : ?>
-                                            <input
-                                                type="text"
-                                                class="spp-report-editable"
-                                                value="<?php echo esc_attr( $value ); ?>"
-                                                data-spp-edit-column="<?php echo esc_attr( $key ); ?>"
-                                                data-spp-edit-original="<?php echo esc_attr( $value ); ?>"
-                                                aria-label="<?php echo esc_attr( $col['label'] ?? $key ); ?>"
-                                            >
-                                        <?php else : ?>
-                                            <?php echo esc_html( $value ); ?>
-                                        <?php endif; ?>
-                                    </td>
+                                    <td><?php echo esc_html( $row[ $key ] ?? '' ); ?></td>
                                 <?php endforeach; ?>
                             </tr>
                         <?php endforeach; ?>
@@ -664,133 +575,5 @@ function spp_render_report_table( array $columns, array $rows, array $args = arr
             <?php endif; ?>
         <?php endif; ?>
     </div>
-
-    <?php if ( $can_edit ) : ?>
-    <script>
-    (function () {
-        'use strict';
-
-        function sppInitReportEditing(root) {
-            if (!root || root.dataset.sppEditBound === '1') {
-                return;
-            }
-            root.dataset.sppEditBound = '1';
-
-            root.querySelectorAll('.spp-report-editable').forEach(function (input) {
-                input.addEventListener('change', function () {
-                    sppSaveReportCell(root, input);
-                });
-
-                input.addEventListener('keydown', function (event) {
-                    if (event.key === 'Enter') {
-                        event.preventDefault();
-                        input.blur();
-                    } else if (event.key === 'Escape') {
-                        input.value = input.dataset.sppEditOriginal || '';
-                        input.blur();
-                    }
-                });
-            });
-        }
-
-        function sppSaveReportCell(root, input) {
-            if (input.disabled) {
-                return;
-            }
-
-            var row = input.closest('tr[data-spp-edit-key]');
-            if (!row) {
-                return;
-            }
-
-            var original = input.dataset.sppEditOriginal || '';
-            var value = input.value;
-            var column = input.dataset.sppEditColumn || '';
-            var report = root.dataset.sppEditReport || '';
-            var nonce = root.dataset.sppEditNonce || '';
-            var ajaxUrl = root.dataset.sppEditAjax || '';
-
-            if (!report || !nonce || !ajaxUrl || !column) {
-                input.value = original;
-                sppFlashEdit(input, false);
-                return;
-            }
-
-            if (value === original) {
-                return;
-            }
-
-            var formData = new FormData();
-            formData.append('action', 'spp_save_report_cell');
-            formData.append('nonce', nonce);
-            formData.append('report', report);
-            formData.append('key', row.dataset.sppEditKey || '');
-            formData.append('column', column);
-            formData.append('value', value);
-
-            input.disabled = true;
-            input.classList.add('spp-edit-saving');
-
-            fetch(ajaxUrl, {
-                method: 'POST',
-                credentials: 'same-origin',
-                body: formData
-            })
-            .then(function (response) {
-                return response.json();
-            })
-            .then(function (data) {
-                if (!data || !data.success) {
-                    throw new Error(
-                        data && data.data && data.data.message
-                            ? data.data.message
-                            : 'Save failed.'
-                    );
-                }
-
-                var savedValue = (
-                    data.data &&
-                    Object.prototype.hasOwnProperty.call(data.data, 'value')
-                ) ? String(data.data.value) : value;
-
-                input.value = savedValue;
-                input.dataset.sppEditOriginal = savedValue;
-                sppFlashEdit(input, true);
-            })
-            .catch(function () {
-                input.value = original;
-                sppFlashEdit(input, false);
-            })
-            .finally(function () {
-                input.disabled = false;
-                input.classList.remove('spp-edit-saving');
-            });
-        }
-
-        function sppFlashEdit(input, success) {
-            input.classList.remove('spp-edit-success', 'spp-edit-error');
-            void input.offsetWidth;
-            input.classList.add(success ? 'spp-edit-success' : 'spp-edit-error');
-
-            window.setTimeout(function () {
-                input.classList.remove('spp-edit-success', 'spp-edit-error');
-            }, 1300);
-        }
-
-        function sppInitAllReportEditing() {
-            document.querySelectorAll('.spp-report-table[data-spp-edit-report]').forEach(
-                sppInitReportEditing
-            );
-        }
-
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', sppInitAllReportEditing);
-        } else {
-            sppInitAllReportEditing();
-        }
-    }());
-    </script>
-    <?php endif; ?>
-
     <?php
 }
