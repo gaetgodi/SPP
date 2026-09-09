@@ -165,7 +165,6 @@ function spp_report_results() {
         array( 'key' => 'Rank',       'label' => 'Rank',        'sortable' => true ),
         array( 'key' => 'RankPrev', 'label' => 'RankPrev', 'sortable' => true ),
         array( 'key' => 'RankCalc', 'label' => 'RankCalc', 'sortable' => true ),
-        array( 'key' => 'RankOverride', 'label' => 'Override','sortable' => true, 'editable' => true),
         array(
             'key'           => 'RankOverride',
             'label'         => 'Override',
@@ -175,6 +174,7 @@ function spp_report_results() {
             'edit_nullable' => true,
             'edit_decimals' => 2,
         ),
+        array( 'key' => 'RankCalc_Shadow', 'label' => 'RankCalc_Shadow',  'sortable' => true ),
         array( 'key' => 'group_id',  'label' => 'Group',   'sortable' => true ),
         array( 'key' => 'Score',  'label' => 'Score',   'sortable' => true ),
         array( 'key' => 'event_id',  'label' => 'Event',   'sortable' => true ),
