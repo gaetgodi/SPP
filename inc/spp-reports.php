@@ -155,16 +155,17 @@ function spp_report_results() {
     global $wpdb;
 
     $rows = $wpdb->get_results(
-        "SELECT Rank, RankPrev, RankCalc, RankOverride, RankCalc_Shadow, group_id, Score, event_id, display_name
+        "SELECT user_id, Rank, RankPrev, RankCalc, RankOverride, RankCalc_Shadow, group_id, Score, event_id, display_name
          FROM Results",
         ARRAY_A
     );
 
     $columns = array(
+        array( 'key' => 'user_id',  'label' => 'User',        'sortable' => true ),
         array( 'key' => 'Rank',       'label' => 'Rank',        'sortable' => true ),
         array( 'key' => 'RankPrev', 'label' => 'RankPrev', 'sortable' => true ),
         array( 'key' => 'RankCalc', 'label' => 'RankCalc', 'sortable' => true ),
-        array( 'key' => 'RankOverride', 'RankOverride' => 'Override','sortable' => true, 'editable' => true),
+        array( 'key' => 'RankOverride', 'label' => 'Override','sortable' => true, 'editable' => true),
         array( 'key' => 'RankCalc_Shadow', 'label' => 'RankCalc_Shadow',  'sortable' => true ),
         array( 'key' => 'group_id',  'label' => 'Group',   'sortable' => true ),
         array( 'key' => 'Score',  'label' => 'Score',   'sortable' => true ),
