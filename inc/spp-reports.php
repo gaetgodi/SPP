@@ -151,7 +151,7 @@ $GLOBALS['spp_report_registry'] = array(
  * Results override edit report: 
  * source the results and membership table.
  */
-function spp_report_ladder_results() {
+function spp_report_results() {
     global $wpdb;
 
     $rows = $wpdb->get_results(
