@@ -1,8 +1,8 @@
 <?php
 /* =========================================================
    Shared Report Table Renderer
-   Version: 1.2.0
-   Date: 2026-09-08
+   Version: 1.4.0
+   Date: 2026-09-09
 
    Changes from 1.1.0:
    - BUG FIX (found via today's read-only audit): $base_url only ever
@@ -211,7 +211,11 @@ function spp_render_report_table( array $columns, array $rows, array $args = arr
     if ( $can_edit ) {
         foreach ( $columns as $col ) {
             if ( ! empty( $col['editable'] ) && isset( $col['key'] ) ) {
-                $editable_columns[ $col['key'] ] = true;
+                $editable_columns[ $col['key'] ] = array(
+                    'type'     => isset( $col['edit_type'] ) ? sanitize_key( $col['edit_type'] ) : 'text',
+                    'nullable' => ! empty( $col['edit_nullable'] ),
+                    'decimals' => isset( $col['edit_decimals'] ) ? max( 0, min( 6, (int) $col['edit_decimals'] ) ) : 2,
+                );
             }
         }
         if ( empty( $editable_columns ) ) {
@@ -467,6 +471,15 @@ function spp_render_report_table( array $columns, array $rows, array $args = arr
         }
 
         /* Inline report editing */
+        .spp-report-table td.spp-report-editable-cell {
+            background-color: #fff8cc;
+        }
+        .spp-report-table td.spp-report-discrepancy {
+            background-color: #ffe8c2;
+        }
+        .spp-report-table td.spp-report-discrepancy.spp-report-editable-cell {
+            background-color: #ffe0a8;
+        }
         .spp-report-table .spp-report-editable {
             box-sizing: border-box;
             min-width: 4.5em;
@@ -616,14 +629,45 @@ function spp_render_report_table( array $columns, array $rows, array $args = arr
                                     $key = $col['key'];
                                     $value = $row[ $key ] ?? '';
                                     ?>
-                                    <td>
-                                        <?php if ( $can_edit && isset( $editable_columns[ $key ] ) ) : ?>
+                                    <?php
+                                    // Highlight both calculation fields when their numeric
+                                    // difference exceeds 1.99. Blank/NULL values are ignored.
+                                    $is_discrepancy = false;
+                                    if ( in_array( $key, array( 'RankCalc', 'RankCalc_Shadow' ), true ) ) {
+                                        $calc       = $row['RankCalc'] ?? null;
+                                        $calc_shadow = $row['RankCalc_Shadow'] ?? null;
+                                        if ( $calc !== null && $calc !== '' && $calc_shadow !== null && $calc_shadow !== ''
+                                            && is_numeric( $calc ) && is_numeric( $calc_shadow ) ) {
+                                            $is_discrepancy = ( abs( (float) $calc - (float) $calc_shadow ) > 1.99 );
+                                        }
+                                    }
+                                    $is_editable_cell = $can_edit && isset( $editable_columns[ $key ] );
+                                    $cell_classes = array();
+                                    if ( $is_editable_cell ) $cell_classes[] = 'spp-report-editable-cell';
+                                    if ( $is_discrepancy ) $cell_classes[] = 'spp-report-discrepancy';
+                                    ?>
+                                    <td<?php if ( ! empty( $cell_classes ) ) : ?> class="<?php echo esc_attr( implode( ' ', $cell_classes ) ); ?>"<?php endif; ?>>
+                                        <?php if ( $is_editable_cell ) : ?>
+                                            <?php
+                                            $edit_meta = $editable_columns[ $key ];
+                                            $input_type = ( $edit_meta['type'] === 'integer' || $edit_meta['type'] === 'decimal' ) ? 'number' : 'text';
+                                            $step = '';
+                                            if ( $edit_meta['type'] === 'integer' ) {
+                                                $step = '1';
+                                            } elseif ( $edit_meta['type'] === 'decimal' ) {
+                                                $step = '0.' . str_repeat( '0', max( 0, $edit_meta['decimals'] - 1 ) ) . '1';
+                                            }
+                                            ?>
                                             <input
-                                                type="text"
+                                                type="<?php echo esc_attr( $input_type ); ?>"
                                                 class="spp-report-editable"
                                                 value="<?php echo esc_attr( $value ); ?>"
                                                 data-spp-edit-column="<?php echo esc_attr( $key ); ?>"
                                                 data-spp-edit-original="<?php echo esc_attr( $value ); ?>"
+                                                data-spp-edit-type="<?php echo esc_attr( $edit_meta['type'] ); ?>"
+                                                data-spp-edit-nullable="<?php echo $edit_meta['nullable'] ? '1' : '0'; ?>"
+                                                <?php if ( $step !== '' ) : ?>step="<?php echo esc_attr( $step ); ?>"<?php endif; ?>
+                                                <?php if ( $edit_meta['type'] === 'decimal' || $edit_meta['type'] === 'integer' ) : ?>inputmode="decimal"<?php endif; ?>
                                                 aria-label="<?php echo esc_attr( $col['label'] ?? $key ); ?>"
                                             >
                                         <?php else : ?>

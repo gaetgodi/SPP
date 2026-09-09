@@ -1,7 +1,7 @@
 <?php
 /* =========================================================
    Shared Report Table Edit AJAX Handler
-   Version: 1.0.0
+   Version: 1.1.0
    Date: 2026-09-09
 
    Secure, generic persistence for editable report-table cells.
@@ -129,6 +129,62 @@ function spp_ajax_save_report_cell() {
         );
     }
 
+    // The column definition is the trusted source for validation/storage type.
+    // Supported types are intentionally small and explicit.
+    $edit_type = isset( $editable_column['edit_type'] )
+        ? sanitize_key( $editable_column['edit_type'] )
+        : 'text';
+
+    $nullable = ! empty( $editable_column['edit_nullable'] );
+    $raw_value = isset( $_POST['value'] ) ? wp_unslash( $_POST['value'] ) : '';
+
+    $db_value = null;
+    $db_format = '%s';
+
+    switch ( $edit_type ) {
+        case 'integer':
+            if ( $raw_value === '' && $nullable ) {
+                $db_value  = null;
+                $db_format = '%s';
+            } elseif ( filter_var( $raw_value, FILTER_VALIDATE_INT ) === false ) {
+                wp_send_json_error(
+                    array( 'message' => 'Please enter a whole number.' ),
+                    400
+                );
+            } else {
+                $db_value  = (int) $raw_value;
+                $db_format = '%d';
+            }
+            break;
+
+        case 'decimal':
+            if ( $raw_value === '' && $nullable ) {
+                $db_value  = null;
+                $db_format = '%s';
+            } elseif ( ! is_numeric( $raw_value ) ) {
+                wp_send_json_error(
+                    array( 'message' => 'Please enter a valid number.' ),
+                    400
+                );
+            } else {
+                $db_value  = (float) $raw_value;
+                $db_format = '%f';
+            }
+            break;
+
+        case 'text':
+        default:
+            if ( $raw_value === '' && ! $nullable ) {
+                wp_send_json_error(
+                    array( 'message' => 'This field cannot be blank.' ),
+                    400
+                );
+            }
+            $db_value  = sanitize_text_field( $raw_value );
+            $db_format = '%s';
+            break;
+    }
+
     // Never allow the unique key itself to be changed through this endpoint.
     if ( $column === $key_column ) {
         wp_send_json_error(
@@ -143,9 +199,9 @@ function spp_ajax_save_report_cell() {
     // Preserve that convention; do not automatically add $wpdb->prefix.
     $updated = $wpdb->update(
         $table,
-        array( $column => $value ),
+        array( $column => $db_value ),
         array( $key_column => $key ),
-        array( '%s' ),
+        array( $db_format ),
         array( '%s' )
     );
 
@@ -161,7 +217,7 @@ function spp_ajax_save_report_cell() {
     wp_send_json_success(
         array(
             'message' => 'Saved.',
-            'value'   => $value,
+            'value'   => ( $db_value === null ? '' : (string) $db_value ),
             'updated' => (int) $updated,
         )
     );
