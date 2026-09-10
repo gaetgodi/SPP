@@ -1,8 +1,26 @@
 <?php
 /* =========================================================
    Report Generator — Admin Screen
-   Version: 2.5.0
+   Version: 2.6.0
    Date: 2026-09-10
+
+   Changes from 2.5.0:
+   - Folded the editable-column feature's own hardcoded CSS (editable/
+     discrepancy cell backgrounds, the editable input's focus state,
+     saving opacity, success/error flash colors) into this screen's
+     style editor and CSS Customization Reference, matching
+     inc/spp-report-table.php 1.5.0's new 8 --spp-report-* properties
+     exactly: same :where() defaults, same control-per-property pattern
+     ($defaults grows the same 8 entries; 7 new color pickers + 1 text
+     input, under a new "Inline Editing" sub-heading in the same
+     left-hand column, no other layout change). No JS changes needed --
+     the sync script already discovers controls generically via
+     `#spp-rg-style-editor [data-var]`, so ensureFullDump()/
+     resetAllToDefaults()/resyncControlsFromText() pick up the 8 new
+     ones automatically. Every "13 properties/property dump" reference
+     in this file's live (non-historical) comments and on-screen copy
+     updated to 21 to stay accurate; past changelog entries describing
+     the state as of their own version are left as written.
 
    Changes from 2.4.0:
    - BUG FIX (found via a read-only investigation into whether the
@@ -366,6 +384,14 @@ function spp_render_report_css_reference() {
         array( '--spp-report-margin', '0', 'Margin on the table element -- see the centering note below.' ),
         array( '--spp-report-header-weight', 'bold', 'Font weight of header cell text.' ),
         array( '--spp-report-header-transform', 'none', 'Text transform of header cell text, e.g. uppercase.' ),
+        array( '--spp-report-editable-bg', '#fff8cc', 'Background of an editable cell at rest -- only rendered for admin/editor sessions on a report with an editable column.' ),
+        array( '--spp-report-discrepancy-bg', '#ffe8c2', 'Background of a cell flagged as a RankCalc/RankCalc_Shadow discrepancy (values more than 1.99 apart).' ),
+        array( '--spp-report-discrepancy-editable-bg', '#ffe0a8', 'Background when a cell is both editable and flagged as a discrepancy -- wins over the two single-state backgrounds above.' ),
+        array( '--spp-report-edit-focus-border', '#bbb', "Border color of an editable cell's input on hover or keyboard focus." ),
+        array( '--spp-report-edit-focus-bg', '#fff', "Background of an editable cell's input on hover or keyboard focus." ),
+        array( '--spp-report-edit-saving-opacity', '0.6', 'Opacity of an editable input while its AJAX save request is in flight.' ),
+        array( '--spp-report-edit-success-bg', '#c6efce', 'Flash color on a successful inline save, fading to transparent over 1.2s.' ),
+        array( '--spp-report-edit-error-bg', '#ffc7ce', 'Flash color on a failed inline save, fading to transparent over 1.2s.' ),
     );
     ?>
     <h2>CSS Customization Reference</h2>
@@ -633,7 +659,7 @@ function spp_report_generator_live_shortcode( $selected_report, array $selected_
  *               see below), a postback's preserved css_snapshot, or ''
  *               (Default / nothing saved yet). Whatever comes in here,
  *               the script below always expands it into a complete
- *               13-property dump before display -- see
+ *               21-property dump before display -- see
  *               spp_render_report_style_editor_script()'s
  *               ensureFullDump().
  */
@@ -660,11 +686,19 @@ function spp_render_report_style_editor( $initial_css = '' ) {
         '--spp-report-cell-padding'     => '5px 10px',
         '--spp-report-header-transform' => 'none',
         '--spp-report-header-weight'    => 'bold',
+        '--spp-report-editable-bg'             => '#fff8cc',
+        '--spp-report-discrepancy-bg'          => '#ffe8c2',
+        '--spp-report-discrepancy-editable-bg' => '#ffe0a8',
+        '--spp-report-edit-focus-border'       => '#bbbbbb',
+        '--spp-report-edit-focus-bg'           => '#ffffff',
+        '--spp-report-edit-saving-opacity'     => '0.6',
+        '--spp-report-edit-success-bg'         => '#c6efce',
+        '--spp-report-edit-error-bg'           => '#ffc7ce',
     );
 
     // Whatever text comes in (a saved snippet, diff-only or full; a
     // preserved postback; or nothing yet) is just the seed -- the
-    // script's ensureFullDump() expands it into a complete 13-property
+    // script's ensureFullDump() expands it into a complete 21-property
     // dump on load, so an empty rule here is a sufficient starting
     // point for Default too.
     $starting_css = ( $initial_css !== '' ) ? $initial_css : ".spp-report-table {\n}\n";
@@ -710,6 +744,16 @@ function spp_render_report_style_editor( $initial_css = '' ) {
                     <option value="bold" selected>bold</option>
                 </select>
             </label></p>
+            <hr style="margin:10px 0;border:none;border-top:1px solid #dcdcde;">
+            <p style="margin:0 0 6px;font-weight:bold;font-size:12px;color:#555;">Inline Editing</p>
+            <p><label>Editable cell background<br><input type="color" data-var="--spp-report-editable-bg" data-default="<?php echo esc_attr( $defaults['--spp-report-editable-bg'] ); ?>" value="<?php echo esc_attr( $defaults['--spp-report-editable-bg'] ); ?>"></label></p>
+            <p><label>Discrepancy background<br><input type="color" data-var="--spp-report-discrepancy-bg" data-default="<?php echo esc_attr( $defaults['--spp-report-discrepancy-bg'] ); ?>" value="<?php echo esc_attr( $defaults['--spp-report-discrepancy-bg'] ); ?>"></label></p>
+            <p><label>Discrepancy + editable background<br><input type="color" data-var="--spp-report-discrepancy-editable-bg" data-default="<?php echo esc_attr( $defaults['--spp-report-discrepancy-editable-bg'] ); ?>" value="<?php echo esc_attr( $defaults['--spp-report-discrepancy-editable-bg'] ); ?>"></label></p>
+            <p><label>Edit focus border<br><input type="color" data-var="--spp-report-edit-focus-border" data-default="<?php echo esc_attr( $defaults['--spp-report-edit-focus-border'] ); ?>" value="<?php echo esc_attr( $defaults['--spp-report-edit-focus-border'] ); ?>"></label></p>
+            <p><label>Edit focus background<br><input type="color" data-var="--spp-report-edit-focus-bg" data-default="<?php echo esc_attr( $defaults['--spp-report-edit-focus-bg'] ); ?>" value="<?php echo esc_attr( $defaults['--spp-report-edit-focus-bg'] ); ?>"></label></p>
+            <p><label>Edit saving opacity<br><input type="text" data-var="--spp-report-edit-saving-opacity" data-default="<?php echo esc_attr( $defaults['--spp-report-edit-saving-opacity'] ); ?>" value="<?php echo esc_attr( $defaults['--spp-report-edit-saving-opacity'] ); ?>" placeholder="e.g. 0.6" title="A number from 0 (invisible) to 1 (fully opaque)" style="width:140px;"></label></p>
+            <p><label>Edit success flash<br><input type="color" data-var="--spp-report-edit-success-bg" data-default="<?php echo esc_attr( $defaults['--spp-report-edit-success-bg'] ); ?>" value="<?php echo esc_attr( $defaults['--spp-report-edit-success-bg'] ); ?>"></label></p>
+            <p><label>Edit error flash<br><input type="color" data-var="--spp-report-edit-error-bg" data-default="<?php echo esc_attr( $defaults['--spp-report-edit-error-bg'] ); ?>" value="<?php echo esc_attr( $defaults['--spp-report-edit-error-bg'] ); ?>"></label></p>
         </div>
         <div style="flex:1;min-width:320px;">
             <label for="spp_rg_css_editor"><strong>CSS (live, editable)</strong></label>
@@ -719,10 +763,10 @@ function spp_render_report_style_editor( $initial_css = '' ) {
                       style="width:100%;font-family:monospace;font-size:12px;"><?php echo esc_textarea( $starting_css ); ?></textarea>
             <p id="spp_rg_css_balance" style="margin:4px 0;font-size:12px;color:#666;">Looks balanced.</p>
             <p style="color:#666;font-size:12px;">
-                All 13 properties are always shown here with their current value, whether that's the
+                All 21 properties are always shown here with their current value, whether that's the
                 default or something you've customized -- a complete, self-contained reference you can
                 copy from directly. Saved with the variant when you click "Save as New Variant" below.
-                "Reset to Defaults" restores just these 13 properties to the values in the reference
+                "Reset to Defaults" restores just these 21 properties to the values in the reference
                 table below; anything else you've hand-typed here (another selector, a comment) is left
                 alone.
             </p>
@@ -811,7 +855,7 @@ function spp_render_report_style_editor_script( $preview_wrapper_id ) {
             return m ? m[1].trim() : null;
         }
 
-        // Expands `text` into a complete 13-property dump: for each
+        // Expands `text` into a complete 21-property dump: for each
         // known --spp-report-x, keep its current value if the text
         // already sets one, else fill in that control's own default.
         // Built entirely out of updateVarInText(), so -- same as any
@@ -830,9 +874,9 @@ function spp_render_report_style_editor_script( $preview_wrapper_id ) {
         }
 
         // "Reset to Defaults": same shape as ensureFullDump(), but
-        // unconditionally overwrites all 13 -- not just the missing
+        // unconditionally overwrites all 21 -- not just the missing
         // ones -- with their own default, regardless of their current
-        // value. Only ever touches these 13 lines; anything else
+        // value. Only ever touches these 21 lines; anything else
         // hand-typed in the textarea is left exactly as-is.
         function resetAllToDefaults( text ) {
             controls.forEach( function( control ) {
@@ -845,7 +889,7 @@ function spp_render_report_style_editor_script( $preview_wrapper_id ) {
         // shared by the textarea's own 'input' handler (hand-typed edits)
         // and by the initial load below (a loaded variant's saved
         // snippet, or a postback's preserved css_snapshot, may set only
-        // some of the 13 properties -- the rest must stay at their own
+        // some of the 21 properties -- the rest must stay at their own
         // default, which is exactly what "leave control as-is" already
         // gives us, since every control's markup default IS its data-default).
         function resyncControlsFromText( text ) {
@@ -904,7 +948,7 @@ function spp_render_report_style_editor_script( $preview_wrapper_id ) {
 
         // Initial load: expand whatever the server handed us (Default's
         // empty rule, a loaded variant's saved snippet -- diff-only or
-        // full, a preserved postback) into a complete 13-property dump,
+        // full, a preserved postback) into a complete 21-property dump,
         // then sync the preview/balance/controls to match -- no
         // interaction needed to see the full reference immediately.
         textarea.value = ensureFullDump( textarea.value );
