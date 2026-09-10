@@ -1,8 +1,23 @@
 <?php
 /* =========================================================
    Report Registry
-   Version: 1.4.0
-   Date: 2026-09-07
+   Version: 1.5.0
+   Date: 2026-09-10
+
+   Changes from 1.4.0:
+   - SECURITY FIX (found via full audit of the editable-column
+     functionality): spp_report_results() had no capability check of
+     its own, relying only on the shortcode's blanket is_user_logged_in()
+     floor -- any logged-in member could view per-player RankOverride/
+     RankCalc_Shadow/internal ranking mechanics via a saved variant
+     (results-variant-2, page 20010698), even though only the editable
+     RankOverride cell itself was gated to spp_is_admin_or_editor().
+     FIXED: spp_report_results() now gates its entire output on
+     spp_is_admin_or_editor() (same check as its own edit path,
+     spp-report-edit.php), returning a plain access-denied notice row
+     instead of real data for anyone else. No other report in the
+     registry carries this class of internal data, so none of the
+     others needed the same treatment.
 
    Changes from 1.3.0:
    - [spp_report] now requires a logged-in visitor, full stop -- one
@@ -148,11 +163,36 @@ $GLOBALS['spp_report_registry'] = array(
 );
 
 /**
- * Results override edit report: 
+ * Results override edit report:
  * source the results and membership table.
+ *
+ * ACCESS CONTROL: gated to spp_is_admin_or_editor() -- same check as
+ * this report's own editable RankOverride cell (spp-report-edit.php's
+ * spp_ajax_save_report_cell()), so view and edit permission stay
+ * symmetric. This is NOT covered by the [spp_report] shortcode's
+ * blanket is_user_logged_in() floor (spp-reports.php 1.4.0) -- that
+ * floor was written for member-facing reports (Ladder Ratings,
+ * Membership); this report exposes per-player RankOverride/
+ * RankCalc_Shadow internal ranking mechanics, admin/editor territory,
+ * confirmed live-reachable by any logged-in member via
+ * results-variant-2 (page 20010698) before this check existed. Per
+ * this file's own documented convention, a report needing
+ * stricter-than-logged-in gating adds it inside its own definition
+ * function -- this is that.
  */
 function spp_report_results() {
     global $wpdb;
+
+    if ( ! function_exists( 'spp_is_admin_or_editor' ) || ! spp_is_admin_or_editor() ) {
+        return array(
+            'columns' => array(
+                array( 'key' => 'notice', 'label' => 'Notice', 'sortable' => false ),
+            ),
+            'rows' => array(
+                array( 'notice' => 'You do not have permission to view this report.' ),
+            ),
+        );
+    }
 
     $rows = $wpdb->get_results(
         "SELECT user_id, Rank, RankPrev, RankCalc, RankOverride, RankCalc_Shadow, group_id, Score, event_id, display_name
