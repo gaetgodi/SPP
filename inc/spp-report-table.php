@@ -1,8 +1,34 @@
 <?php
 /* =========================================================
    Shared Report Table Renderer
-   Version: 1.4.0
-   Date: 2026-09-09
+   Version: 1.5.0
+   Date: 2026-09-10
+
+   Changes from 1.4.0:
+   - Folded the inline-editing CSS (editable/discrepancy cell
+     backgrounds, the editable input's hover/focus state, its saving
+     opacity, and its success/error flash colors) into the
+     --spp-report-* customization system, same as everything else this
+     table renders -- it was added hardcoded alongside the edit
+     feature and never wired in. Eight new custom properties, added to
+     the same :where(.spp-report-table) default block as the existing
+     13, each one's default exactly reproducing today's hardcoded
+     value so this is a styling no-op until someone actually overrides
+     one: --spp-report-editable-bg (#fff8cc), --spp-report-discrepancy-bg
+     (#ffe8c2), --spp-report-discrepancy-editable-bg (#ffe0a8),
+     --spp-report-edit-focus-border (#bbb), --spp-report-edit-focus-bg
+     (#fff) -- covers both :hover and :focus, which already shared one
+     rule -- --spp-report-edit-saving-opacity (0.6),
+     --spp-report-edit-success-bg (#c6efce), --spp-report-edit-error-bg
+     (#ffc7ce). Documented in the Report Generator's CSS Customization
+     Reference (spp-report-generator-admin.php) alongside the other 13,
+     with matching style-editor controls. Deliberately NOT exposed:
+     the editable input's own box sizing (min-width/max-width/margin/
+     padding/border-radius) -- implementation plumbing to sit flush in
+     the cell, not a look choice, same reasoning this file's 1.1.0 CSS
+     Customization Reference note already applies to other internal
+     details -- and the 1.2s flash duration, since this system
+     customizes appearance, not timing.
 
    Changes from 1.1.0:
    - BUG FIX (found via today's read-only audit): $base_url only ever
@@ -333,6 +359,14 @@ function spp_render_report_table( array $columns, array $rows, array $args = arr
             --spp-report-margin: 0;
             --spp-report-header-weight: bold;
             --spp-report-header-transform: none;
+            --spp-report-editable-bg: #fff8cc;
+            --spp-report-discrepancy-bg: #ffe8c2;
+            --spp-report-discrepancy-editable-bg: #ffe0a8;
+            --spp-report-edit-focus-border: #bbb;
+            --spp-report-edit-focus-bg: #fff;
+            --spp-report-edit-saving-opacity: 0.6;
+            --spp-report-edit-success-bg: #c6efce;
+            --spp-report-edit-error-bg: #ffc7ce;
         }
         .spp-report-table {
             font-family: Arial, sans-serif;
@@ -475,13 +509,13 @@ function spp_render_report_table( array $columns, array $rows, array $args = arr
 
         /* Inline report editing */
         .spp-report-table td.spp-report-editable-cell {
-            background-color: #fff8cc;
+            background-color: var(--spp-report-editable-bg);
         }
         .spp-report-table td.spp-report-discrepancy {
-            background-color: #ffe8c2;
+            background-color: var(--spp-report-discrepancy-bg);
         }
         .spp-report-table td.spp-report-discrepancy.spp-report-editable-cell {
-            background-color: #ffe0a8;
+            background-color: var(--spp-report-discrepancy-editable-bg);
         }
         .spp-report-table .spp-report-editable {
             box-sizing: border-box;
@@ -498,12 +532,12 @@ function spp_render_report_table( array $columns, array $rows, array $args = arr
         }
         .spp-report-table .spp-report-editable:hover,
         .spp-report-table .spp-report-editable:focus {
-            border-color: #bbb;
-            background: #fff;
+            border-color: var(--spp-report-edit-focus-border);
+            background: var(--spp-report-edit-focus-bg);
             outline: none;
         }
         .spp-report-table .spp-report-editable.spp-edit-saving {
-            opacity: 0.6;
+            opacity: var(--spp-report-edit-saving-opacity);
         }
         .spp-report-table .spp-edit-success {
             animation: spp-report-edit-success 1.2s ease-out;
@@ -512,11 +546,11 @@ function spp_render_report_table( array $columns, array $rows, array $args = arr
             animation: spp-report-edit-error 1.2s ease-out;
         }
         @keyframes spp-report-edit-success {
-            0% { background-color: #c6efce; }
+            0% { background-color: var(--spp-report-edit-success-bg); }
             100% { background-color: transparent; }
         }
         @keyframes spp-report-edit-error {
-            0% { background-color: #ffc7ce; }
+            0% { background-color: var(--spp-report-edit-error-bg); }
             100% { background-color: transparent; }
         }
 
