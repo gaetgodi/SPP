@@ -1,8 +1,21 @@
 <?php
 /* =========================================================
    Report Variants — DB Table + Lookup Helper
-   Version: 1.2.0
-   Date: 2026-09-07
+   Version: 1.3.0
+   Date: 2026-09-08
+
+   Changes from 1.2.0:
+   - Added spp_update_report_variant(): true update-in-place for an
+     EXISTING variant (id/variant_name/base_table/created_at
+     untouched, only columns/no_sort/per_page/css change) -- no new
+     row, no new name. Backs the admin screen's "Update Preview"
+     button doubling as a save when a variant is currently loaded
+     (spp_report_generator_admin.php 2.4.0). Distinct function, not a
+     mode flag on spp_save_report_variant(), since the two have
+     opposite existence preconditions (save requires the name NOT
+     exist yet; update requires it already does) and this keeps that
+     contract explicit at each call site rather than branching on it
+     internally.
 
    Changes from 1.1.0:
    - Added a css LONGTEXT NULL column (dbDelta ADD COLUMN, same
@@ -278,6 +291,65 @@ function spp_save_report_variant( $variant_name, $base_table, array $columns, $n
         array( '%s', '%s', '%s', '%d', '%s', '%s' )
     );
 
+    if ( $result === false ) {
+        return new WP_Error( 'spp_report_variant_db_error', $wpdb->last_error ?: 'Unknown database error.' );
+    }
+
+    return true;
+}
+
+/**
+ * Update an EXISTING variant's config in place -- true update, not a
+ * rename or a new row: id/variant_name/base_table/created_at are all
+ * left untouched, only columns/no_sort/per_page/css change. Used by
+ * the admin screen's "Update Preview" button when a variant is
+ * currently loaded (spp_report_generator_admin.php 2.4.0) -- distinct
+ * from spp_save_report_variant(), which always creates a new,
+ * auto-named row and is unaffected by this function's existence.
+ *
+ * @param string $variant_name Must already exist -- returns a WP_Error
+ *                              otherwise (this function never creates a
+ *                              row; use spp_save_report_variant() for that).
+ * @param string $css Optional diff-only or full CSS snippet -- same
+ *                     meaning as spp_save_report_variant()'s $css.
+ * @return true|WP_Error
+ */
+function spp_update_report_variant( $variant_name, array $columns, $no_sort, $per_page = 'All', $css = '' ) {
+    global $wpdb;
+
+    $variant_name = sanitize_key( $variant_name );
+    if ( $variant_name === '' ) {
+        return new WP_Error( 'spp_report_variant_invalid_name', 'Variant name cannot be empty.' );
+    }
+
+    $table = spp_report_variants_table();
+
+    $existing = $wpdb->get_var( $wpdb->prepare( "SELECT id FROM {$table} WHERE variant_name = %s", $variant_name ) );
+    if ( ! $existing ) {
+        return new WP_Error( 'spp_report_variant_not_found', 'No such variant.' );
+    }
+
+    $per_page = function_exists( 'spp_report_sanitize_per_page' ) ? spp_report_sanitize_per_page( $per_page ) : 'All';
+
+    $result = $wpdb->update(
+        $table,
+        array(
+            'columns'  => wp_json_encode( array_values( $columns ) ),
+            'no_sort'  => $no_sort ? 1 : 0,
+            'per_page' => $per_page,
+            'css'      => (string) $css,
+        ),
+        array( 'variant_name' => $variant_name ),
+        array( '%s', '%d', '%s', '%s' ),
+        array( '%s' )
+    );
+
+    // $wpdb->update() returns the number of rows changed, which is 0 --
+    // not an error -- when the new values happen to be identical to
+    // what's already stored (e.g. clicking Update Preview without
+    // actually changing anything). Only `false` is a real DB error;
+    // existence was already confirmed above, so a false here can't be
+    // "no such row" masquerading as a write failure.
     if ( $result === false ) {
         return new WP_Error( 'spp_report_variant_db_error', $wpdb->last_error ?: 'Unknown database error.' );
     }

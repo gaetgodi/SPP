@@ -1,8 +1,60 @@
 <?php
 /* =========================================================
    Report Generator — Admin Screen
-   Version: 2.3.0
-   Date: 2026-09-08
+   Version: 2.5.0
+   Date: 2026-09-10
+
+   Changes from 2.4.0:
+   - BUG FIX (found via a read-only investigation into whether the
+     preview and the saved DB state can ever diverge): a failed
+     update-in-place (2.4.0's "Update Preview & Save" doubling) left
+     $selected_keys/$no_sort/$per_page/$css at whatever was just
+     attempted-and-rejected, and both the preview and the column-
+     selection form itself rendered from those stale values -- looking
+     exactly like a normal, successful state, with only the error
+     banner above the form saying otherwise. Confirmed live: deleting a
+     variant out from under a stale form submission (a real race --
+     e.g. another admin's concurrent delete) produced a fully-rendered
+     preview of the attempted new columns/settings for a variant that
+     no longer existed at all, while the Configuration dropdown fell
+     back to showing "Default" selected (since the gone variant isn't
+     in $existing_variants any more) even as the button label still
+     read 'Update Preview & Save to "<the deleted name>"' -- two parts
+     of the same page disagreeing with each other.
+     FIXED: on any spp_update_report_variant() failure,
+     $existing_variants is refreshed and checked for whether
+     $loaded_variant still exists at all; if not, $loaded_variant
+     resets to '' (Default), exactly like the explicit delete_variant
+     action already does. Either way, $include/$order/$no_sort/
+     $per_page/$css are then re-seeded via spp_report_generator_seed_
+     state() from that same fresh $existing_variants list -- the
+     variant's actual current row if it's still there, or the report's
+     bare defaults if it's gone -- and $selected_keys is rebuilt from
+     the re-seeded $include/$order (new spp_report_generator_build_
+     selected_keys(), split out of this file's own inline logic so it
+     can be called a second time here). The column-selection form's own
+     checkboxes/order inputs re-render from the same re-seeded
+     $include/$order too, not just the preview panel -- the whole page
+     now reflects one consistent, actually-true state after a failed
+     update, never the rejected attempt.
+
+   Changes from 2.3.0:
+   - "Update Preview" now doubles as update-in-place when a variant is
+     currently loaded (tracked via the existing $loaded_variant hidden
+     field -- no new state needed): clicking it both refreshes the
+     preview (unchanged) AND overwrites that variant's stored row via
+     the new spp_update_report_variant() (inc/spp-report-variants.php
+     1.3.0) -- true update, no new name, no new row. When nothing is
+     loaded (Default, or a fresh/never-saved custom config), the
+     button behaves exactly as before -- preview only, no write --
+     since there's nothing existing to update in that case.
+   - Button label goes dynamic to make this unambiguous: plain
+     "Update Preview" when nothing is loaded; "Update Preview & Save
+     to "<variant-name>"" plus a one-line note underneath when a
+     variant is loaded. "Save as New Variant" is untouched and
+     unaffected -- still always creates a new auto-named row
+     regardless of what's loaded, giving the same "Save" vs. "Save
+     As" pattern once a variant is in context.
 
    Changes from 2.2.0:
    - BUG FIX (found via today's read-only audit, confirmed live against
@@ -430,6 +482,31 @@ function spp_report_generator_seed_state( $variant_name, array $existing_variant
         $order[ $col['key'] ]   = $i + 1;
     }
     return array( $include, $order, false, 'All', '' );
+}
+
+/**
+ * Build the effective, ordered list of selected column keys from the
+ * form's $include/$order state. Split out from spp_render_report_
+ * generator_page() so it can be called a second time after a failed
+ * update-in-place re-seeds $include/$order from the database instead
+ * of the failed attempt's posted values (see that function's own
+ * comments on the preview-doubles-as-update block) -- without this,
+ * the re-seed would fix $include/$order but $selected_keys itself
+ * would still reflect the stale, already-computed attempt.
+ *
+ * @return array Ordered list of column keys.
+ */
+function spp_report_generator_build_selected_keys( array $full_columns, array $include, array $order ) {
+    $selected_keys = array();
+    foreach ( $full_columns as $col ) {
+        if ( ! empty( $include[ $col['key'] ] ) ) {
+            $selected_keys[] = $col['key'];
+        }
+    }
+    usort( $selected_keys, function( $a, $b ) use ( $order ) {
+        return ( $order[ $a ] ?? 0 ) <=> ( $order[ $b ] ?? 0 );
+    } );
+    return $selected_keys;
 }
 
 /**
@@ -967,15 +1044,67 @@ function spp_render_report_generator_page() {
     }
 
     // -- Build the effective, ordered key list from the current form state --
-    $selected_keys = array();
-    foreach ( $full_columns as $col ) {
-        if ( ! empty( $include[ $col['key'] ] ) ) {
-            $selected_keys[] = $col['key'];
+    $selected_keys = spp_report_generator_build_selected_keys( $full_columns, $include, $order );
+
+    // -- Update Preview doubling as update-in-place, when a variant is loaded --
+    // $loaded_variant is the hidden field's value -- "whichever variant was
+    // loaded when this form was rendered" -- so this only fires for a real
+    // loaded variant, never for Default or a fresh/never-saved custom
+    // config (nothing exists yet to update in either of those cases).
+    // Distinct from the save block below: this overwrites that SAME row
+    // (spp_update_report_variant()), never creates a new one -- "Save as
+    // New Variant" still always branches off a new auto-named copy,
+    // completely unaffected by this block's existence.
+    if ( $is_post_for_this_report && $action === 'preview' && $loaded_variant !== '' ) {
+        if ( empty( $selected_keys ) ) {
+            $messages[] = array( 'type' => 'error', 'text' => 'Select at least one column -- "' . esc_html( $loaded_variant ) . '" was not updated.' );
+        } else {
+            $result = spp_update_report_variant( $loaded_variant, $selected_keys, $no_sort, $per_page, $css );
+            if ( is_wp_error( $result ) ) {
+                $messages[] = array( 'type' => 'error', 'text' => $result->get_error_message() );
+
+                // Never leave the attempted-but-failed values on screen --
+                // confirmed via live testing that a variant deleted out
+                // from under a stale form submission (a real race: another
+                // admin's concurrent delete, or a stale hidden field) still
+                // rendered the attempted new columns/no_sort/per_page/css as
+                // a normal, working-looking preview, with only this error
+                // banner distinguishing it from an actual save. Re-seed
+                // everything from the database's actual current state
+                // instead. $existing_variants is refreshed first (not
+                // spp_get_report_variant() alone) so the "still exists?"
+                // check below and spp_report_generator_seed_state()'s own
+                // lookup share one fresh query and can't disagree with each
+                // other. If the variant is gone entirely (this failure's own
+                // "No such variant" case, or deleted by someone else in the
+                // meantime), $loaded_variant resets to '' -- same fallback
+                // the explicit delete_variant action already uses -- so the
+                // Configuration dropdown, the button label, and the preview
+                // all agree with each other and with the database, instead
+                // of the dropdown falling back to "Default" while the button
+                // still names a variant that no longer exists.
+                $existing_variants = spp_get_report_variants_for_base( $selected_report );
+                $still_exists = false;
+                foreach ( $existing_variants as $v ) {
+                    if ( $v['variant_name'] === $loaded_variant ) {
+                        $still_exists = true;
+                        break;
+                    }
+                }
+                if ( ! $still_exists ) {
+                    $loaded_variant = '';
+                }
+                list( $include, $order, $no_sort, $per_page, $css ) = spp_report_generator_seed_state( $loaded_variant, $existing_variants, $full_columns );
+                $selected_keys = spp_report_generator_build_selected_keys( $full_columns, $include, $order );
+            } else {
+                $messages[]        = array(
+                    'type' => 'success',
+                    'text' => 'Variant "' . esc_html( $loaded_variant ) . '" updated.',
+                );
+                $existing_variants = spp_get_report_variants_for_base( $selected_report ); // refresh -- its config just changed
+            }
         }
     }
-    usort( $selected_keys, function( $a, $b ) use ( $order ) {
-        return ( $order[ $a ] ?? 0 ) <=> ( $order[ $b ] ?? 0 );
-    } );
 
     // -- Save action: always a new, auto-named variant -----------------------
     if ( $is_post_for_this_report && $action === 'save' ) {
@@ -1108,7 +1237,14 @@ function spp_render_report_generator_page() {
         </p>
 
         <p>
-            <button type="submit" name="spp_action" value="preview" class="button">Update Preview</button>
+            <button type="submit" name="spp_action" value="preview" class="button">
+                <?php echo $loaded_variant !== ''
+                    ? 'Update Preview &amp; Save to &#8220;' . esc_html( $loaded_variant ) . '&#8221;'
+                    : 'Update Preview'; ?>
+            </button>
+            <?php if ( $loaded_variant !== '' ) : ?>
+                <br><span style="color:#666;font-size:12px;">Also overwrites the saved &#8220;<?php echo esc_html( $loaded_variant ); ?>&#8221; variant with these settings -- no new variant is created.</span>
+            <?php endif; ?>
         </p>
 
         <hr>
