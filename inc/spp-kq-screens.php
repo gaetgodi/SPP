@@ -257,12 +257,13 @@ function spp_kq_get_cancellation_summary( int $occurrence_id, int $round_number 
 
 function spp_kq_styles() : string {
     return '<style>
-        .kq-wrap { max-width:720px; margin:10px auto; font-family:Arial,sans-serif; font-size:15px; color:#222; }
+        .kq-wrap { max-width:560px; margin:10px auto; font-family:Arial,sans-serif; font-size:15px; line-height:1.4; color:#222; }
         .kq-back a { color:#3766AB; text-decoration:none; font-size:14px; }
         .kq-heading { margin:6px 0 2px; font-size:20px; }
         .kq-subheading { margin:0 0 14px; color:#666; font-size:14px; }
         .kq-meta { color:#555; margin-bottom:14px; }
-        .kq-round-label { font-weight:bold; font-size:16px; margin-bottom:12px; color:#2c3e50; }
+        .kq-round-label { font-weight:bold; font-size:16px; margin:0 0 12px; color:#2c3e50; }
+        .kq-round-label-tight { font-weight:bold; font-size:16px; margin:0 0 2px; color:#2c3e50; }
         .kq-notice { padding:10px 14px; border-radius:6px; margin-bottom:14px; font-size:14px; }
         .kq-notice-err { background:#f8d7da; border:1px solid #dc3545; color:#721c24; }
         .kq-warn { background:#fff8e1; border:1px solid #e67e22; border-radius:6px; padding:12px 14px; color:#7a4a00; }
@@ -291,22 +292,27 @@ function spp_kq_styles() : string {
         .kq-team { font-size:14px; margin-bottom:2px; }
         .kq-team-red { color:#c0392b; }
         .kq-team-black { color:#222; }
-        .kq-draw-progress { font-weight:bold; margin-bottom:12px; color:#2c3e50; }
+        .kq-draw-progress { color:#555; font-size:14px; margin:0 0 16px; }
         .kq-draw-columns { display:flex; gap:16px; flex-wrap:wrap; margin-bottom:16px; }
         .kq-draw-col { flex:1 1 220px; }
-        .kq-draw-col h3 { font-size:14px; margin:0 0 8px; color:#555; text-transform:uppercase; letter-spacing:.5px; }
+        .kq-draw-col h3 { font-size:14px; margin:0 0 8px; color:#555 !important; text-transform:uppercase; letter-spacing:.5px; }
         #kq-not-drawn-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; }
         .kq-player-btn { width:100%; padding:10px; font-size:15px; border:2px solid #3766AB; background:#fff; color:#3766AB; border-radius:6px; cursor:pointer; text-align:left; }
         .kq-player-btn.kq-selected { background:#3766AB; color:#fff; }
         #kq-card-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(56px,1fr)); gap:8px; }
         .kq-card { aspect-ratio:2/3; background:#2c3e50; border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:24px; color:#fff; cursor:pointer; user-select:none; }
         .kq-card:hover { background:#3f5a80; }
-        .kq-draw-revealed h3 { font-size:14px; margin:0 0 8px; color:#555; text-transform:uppercase; letter-spacing:.5px; }
-        .kq-slot { display:inline-block; min-width:70px; color:#999; }
+        .kq-draw-revealed h3 { font-size:14px; margin:0 0 8px; color:#555 !important; text-transform:uppercase; letter-spacing:.5px; }
+        .kq-slot { color:#999; }
         .kq-slot.kq-slot-filled { color:inherit; font-weight:bold; }
         .kq-cancel-summary { display:flex; gap:20px; flex-wrap:wrap; }
-        .kq-kept h3 { color:#155724; font-size:14px; margin:0 0 6px; }
-        .kq-discarded h3 { color:#721c24; font-size:14px; margin:0 0 6px; }
+        /* !important: the theme own content-area h3 color rule outranks any
+           class-based selector here (confirmed by testing -- even a doubled
+           .kq-wrap prefix did not win), and the whole point of these two is the
+           green/red semantic distinction, so it cannot just inherit the theme
+           default the way every other heading in this feature harmlessly does. */
+        .kq-kept h3 { color:#155724 !important; font-size:14px; margin:0 0 6px; }
+        .kq-discarded h3 { color:#721c24 !important; font-size:14px; margin:0 0 6px; }
         .kq-cancel-summary ul { margin:0; padding-left:18px; font-size:14px; }
     </style>';
 }
@@ -425,9 +431,10 @@ function spp_kq_render_draw_screen( int $occurrence_id ) : string {
 
     ob_start();
     ?>
-    <div class="kq-draw-progress" id="kq-draw-progress">
-        Round 1 &mdash; Draw in progress &middot; <span id="kq-draw-count"><?php echo esc_html( "{$drawn_so_far} of {$total_slots} drawn" ); ?></span>
-    </div>
+    <p class="kq-round-label-tight">Round 1 &mdash; Draw in progress</p>
+    <p class="kq-draw-progress" id="kq-draw-progress">
+        <span id="kq-draw-count"><?php echo esc_html( "{$drawn_so_far} of {$total_slots} drawn" ); ?></span>
+    </p>
     <div class="kq-notice kq-notice-err" id="kq-draw-error" style="display:none;"></div>
 
     <div class="kq-draw-columns">
