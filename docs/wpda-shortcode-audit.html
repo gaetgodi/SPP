@@ -1,0 +1,474 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WPDA Shortcode Audit</title>
+<style>
+  :root{ color-scheme: light dark; }
+  *{ box-sizing:border-box; }
+  body{ margin:0; }
+  img{ max-width:100%; }
+  [hidden]{ display:none !important; }
+
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+  :root{
+    --bg:#f4f6f4;
+    --surface:#ffffff;
+    --surface-2:#eef1ee;
+    --border:#dde3dd;
+    --text:#1a221e;
+    --text-dim:#5c6a61;
+    --accent:#2f6f62;
+    --accent-ink:#153f36;
+    --live:#2f6f62;
+    --live-bg:#e3efe9;
+    --orphan:#96650a;
+    --orphan-bg:#f6ecd8;
+    --broken:#a53a34;
+    --broken-bg:#f7e3e1;
+    --dead:#767f78;
+    --dead-bg:#eceeec;
+    --focus:#2f6f62;
+    --shadow: 0 1px 2px rgba(20,30,25,.06), 0 6px 16px rgba(20,30,25,.05);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#121614;
+      --surface:#181e1b;
+      --surface-2:#1f2622;
+      --border:#2b3530;
+      --text:#e8ede9;
+      --text-dim:#9aa79f;
+      --accent:#5fae9b;
+      --accent-ink:#bfe6d9;
+      --live:#5fae9b;
+      --live-bg:#1c2f29;
+      --orphan:#d8a54a;
+      --orphan-bg:#332a15;
+      --broken:#e07971;
+      --broken-bg:#3a1f1d;
+      --dead:#8b968f;
+      --dead-bg:#20261f;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 20px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#121614;
+    --surface:#181e1b;
+    --surface-2:#1f2622;
+    --border:#2b3530;
+    --text:#e8ede9;
+    --text-dim:#9aa79f;
+    --accent:#5fae9b;
+    --accent-ink:#bfe6d9;
+    --live:#5fae9b;
+    --live-bg:#1c2f29;
+    --orphan:#d8a54a;
+    --orphan-bg:#332a15;
+    --broken:#e07971;
+    --broken-bg:#3a1f1d;
+    --dead:#8b968f;
+    --dead-bg:#20261f;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 20px rgba(0,0,0,.35);
+  }
+
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:'IBM Plex Sans', system-ui, sans-serif;
+    padding-inline:20px;
+    padding-block:32px 64px;
+    line-height:1.5;
+  }
+  .mono{ font-family:'IBM Plex Mono', ui-monospace, Menlo, Consolas, monospace; }
+  .wrap{ max-width:1180px; margin-inline:auto; display:flex; flex-direction:column; gap:36px; }
+
+  /* ---------- header ---------- */
+  header{ display:flex; flex-direction:column; gap:14px; }
+  .eyebrow{
+    font-family:'IBM Plex Mono';
+    font-size:12px; letter-spacing:.12em; text-transform:uppercase;
+    color:var(--accent); font-weight:600;
+  }
+  h1{
+    font-size:clamp(26px,3.4vw,34px);
+    margin:0; font-weight:700; text-wrap:balance;
+    letter-spacing:-.01em;
+  }
+  .lede{ color:var(--text-dim); max-width:70ch; font-size:15px; }
+  .lede code{ font-family:'IBM Plex Mono'; background:var(--surface-2); padding:.1em .35em; border-radius:4px; font-size:.92em; }
+
+  .stats{
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
+    gap:1px;
+    background:var(--border);
+    border:1px solid var(--border);
+    border-radius:10px;
+    overflow:hidden;
+  }
+  .stat{ background:var(--surface); padding:14px 16px; display:flex; flex-direction:column; gap:4px; }
+  .stat .n{ font-family:'IBM Plex Mono'; font-size:24px; font-weight:600; font-variant-numeric:tabular-nums; }
+  .stat .l{ font-size:12px; color:var(--text-dim); }
+  .stat.live .n{ color:var(--live); }
+  .stat.orphan .n{ color:var(--orphan); }
+  .stat.broken .n{ color:var(--broken); }
+  .stat.dead .n{ color:var(--dead); }
+
+  /* ---------- tag reference strip ---------- */
+  .tagref{
+    display:flex; flex-wrap:wrap; gap:8px 10px; align-items:center;
+    font-size:13px; color:var(--text-dim);
+  }
+  .tagref b{ color:var(--text); font-weight:600; }
+  .tag-pill{
+    font-family:'IBM Plex Mono'; font-size:12.5px;
+    background:var(--surface-2); border:1px solid var(--border);
+    border-radius:6px; padding:3px 8px;
+  }
+  .tag-pill.used{ border-color:var(--accent); color:var(--accent-ink); background:var(--live-bg); }
+  .tag-pill.unused{ opacity:.6; }
+
+  /* ---------- section ---------- */
+  section{ display:flex; flex-direction:column; gap:14px; }
+  .sec-head{ display:flex; align-items:baseline; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  h2{ font-size:19px; margin:0; font-weight:700; }
+  .sec-sub{ font-size:13px; color:var(--text-dim); }
+
+  /* ---------- table ---------- */
+  .tablewrap{ overflow-x:auto; border:1px solid var(--border); border-radius:10px; background:var(--surface); box-shadow:var(--shadow); }
+  table{ width:100%; border-collapse:collapse; min-width:920px; }
+  thead th{
+    text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.07em;
+    color:var(--text-dim); font-weight:600;
+    padding:10px 12px; border-bottom:1px solid var(--border);
+    background:var(--surface-2); position:sticky; top:0;
+  }
+  tbody td{ padding:11px 12px; border-bottom:1px solid var(--border); vertical-align:top; font-size:13.5px; }
+  tbody tr:last-child td{ border-bottom:none; }
+  tbody tr:hover{ background:var(--surface-2); }
+  .id{ font-family:'IBM Plex Mono'; color:var(--text-dim); font-size:12.5px; white-space:nowrap; }
+  .title a{ color:var(--text); font-weight:600; text-decoration:none; }
+  .title a:hover{ color:var(--accent); text-decoration:underline; }
+  .slug{ display:block; font-family:'IBM Plex Mono'; font-size:11.5px; color:var(--text-dim); margin-top:2px; }
+  .shortcode{ font-family:'IBM Plex Mono'; font-size:12.5px; white-space:nowrap; }
+  .resolved{ font-size:13px; }
+  .resolved .tbl{ font-family:'IBM Plex Mono'; font-weight:600; }
+  .resolved .via{ display:block; font-size:11.5px; color:var(--text-dim); margin-top:1px; }
+  .navpath{ font-size:12.5px; }
+  .navpath .crumb{ color:var(--text-dim); }
+  .navpath .crumb::after{ content:" \203A "; }
+  .badge{
+    display:inline-flex; align-items:center; gap:5px;
+    font-size:11px; font-weight:600; letter-spacing:.02em;
+    padding:3px 8px; border-radius:20px; white-space:nowrap;
+  }
+  .badge.live{ background:var(--live-bg); color:var(--live); }
+  .badge.orphan{ background:var(--orphan-bg); color:var(--orphan); }
+  .badge.broken{ background:var(--broken-bg); color:var(--broken); }
+  .badge.private{ background:var(--surface-2); color:var(--text-dim); border:1px solid var(--border); }
+  .role{ font-size:11.5px; color:var(--text-dim); margin-top:3px; }
+  .note{ font-size:12px; color:var(--broken); margin-top:4px; max-width:34ch; }
+  .check{
+    width:17px; height:17px; accent-color: var(--accent); cursor:pointer; margin-top:2px;
+  }
+  tr.checked td{ opacity:.45; }
+  tr.checked .title a{ text-decoration:line-through; }
+
+  /* ---------- callout ---------- */
+  .callout{
+    border:1px solid var(--border); border-left:3px solid var(--accent);
+    background:var(--surface); border-radius:0 10px 10px 0; padding:14px 16px;
+    font-size:13.5px; box-shadow:var(--shadow);
+  }
+  .callout h3{ margin:0 0 6px; font-size:13.5px; font-weight:700; }
+  .callout ul{ margin:6px 0 0; padding-left:18px; }
+  .callout li{ margin-bottom:4px; }
+  .callout code{ font-family:'IBM Plex Mono'; font-size:.92em; }
+
+  /* ---------- dead config ---------- */
+  .deadgrid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:16px; }
+  .deadcard{ background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:14px 16px; box-shadow:var(--shadow); }
+  .deadcard h3{ margin:0 0 3px; font-size:13.5px; }
+  .deadcard .count{ font-family:'IBM Plex Mono'; color:var(--dead); font-size:12px; margin-bottom:10px; display:block; }
+  .deadrow{ display:flex; justify-content:space-between; gap:10px; padding:6px 0; border-top:1px solid var(--border); font-size:12.5px; }
+  .deadrow:first-of-type{ border-top:none; }
+  .deadrow .n{ color:var(--text); }
+  .deadrow .n small{ display:block; color:var(--text-dim); font-weight:400; }
+  .deadrow .t{ font-family:'IBM Plex Mono'; color:var(--dead); white-space:nowrap; text-align:right; }
+
+  footer{ font-size:12px; color:var(--text-dim); border-top:1px solid var(--border); padding-top:16px; }
+
+  @media (max-width:640px){
+    .stats{ grid-template-columns:repeat(2,1fr); }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">WP Data Access &middot; shortcode inventory</div>
+    <h1>Every page still talking to WPDA</h1>
+    <p class="lede">Full sweep of <code>post_content</code> for the 10 shortcode tags <code>WPDataAccess\WPDA_Public</code> actually registers, cross-referenced against <code>wpda_app</code> / <code>wpda_app_container</code> / <code>wpda_project</code> / <code>wpda_project_page</code> / <code>wpda_publisher</code>, and checked against the Main, GL&nbsp;admin, and Footer nav menus (the three menus with a live location).</p>
+    <div class="stats" id="stats"></div>
+  </header>
+
+  <div class="tagref" id="tagref"></div>
+
+  <section>
+    <div class="sec-head">
+      <h2>Linked in the Main nav</h2>
+      <span class="sec-sub">9 pages &mdash; reachable without a bookmark</span>
+    </div>
+    <div class="tablewrap"><table id="table-linked"></table></div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>Not in any live menu</h2>
+      <span class="sec-sub">19 pages &mdash; only reachable by direct URL, an in-page link, or a bookmark</span>
+    </div>
+    <div class="tablewrap"><table id="table-orphan"></table></div>
+  </section>
+
+  <section>
+    <div class="callout">
+      <h3>Worth a second look</h3>
+      <ul>
+        <li><b>Three fully broken references</b> &mdash; <code>1319</code>, <code>1554</code>, <code>1636</code> point at <code>project_id</code>/<code>page_id</code> pairs with <em>no matching row anywhere</em> in <code>wpda_project</code> or <code>wpda_project_page</code>. These will render WPDA's own "missing argument" / blank error, not data.</li>
+        <li><b>One orphaned parent</b> &mdash; <code>3007</code>'s <code>project_id=38</code> row is gone from <code>wpda_project</code>, but its <code>page_id=69</code> row survives intact in <code>wpda_project_page</code> (table <code>PlayerHistory</code>). Likely still renders since the page lookup is keyed on <code>page_id</code>, but the project grouping it reports under no longer exists &mdash; worth confirming on load.</li>
+        <li><b>Same table, two apps</b> &mdash; app 7 (<code>EditResultsOverrides</code>) and app 9 (<code>LadderRanking</code>) both read <code>Results</code>, one for editing overrides, one for the public ranking view. Not a problem, just not obvious from the app names alone.</li>
+        <li><b>Duplicate page</b> &mdash; <code>20000903</code> and <code>20005826</code> both embed the identical <code>[wpda_app app_id="9"]</code>. Only <code>20000903</code> is linked from the nav (under "Ladder"); <code>20005826</code> is a live, publicly-titled orphan of it.</li>
+        <li><b>Memory correction</b> &mdash; a prior inventory (2026-09-07) logged app 35 (<code>membership_travel</code>) as unused alongside app 34. It isn't: app 35 is embedded live on page <code>2862</code> ("Edit travel"). That earlier scan likely missed it for the same reason this one nearly did &mdash; see the methodology note below.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>Configured but embedded nowhere</h2>
+      <span class="sec-sub">Dead config in WPDA's own admin tables &mdash; not actionable, just here so nothing gets rediscovered by accident</span>
+    </div>
+    <div class="deadgrid" id="deadgrid"></div>
+  </section>
+
+  <footer id="footer"></footer>
+</div>
+
+<script>
+const TAGS = [
+  {tag:'wpda_app', used:true},
+  {tag:'wpdadataforms', used:true},
+  {tag:'wpdadiehard', used:true},
+  {tag:'wpdataaccess', used:true},
+  {tag:'wpda_app_builder', used:false},
+  {tag:'wpda_data_explorer', used:false},
+  {tag:'wpda_query_builder', used:false},
+  {tag:'wpdadataproject', used:false},
+  {tag:'wpdageomap', used:false},
+  {tag:'wpdawidget', used:false},
+];
+
+// status: 'ok' | 'broken' | 'partial'
+const LINKED = [
+  {id:20000903, title:"Rankings from most recent results", slug:'results-of-mondays-ladder-tournament-2', url:'https://pickleballstouffville.ca/results-of-mondays-ladder-tournament-2/', wpstatus:'publish', tag:'wpda_app', atts:'app_id="9"', table:'Results', via:'app 9 &middot; LadderRanking', nav:['Ladder'], role:'Any logged-in member &mdash; no role restriction', status:'ok'},
+  {id:20005643, title:"Edit Schedule", slug:'edit-schedule', url:'https://pickleballstouffville.ca/edit-schedule/', wpstatus:'publish', tag:'wpda_app', atts:'app_id="13"', table:'Schedules + Groups', via:'app 13 &middot; Schedulesprepub', nav:['Editor','Schedules'], role:'administrator, editor', status:'ok'},
+  {id:20005754, title:"This week's Schedule", slug:'this-weeks-schedule', url:'https://pickleballstouffville.ca/this-weeks-schedule/', wpstatus:'publish', tag:'wpda_app', atts:'app_id="4"', table:'schedules_w', via:'app 4 &middot; ShowSchedules', nav:['Editor','Schedules'], role:'administrator, editor', status:'ok'},
+  {id:20006436, title:"Edit Courts", slug:'edit-courts', url:'https://pickleballstouffville.ca/edit-courts/', wpstatus:'publish', tag:'wpda_app', atts:'app_id="12"', table:'Courts', via:'app 12 &middot; Courts', nav:['Editor','Schedules'], role:'administrator, editor', status:'ok'},
+  {id:20007853, title:"Preferred", slug:'preferred', url:'https://pickleballstouffville.ca/preferred/', wpstatus:'publish', tag:'wpda_app', atts:'app_id="29"', table:'preferred_new', via:'app 29 &middot; Preferred New', nav:['Editor','Schedules'], role:'administrator, editor', status:'ok'},
+  {id:20007885, title:"Edit Times", slug:'edit-times', url:'https://pickleballstouffville.ca/edit-times/', wpstatus:'publish', tag:'wpda_app', atts:'app_id="30"', table:'Times', via:'app 30 &middot; Times', nav:['Editor','Schedules'], role:'administrator, editor', status:'ok'},
+  {id:20007891, title:"Preferred Permanent table for Ladder Schedule", slug:'preferred-permanent-table-for-ladder-schedule', url:'https://pickleballstouffville.ca/preferred-permanent-table-for-ladder-schedule/', wpstatus:'publish', tag:'wpda_app', atts:'app_id="31"', table:'preferred_permanent', via:'app 31 &middot; Preferred Permanent', nav:['Editor','Schedules'], role:'administrator, editor', status:'ok'},
+  {id:20005821, title:"Modify overrides for Results table", slug:'modify-overrides-for-results-table', url:'https://pickleballstouffville.ca/modify-overrides-for-results-table/', wpstatus:'publish', tag:'wpda_app', atts:'app_id="7"', table:'Results', via:'app 7 &middot; EditResultsOverrides', nav:['Editor','Results','Modify Overrides before publishing results'], role:'administrator, editor', status:'ok'},
+  {id:20005843, title:"Edit schedule scores after play", slug:'edit-schedule-scores-after-play', url:'https://pickleballstouffville.ca/edit-schedule-scores-after-play/', wpstatus:'publish', tag:'wpda_app', atts:'app_id="5"', table:'Schedules + Groups', via:'app 5 &middot; EditSchedules', nav:['Editor','Results'], role:'administrator, editor', status:'ok'},
+];
+
+const ORPHANED = [
+  {id:1319, title:"Ladder results", slug:'ladder-setup', url:'https://pickleballstouffville.ca/ladder-setup/', wpstatus:'publish', tag:'wpdadataforms', atts:'project_id="3" page_id="7"', table:'&mdash;', via:null, status:'broken', note:'Neither project 3 nor page 7 exists in WPDA config.'},
+  {id:1517, title:"Ladder - Master List", slug:'ladder-players-master-list', url:'https://pickleballstouffville.ca/ladder-players-master-list/', wpstatus:'publish', tag:'wpda_app', atts:'app_id="24"', table:'Master', via:'app 24 &middot; masterList', status:'ok'},
+  {id:1554, title:"August 23 Schedule", slug:'august-23-schedule', url:'https://pickleballstouffville.ca/august-23-schedule/', wpstatus:'publish', tag:'wpdadataforms', atts:'project_id="26" page_id="34"', table:'&mdash;', via:null, status:'broken', note:'Neither project 26 nor page 34 exists in WPDA config.'},
+  {id:1636, title:"August 30 Schedule", slug:'august-30-schedule', url:'https://pickleballstouffville.ca/august-30-schedule/', wpstatus:'publish', tag:'wpdadataforms', atts:'project_id="27" page_id="39"', table:'&mdash;', via:null, status:'broken', note:'Neither project 27 nor page 39 exists in WPDA config.'},
+  {id:1676, title:"Add rank to new users", slug:'add-rank-to-new-users', url:'https://pickleballstouffville.ca/add-rank-to-new-users/', wpstatus:'publish', tag:'wpdadiehard', atts:'project_id="31" page_id="51"', table:'PlayersNoRank', via:'project 31 &middot; No Rank Users &rsaquo; page 51 &middot; Add Ranks', status:'ok'},
+  {id:2000, title:"Create &amp; list membership table", slug:'create-membership-table', url:'https://pickleballstouffville.ca/create-membership-table/', wpstatus:'publish', tag:'wpdadataforms', atts:'project_id="34" page_id="58"', table:'AllEntries', via:'project 34 &middot; Membership &rsaquo; page 58 &middot; membership', status:'ok'},
+  {id:2311, title:"Add Rank to any user", slug:'add-rank-to-any-user', url:'https://pickleballstouffville.ca/add-rank-to-any-user/', wpstatus:'publish', tag:'wpdadiehard', atts:'project_id="31" page_id="59"', table:'Masterlist2022', via:'project 31 &middot; No Rank Users &rsaquo; page 59 &middot; Add Rank to any user', status:'ok'},
+  {id:2550, title:"Show registrations by event", slug:'show-registrations-by-event', url:'https://pickleballstouffville.ca/show-registrations-by-event/', wpstatus:'publish', tag:'wpda_app', atts:'app_id="10"', table:'AllEntries', via:'app 10 &middot; All Entries', status:'ok'},
+  {id:2729, title:"Print Schedule", slug:'print-schedule', url:'https://pickleballstouffville.ca/print-schedule/', wpstatus:'publish', tag:'wpdataaccess', atts:'pub_id="3"', table:'Schedules (+Times, +Courts)', via:'publisher 3 &middot; Scores &mdash; custom join query', status:'ok'},
+  {id:2862, title:"Edit travel", slug:'edit-travel', url:'https://pickleballstouffville.ca/edit-travel/', wpstatus:'publish', tag:'wpda_app', atts:'app_id="35"', table:'membership', via:'app 35 &middot; membership_travel', status:'ok'},
+  {id:3007, title:"Player playing history", slug:'player-playing-history', url:'https://pickleballstouffville.ca/player-playing-history/', wpstatus:'publish', tag:'wpdadiehard', atts:'project_id="38" page_id="69"', table:'PlayerHistory', via:'project 38 (missing row) &rsaquo; page 69 &middot; Player History', status:'partial', note:'project_id 38 no longer exists in wpda_project; the page_id 69 row is still intact.'},
+  {id:20003754, title:"Club Membership list", slug:'clubmembership', url:'https://pickleballstouffville.ca/clubmembership/', wpstatus:'publish', tag:'wpda_app', atts:'app_id="25"', table:'membership', via:'app 25 &middot; membership', status:'ok'},
+  {id:20004979, title:"WP Data Access - Manage data table styles", slug:'wpdataaccess-manage-styles', url:'https://pickleballstouffville.ca/?page_id=20004979', wpstatus:'private', tag:'wpdataaccess', atts:'pub_id="11"', table:'preferred_new', via:'publisher 11 &middot; Preferred_new', status:'ok'},
+  {id:20005346, title:"Table of Events", slug:'table-of-events', url:'https://pickleballstouffville.ca/table-of-events/', wpstatus:'publish', tag:'wpda_app', atts:'app_id="11"', table:'rtec_xref', via:'app 11 &middot; Rtec_xref', status:'ok'},
+  {id:20005729, title:"Record membership tag numbers", slug:'record-membership-tag-numbers', url:'https://pickleballstouffville.ca/record-membership-tag-numbers/', wpstatus:'publish', tag:'wpda_app', atts:'app_id="3"', table:'MembershipTags', via:'app 3 &middot; MembershipTags', status:'ok'},
+  {id:20005826, title:"Results of Monday's ladder tournament", slug:'results-of-mondays-ladder-tournament', url:'https://pickleballstouffville.ca/results-of-mondays-ladder-tournament/', wpstatus:'publish', tag:'wpda_app', atts:'app_id="9"', table:'Results', via:'app 9 &middot; LadderRanking &mdash; duplicate of the linked page above', status:'ok'},
+  {id:20006754, title:"Edit Schedule delete and add players", slug:'edit-schedule-delete-and-add-players', url:'https://pickleballstouffville.ca/edit-schedule-delete-and-add-players/', wpstatus:'publish', tag:'wpda_app', atts:'app_id="17"', table:'Schedules', via:'app 17 &middot; SchedReplPlayer', status:'ok'},
+  {id:20006791, title:"Create or update rtec_xref table_3", slug:'create-or-update-rtec_xref-table_3', url:'https://pickleballstouffville.ca/create-or-update-rtec_xref-table_3/', wpstatus:'publish', tag:'wpda_app', atts:'app_id="33"', table:'rtec_xref', via:'app 33 &middot; rtec_xref _3', status:'ok'},
+  {id:20006812, title:"Create Ladder player export file", slug:'create-ladder-player-export-file', url:'https://pickleballstouffville.ca/create-ladder-player-export-file/', wpstatus:'publish', tag:'wpda_app', atts:'app_id="21"', table:'LadderExport', via:'app 21 &middot; LadderExp', status:'ok'},
+];
+
+const DEAD_APPS = [
+  {id:8, name:'ResultsLast', title:'Results from the last updated ladder scores', table:'Results'},
+  {id:14, name:'ShowSchedules_1 (copy)', title:'Schedule for Ladder -- 2024-07-15', table:'Schedules'},
+  {id:15, name:'Rtec_xref_1', title:'View Rtec xref table', table:'rtec_xref'},
+  {id:18, name:'Master', title:'List of Ladder Players', table:'Master'},
+  {id:20, name:'rtec_xref _2', title:'Registrations for current events', table:'rtec_xref'},
+  {id:26, name:'LadGen', title:'Generic Ladder for any event', table:'Schedule30000736'},
+  {id:27, name:'Schedule table layout', title:'Layout Schedule table', table:'Schedules_layout'},
+  {id:32, name:'ShowAllResults', title:'Results All', table:'Results_all'},
+  {id:34, name:'clubmembers', title:'Club Membership list', table:'membership'},
+];
+
+const DEAD_PAGES = [
+  {proj:20, page:25, name:'Master List of Players', table:'Masterlist2023', mode:'view'},
+  {proj:20, page:57, name:'Club Membership list', table:'membership', mode:'view', note:'project 20 itself is also gone'},
+  {proj:29, page:70, name:'Schedule for Ladder 2026-09-07', table:'Schedules', mode:'edit'},
+  {proj:29, page:71, name:'June 05 Schedule', table:'Schedules', mode:'view'},
+  {proj:29, page:73, name:'Ladder 2026-09-07 5:30pm', table:'AllEntries', mode:'view'},
+  {proj:29, page:74, name:'Ladder 2026-09-07 7:50pm', table:'Schedules', mode:'view'},
+  {proj:29, page:76, name:'Schedule for Ladder 2026-05-25', table:'Results_all', mode:'view'},
+  {proj:29, page:79, name:'Schedule formated', table:'schedules_vvv', mode:'view'},
+  {proj:30, page:72, name:'Ladder September 07, 2026', table:'Results', mode:'edit'},
+  {proj:30, page:75, name:'Results', table:'Results', mode:'view'},
+  {proj:31, page:62, name:'Add Ranks to players in membership', table:'membership', mode:'edit'},
+  {proj:34, page:68, name:'Membership edit', table:'membership', mode:'view', note:'has real inline-editing config, currently unreachable'},
+  {proj:35, page:63, name:'Show event entries', table:'AllEntries', mode:'view'},
+  {proj:36, page:64, name:'CleanUsers', table:'users', mode:'edit'},
+  {proj:37, page:65, name:'Emails', table:'email', mode:'edit'},
+  {proj:37, page:66, name:'Ladder emails', table:'Ladder_email', mode:'edit'},
+  {proj:37, page:67, name:'All user emails', table:'All_email', mode:'edit'},
+  {proj:39, page:77, name:'Master', table:'Master', mode:'view'},
+  {proj:40, page:78, name:'Events', table:'rtec_xref', mode:'edit'},
+];
+
+const DEAD_PUBLISHERS = [
+  {id:1, name:'Ladder Schedule', table:'schedules_w'},
+  {id:2, name:'Schedule Scores', table:'Schedules'},
+  {id:4, name:'All Entries', table:'AllEntries'},
+  {id:5, name:'membership', table:'AllEntries'},
+  {id:6, name:'Master', table:'Master'},
+  {id:7, name:'rtec_xref', table:'rtec_xref'},
+  {id:8, name:'Schedules', table:'Schedules'},
+  {id:9, name:'Rtec_xref edit', table:'rtec_xref'},
+  {id:10, name:'MembershipTags', table:'MembershipTags'},
+];
+
+function statusBadge(row){
+  if (row.status === 'broken') return '<span class="badge broken">Broken</span>';
+  if (row.status === 'partial') return '<span class="badge orphan">Orphaned config</span>';
+  return '';
+}
+
+function renderLinked(){
+  const t = document.getElementById('table-linked');
+  t.innerHTML = `<thead><tr>
+    <th></th><th>Page</th><th>Shortcode</th><th>Resolves to</th><th>Main&nbsp;nav path</th>
+  </tr></thead><tbody>` + LINKED.map(r => `
+    <tr data-id="${r.id}">
+      <td><input type="checkbox" class="check" data-id="${r.id}"></td>
+      <td class="title">
+        <a href="${r.url}" target="_blank" rel="noopener">${r.title}</a>
+        <span class="slug">#${r.id} &middot; /${r.slug}/</span>
+      </td>
+      <td class="shortcode">[${r.tag} ${r.atts}]</td>
+      <td class="resolved"><span class="tbl">${r.table}</span><span class="via">${r.via}</span></td>
+      <td class="navpath">
+        ${r.nav.map(c=>`<span class="crumb">${c}</span>`).join('')}
+        <div class="role">${r.role}</div>
+      </td>
+    </tr>`).join('') + `</tbody>`;
+}
+
+function renderOrphaned(){
+  const t = document.getElementById('table-orphan');
+  t.innerHTML = `<thead><tr>
+    <th></th><th>Page</th><th>Status</th><th>Shortcode</th><th>Resolves to</th>
+  </tr></thead><tbody>` + ORPHANED.map(r => `
+    <tr data-id="${r.id}">
+      <td><input type="checkbox" class="check" data-id="${r.id}"></td>
+      <td class="title">
+        <a href="${r.url}" target="_blank" rel="noopener">${r.title}</a>
+        <span class="slug">#${r.id} &middot; /${r.slug}/</span>
+      </td>
+      <td>
+        ${r.wpstatus === 'private' ? '<span class="badge private">Private</span>' : '<span class="badge orphan">Not linked</span>'}
+        ${statusBadge(r)}
+        ${r.note ? `<div class="note">${r.note}</div>` : ''}
+      </td>
+      <td class="shortcode">[${r.tag} ${r.atts}]</td>
+      <td class="resolved">
+        <span class="tbl">${r.table}</span>
+        ${r.via ? `<span class="via">${r.via}</span>` : ''}
+      </td>
+    </tr>`).join('') + `</tbody>`;
+}
+
+function renderDead(){
+  const grid = document.getElementById('deadgrid');
+  grid.innerHTML = `
+    <div class="deadcard">
+      <h3>App Builder apps</h3>
+      <span class="count">${DEAD_APPS.length} configured, unembedded</span>
+      ${DEAD_APPS.map(a=>`<div class="deadrow"><span class="n">app ${a.id} &middot; ${a.name}<small>${a.title}</small></span><span class="t">${a.table}</span></div>`).join('')}
+    </div>
+    <div class="deadcard">
+      <h3>Data Project pages</h3>
+      <span class="count">${DEAD_PAGES.length} configured, unembedded</span>
+      ${DEAD_PAGES.map(p=>`<div class="deadrow"><span class="n">proj ${p.proj} / page ${p.page} &middot; ${p.name}<small>${p.mode}${p.note ? ' &mdash; '+p.note : ''}</small></span><span class="t">${p.table}</span></div>`).join('')}
+    </div>
+    <div class="deadcard">
+      <h3>Publishers (wpdataaccess)</h3>
+      <span class="count">${DEAD_PUBLISHERS.length} configured, unembedded</span>
+      ${DEAD_PUBLISHERS.map(p=>`<div class="deadrow"><span class="n">pub ${p.id} &middot; ${p.name}</span><span class="t">${p.table}</span></div>`).join('')}
+    </div>`;
+}
+
+function renderStats(){
+  const broken = ORPHANED.filter(r=>r.status==='broken').length;
+  const partial = ORPHANED.filter(r=>r.status==='partial').length;
+  const deadTotal = DEAD_APPS.length + DEAD_PAGES.length + DEAD_PUBLISHERS.length;
+  const stats = [
+    {n: LINKED.length + ORPHANED.length, l:'Total live embeds', cls:''},
+    {n: LINKED.length, l:'Linked in Main nav', cls:'live'},
+    {n: ORPHANED.length, l:'Not in any live menu', cls:'orphan'},
+    {n: broken + partial, l:'Broken / orphaned refs', cls:'broken'},
+    {n: deadTotal, l:'Dead config, unembedded', cls:'dead'},
+  ];
+  document.getElementById('stats').innerHTML = stats.map(s=>`
+    <div class="stat ${s.cls}"><span class="n">${s.n}</span><span class="l">${s.l}</span></div>`).join('');
+}
+
+function renderTagRef(){
+  document.getElementById('tagref').innerHTML = '<b>10 shortcode tags registered by the plugin:</b> ' +
+    TAGS.map(t=>`<span class="tag-pill ${t.used?'used':'unused'}">[${t.tag}]</span>`).join('');
+}
+
+renderStats();
+renderTagRef();
+renderLinked();
+renderOrphaned();
+renderDead();
+
+document.getElementById('footer').innerHTML =
+  'Generated 2026-09-11 by direct <code class="mono">post_content</code> scan (28 non-revision pages matched) against ' +
+  '<code class="mono">wpda_app</code>, <code class="mono">wpda_app_container</code>, <code class="mono">wpda_project</code>, ' +
+  '<code class="mono">wpda_project_page</code>, <code class="mono">wpda_publisher</code>, and the Main/GL&nbsp;admin/Footer nav menus (the only three with a live menu location). ' +
+  'Methodology note: Divi 5 stores some module content as a Gutenberg block\'s JSON attribute, where embedded quote characters serialize as <code class="mono">\\u0022</code> &mdash; a naive regex scan misreads <code class="mono">app_id="24"</code> as literal text <code class="mono">app_id=u002224u0022</code>. Normalizing that escape before parsing was required to recover 5 of the 28 rows correctly (including the app-35 correction above). Read-only audit &mdash; nothing on the site was changed.';
+
+// per-viewer progress checkboxes (this browser only, not shared)
+try {
+  const KEY = 'wpda-audit-checked';
+  const saved = JSON.parse(localStorage.getItem(KEY) || '{}');
+  document.querySelectorAll('.check').forEach(cb => {
+    const id = cb.dataset.id;
+    if (saved[id]) { cb.checked = true; cb.closest('tr').classList.add('checked'); }
+    cb.addEventListener('change', () => {
+      saved[id] = cb.checked;
+      cb.closest('tr').classList.toggle('checked', cb.checked);
+      try { localStorage.setItem(KEY, JSON.stringify(saved)); } catch(e) {}
+    });
+  });
+} catch(e) {}
+</script>
+</body>
+</html>
