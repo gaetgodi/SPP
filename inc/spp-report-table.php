@@ -1,8 +1,41 @@
 <?php
 /* =========================================================
    Shared Report Table Renderer
-   Version: 1.5.0
+   Version: 1.6.0
    Date: 2026-09-10
+
+   Changes from 1.5.0:
+   - .spp-report-table-scroll now sizes to width:fit-content (capped by
+     the existing max-width:100%) instead of always stretching to the
+     full width of whatever container it's in -- a narrow table (few
+     short columns) now reads as an actually-narrow box instead of a
+     compact table sitting inside a needlessly wide one. fit-content's
+     sizing function (min(max-content, available-space)) means the
+     wide/horizontal-scroll case is unaffected: a table wider than its
+     container still computes to the container's available width and
+     overflow-x:auto still kicks in exactly as before.
+   - New .spp-report-inner wrapper (around the controls bar, the table-
+     scroll box / empty message, and the pagination footer) is itself
+     width:fit-content, and .spp-report-controls/.spp-report-pagination/
+     .spp-report-empty are told to fill it (width:100%) rather than the
+     old full-width .spp-report-table div -- so the "Rows per page" bar
+     and the pagination footer now match the table's own rendered width
+     instead of staying full-container-width, and the whole component
+     (controls, table, pagination) reads as one visually consistent
+     width. The outer .spp-report-table div itself is left a full-width
+     block, unchanged -- Divi's row/column layout and the
+     --spp-report-margin centering fallback still reason about it that
+     way.
+   - Added --spp-report-table-border (default: none) and
+     --spp-report-table-bg (default: transparent) on
+     .spp-report-table-scroll -- same element that already owns
+     --spp-report-radius, so a border/background and the rounded
+     corners frame the table together, especially now that this box
+     hugs the table's real width. Same discipline as every other
+     property here: default reproduces today's exact appearance (no
+     border, no background) until someone overrides one. Documented in
+     the Report Generator's CSS Customization Reference alongside the
+     other 21, with matching style-editor controls.
 
    Changes from 1.4.0:
    - Folded the inline-editing CSS (editable/discrepancy cell
@@ -367,6 +400,8 @@ function spp_render_report_table( array $columns, array $rows, array $args = arr
             --spp-report-edit-saving-opacity: 0.6;
             --spp-report-edit-success-bg: #c6efce;
             --spp-report-edit-error-bg: #ffc7ce;
+            --spp-report-table-border: none;
+            --spp-report-table-bg: transparent;
         }
         .spp-report-table {
             font-family: Arial, sans-serif;
@@ -398,13 +433,58 @@ function spp_render_report_table( array $columns, array $rows, array $args = arr
         .spp-report-table-scroll {
             overflow-x: auto;
             -webkit-overflow-scrolling: touch;
+            /* width:fit-content -- shrink this box to the table's own
+               rendered width instead of always stretching to fill
+               whatever container it's given (a block element's default).
+               max-width:100% still caps it at the container's available
+               width, so a table wider than its container computes the
+               same as before this change: fit-content's sizing function
+               is min(max-content, available-space), which is exactly
+               max-width:100% already meant to enforce -- overflow-x:auto
+               still kicks in identically for the wide/horizontal-scroll
+               case. The only change in practice is the narrow-table case:
+               this box (and, via .spp-report-inner below, the controls
+               bar and pagination footer that flank it) no longer sits
+               full-container-width when the table itself is narrower. */
+            width: fit-content;
             max-width: 100%;
             /* border-radius lives here (not on table.spp-report-table-grid)
                so this box's own overflow clipping is what actually rounds
                the visible corners -- border-radius on a border-collapse
                table doesn't reliably clip its own cell borders/backgrounds
-               to rounded corners across browsers. */
+               to rounded corners across browsers. Same reasoning now also
+               applies to --spp-report-table-border/--spp-report-table-bg
+               below: a border and background painted here frame the
+               table together with those rounded corners, on the box whose
+               width now actually matches the table's own. */
             border-radius: var(--spp-report-radius);
+            border: var(--spp-report-table-border);
+            background: var(--spp-report-table-bg);
+        }
+        /* Wraps the controls bar, the table-scroll box, and the
+           pagination footer together so all three share one shrink-
+           wrapped width -- fit-content here, driven by the widest child
+           (in practice always .spp-report-table-scroll, whose own
+           fit-content width above reflects the table's real rendered
+           width), capped at the container's available width same as the
+           table-scroll box itself. .spp-report-controls/.spp-report-
+           pagination/.spp-report-empty are then told to fill this
+           wrapper (width:100%) rather than the old default of filling
+           the full-width outer .spp-report-table div, so the whole
+           component reads as one consistent width instead of a
+           (possibly narrower) table sandwiched between full-width bars.
+           The outer .spp-report-table div itself is deliberately left a
+           full-width block, unchanged -- other things (Divi's own
+           row/column layout, the --spp-report-margin centering fallback
+           documented above) already reason about it being full width. */
+        .spp-report-table .spp-report-inner {
+            width: fit-content;
+            max-width: 100%;
+        }
+        .spp-report-table .spp-report-controls,
+        .spp-report-table .spp-report-pagination,
+        .spp-report-table .spp-report-empty {
+            width: 100%;
         }
         table.spp-report-table-grid {
             border-collapse: collapse;
@@ -575,6 +655,7 @@ function spp_render_report_table( array $columns, array $rows, array $args = arr
         data-spp-edit-nonce="<?php echo esc_attr( $edit_nonce ); ?>"
         data-spp-edit-ajax="<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>"
     <?php endif; ?>>
+        <div class="spp-report-inner">
         <div class="spp-report-controls">
             <div class="spp-report-summary">
                 <?php
@@ -744,6 +825,7 @@ function spp_render_report_table( array $columns, array $rows, array $args = arr
                 </div>
             <?php endif; ?>
         <?php endif; ?>
+        </div>
     </div>
 
     <?php if ( $can_edit ) : ?>
