@@ -1,8 +1,31 @@
 <?php
 /* =========================================================
    Report Generator — Admin Screen
-   Version: 2.7.1
+   Version: 2.7.2
    Date: 2026-09-11
+
+   Changes from 2.7.1:
+   - BUG FIX: --spp-report-table-bg's control was <input type="color">
+     with data-default/value "transparent" -- native color inputs only
+     accept strict #rrggbb, so the browser silently normalized that
+     unparseable value to black at render time, and "Reset to Defaults"
+     left it black too (resyncControlsFromText()'s existing skip-if-
+     unrepresentable rule -- the same one already protecting every
+     other color control from a named-color/rgb()/3-digit-hex value --
+     correctly declined to overwrite the control with "transparent"
+     either, since that's just as unrepresentable; it just never had a
+     valid value to fall back to in the first place). The textarea and
+     live preview were never affected -- both always read/apply
+     "transparent" as real CSS; only this one native picker widget
+     couldn't represent it. Changed the control itself to type="text",
+     same treatment as the five other length/keyword-valued properties
+     (max-width, radius, margin, font-size, cell-padding), since its
+     legitimate values (transparent, none, a named color, #hex, rgb()/
+     rgba()) already extend well beyond what a color-swatch input
+     supports. No change to resyncControlsFromText()/resetAllToDefaults()
+     -- their existing shared skip-logic was already correct and already
+     uniform across initial load, hand-typed resync, and Reset to
+     Defaults; the bug was solely this control's type, not that logic.
 
    Changes from 2.7.0:
    - Stored defaults for --spp-report-radius and --spp-report-margin
@@ -797,7 +820,7 @@ function spp_render_report_style_editor( $initial_css = '' ) {
             <p><label>Edit saving opacity<br><input type="text" data-var="--spp-report-edit-saving-opacity" data-default="<?php echo esc_attr( $defaults['--spp-report-edit-saving-opacity'] ); ?>" value="<?php echo esc_attr( $defaults['--spp-report-edit-saving-opacity'] ); ?>" placeholder="e.g. 0.6" title="A number from 0 (invisible) to 1 (fully opaque)" style="width:140px;"></label></p>
             <p><label>Edit success flash<br><input type="color" data-var="--spp-report-edit-success-bg" data-default="<?php echo esc_attr( $defaults['--spp-report-edit-success-bg'] ); ?>" value="<?php echo esc_attr( $defaults['--spp-report-edit-success-bg'] ); ?>"></label></p>
             <p><label>Edit error flash<br><input type="color" data-var="--spp-report-edit-error-bg" data-default="<?php echo esc_attr( $defaults['--spp-report-edit-error-bg'] ); ?>" value="<?php echo esc_attr( $defaults['--spp-report-edit-error-bg'] ); ?>"></label></p>
-            <p><label>Table background<br><input type="color" data-var="--spp-report-table-bg" data-default="<?php echo esc_attr( $defaults['--spp-report-table-bg'] ); ?>" value="<?php echo esc_attr( $defaults['--spp-report-table-bg'] ); ?>"></label></p>
+            <p><label>Table background<br><input type="text" data-var="--spp-report-table-bg" data-default="<?php echo esc_attr( $defaults['--spp-report-table-bg'] ); ?>" value="<?php echo esc_attr( $defaults['--spp-report-table-bg'] ); ?>" placeholder="e.g. transparent, #ffffff, or a color name" title="e.g. transparent, #ffffff, or a color name -- any valid CSS color, not just hex" style="width:140px;"></label></p>
             <p><label>Table border<br><input type="text" data-var="--spp-report-table-border" data-default="<?php echo esc_attr( $defaults['--spp-report-table-border'] ); ?>" value="<?php echo esc_attr( $defaults['--spp-report-table-border'] ); ?>" placeholder="e.g. 1px solid #ddd" title="A full border shorthand, e.g. 1px solid #ddd, or none" style="width:140px;"></label></p>
         </div>
         <div style="flex:1;min-width:320px;">
