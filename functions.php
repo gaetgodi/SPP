@@ -94,6 +94,10 @@ require_once get_stylesheet_directory() . '/inc/spp-report-variants.php'; // mus
 require_once get_stylesheet_directory() . '/inc/spp-reports.php';
 require_once get_stylesheet_directory() . '/inc/spp-report-generator-admin.php'; // must load after spp-reports.php, which defines spp_report_filter_columns()
 require_once get_stylesheet_directory() . '/inc/spp-report-edit.php';
+require_once get_stylesheet_directory() . '/inc/spp-kq-schema.php'; // Ace/Queen of the Courts live event runner -- must load before spp-kq-movement.php/spp-kq-live.php below
+require_once get_stylesheet_directory() . '/inc/spp-kq-movement.php'; // pure movement algorithm, no dependency on spp-kq-schema.php itself, but grouped with the rest of this feature
+require_once get_stylesheet_directory() . '/inc/spp-kq-live.php'; // calls functions from both files above
+require_once get_stylesheet_directory() . '/inc/spp-kq-screens.php'; // [spp_kq_live] shortcode + AJAX draw handler -- calls functions from all three files above
 
 add_filter('template_include', function($template) {
     if (is_singular('tribe_events')) {
