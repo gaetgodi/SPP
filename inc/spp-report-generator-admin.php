@@ -1,8 +1,18 @@
 <?php
 /* =========================================================
    Report Generator — Admin Screen
-   Version: 2.7.0
-   Date: 2026-09-10
+   Version: 2.7.1
+   Date: 2026-09-11
+
+   Changes from 2.7.0:
+   - Stored defaults for --spp-report-radius and --spp-report-margin
+     changed from bare "0" to "0px" in both the style editor's $defaults
+     array and the CSS Customization Reference table's documented
+     default, matching inc/spp-report-table.php 1.6.1's own :where()
+     block. Text-only -- 0 and 0px are the same length, so this changes
+     what the default reads as, not how anything renders. (Was made
+     directly on the live server, uncommitted, on top of 2.6.0; carried
+     forward here on reconciling with 2.7.0.)
 
    Changes from 2.6.0:
    - Added --spp-report-table-border and --spp-report-table-bg (both new
@@ -409,8 +419,8 @@ function spp_render_report_css_reference() {
         array( '--spp-report-cell-padding', '5px 10px', 'Padding on every cell. Separate, smaller value under the 600px mobile breakpoint -- see note below.' ),
         array( '--spp-report-link-color', '#3766AB', 'Text color of non-current pagination links (Prev/Next/page numbers). Does not affect header sort links -- those use --spp-report-header-text.' ),
         array( '--spp-report-max-width', 'none', "Max-width cap on the table itself, before the surrounding container's horizontal scrollbar kicks in. Default of none means no cap -- the table is sized to its own content." ),
-        array( '--spp-report-radius', '0', "Corner rounding of the table's scrolling container." ),
-        array( '--spp-report-margin', '0', 'Margin on the table element -- see the centering note below.' ),
+        array( '--spp-report-radius', '0px', "Corner rounding of the table's scrolling container." ),
+        array( '--spp-report-margin', '0px', 'Margin on the table element -- see the centering note below.' ),
         array( '--spp-report-header-weight', 'bold', 'Font weight of header cell text.' ),
         array( '--spp-report-header-transform', 'none', 'Text transform of header cell text, e.g. uppercase.' ),
         array( '--spp-report-editable-bg', '#fff8cc', 'Background of an editable cell at rest -- only rendered for admin/editor sessions on a report with an editable column.' ),
@@ -711,8 +721,8 @@ function spp_render_report_style_editor( $initial_css = '' ) {
         '--spp-report-row-hover-bg'     => '#eef7f6',
         '--spp-report-link-color'       => '#3766ab',
         '--spp-report-max-width'        => 'none',
-        '--spp-report-radius'           => '0',
-        '--spp-report-margin'           => '0',
+        '--spp-report-radius'           => '0px',
+        '--spp-report-margin'           => '0px',
         '--spp-report-font-size'        => '13px',
         '--spp-report-cell-padding'     => '5px 10px',
         '--spp-report-header-transform' => 'none',

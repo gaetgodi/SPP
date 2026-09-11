@@ -1,8 +1,25 @@
 <?php
 /* =========================================================
    Shared Report Table Renderer
-   Version: 1.6.0
-   Date: 2026-09-10
+   Version: 1.6.1
+   Date: 2026-09-11
+
+   Changes from 1.6.0:
+   - Stored defaults for --spp-report-radius and --spp-report-margin
+     changed from bare "0" to "0px", in this file's own :where()
+     default block (the JS $defaults array and the CSS Customization
+     Reference table both live in spp-report-generator-admin.php --
+     updated there to match, same version bump date). Per repeated
+     real-world use, Gaetan has had to manually add px to these every
+     time; fixing the stored default text makes that moot regardless
+     of why bare zero didn't behave as expected, rather than
+     re-investigating the root cause. Purely a default-value text
+     change -- 0 and 0px are the same length per the CSS spec, so
+     nothing renders differently once a value is actually applied;
+     this only changes what the DEFAULT says, so no one has to type
+     the unit in by hand anymore. (Was made directly on the live
+     server, uncommitted, on top of 1.5.0; carried forward here on
+     reconciling with 1.6.0.)
 
    Changes from 1.5.0:
    - .spp-report-table-scroll now sizes to width:fit-content (capped by
@@ -388,8 +405,8 @@ function spp_render_report_table( array $columns, array $rows, array $args = arr
             --spp-report-link-color: #3766AB;
             --spp-report-max-width: none; /* default preserves today's content-sized
                                               behavior below -- see table.spp-report-table-grid */
-            --spp-report-radius: 0;
-            --spp-report-margin: 0;
+            --spp-report-radius: 0px;
+            --spp-report-margin: 0px;
             --spp-report-header-weight: bold;
             --spp-report-header-transform: none;
             --spp-report-editable-bg: #fff8cc;
