@@ -538,3 +538,121 @@ function spp_kq_draw_card( int $occurrence_id, int $user_id ) : array {
 
     return array( 'success' => false, 'error' => 'Could not claim a slot after several attempts -- please try again.' );
 }
+
+// =============================================================
+// Score entry (Stage 3) -- a SECOND, NARROWER access model layered
+// on top of spp_kq_can_facilitate(). Viewing or submitting a specific
+// court's score requires a real spp_kq_assignments row for THAT
+// occurrence/round/user_id -- not just being logged in. This one
+// function is the single source of truth for that check, called
+// identically by the screen render AND the AJAX submit handler, so
+// they can never drift apart the way spp-score-entry.php's own two
+// checks once did (see that file's 1.4.0 changelog). The client is
+// never trusted to name its own court -- only ever the court_name
+// this function itself returns.
+// =============================================================
+
+/**
+ * The court/team a specific user is assigned to for a specific round,
+ * or null if they have no assignment there at all (not playing this
+ * round -- e.g. a facilitator who isn't a player, or a substituted-out
+ * player past the round they left).
+ */
+function spp_kq_get_my_court_assignment( int $occurrence_id, int $round_number, int $user_id ) : ?array {
+    global $wpdb;
+    $table = spp_kq_assignments_table();
+    $row = $wpdb->get_row( $wpdb->prepare(
+        "SELECT court_name, team_color FROM {$table}
+         WHERE occurrence_id = %d AND round_number = %d AND user_id = %d",
+        $occurrence_id, $round_number, $user_id
+    ), ARRAY_A );
+    return $row ?: null;
+}
+
+/**
+ * How many of this round's courts have a fully-reported score vs. the
+ * total -- the live "N of M courts reported" figure shown on the
+ * in-play screen and used to decide whether to attempt a round
+ * advance. Shared by the render path, the poll endpoint, and the
+ * submit handler so all three always agree.
+ */
+function spp_kq_get_round_progress( int $occurrence_id, int $round_number ) : array {
+    global $wpdb;
+    $table = spp_kq_scores_table();
+    $row = $wpdb->get_row( $wpdb->prepare(
+        "SELECT
+            COUNT(*) AS total,
+            SUM( CASE WHEN red_score IS NOT NULL AND black_score IS NOT NULL THEN 1 ELSE 0 END ) AS reported
+         FROM {$table} WHERE occurrence_id = %d AND round_number = %d",
+        $occurrence_id, $round_number
+    ), ARRAY_A );
+    return array( 'reported' => (int) ( $row['reported'] ?? 0 ), 'total' => (int) ( $row['total'] ?? 0 ) );
+}
+
+/**
+ * Submit (or correct -- always an overwrite, "most recent entry wins"
+ * exactly as spp-score-entry.php's own ladder version) one court's
+ * score for the round the caller believes is current. Re-derives
+ * everything server-side rather than trusting the caller:
+ *  - phase must still be 'in_play' AND current_round must still equal
+ *    $round_number (the round may have already advanced between page
+ *    load and submit -- rejected, not silently misapplied).
+ *  - the court is whatever spp_kq_get_my_court_assignment() says for
+ *    this user_id, never a client-supplied value.
+ *  - scores must be 0-99 and not equal (a tie is a data-entry error
+ *    to correct, never guessed at or silently resolved -- games are
+ *    extended by a point specifically so a real tie should not occur).
+ *
+ * After a successful write, checks whether every court in this round
+ * has now reported and, if so, attempts spp_kq_transition_advance_round()
+ * (Stage 2, unchanged) -- safe under real concurrency because that
+ * function's own CAS is what actually decides the single winner; this
+ * function's own "should I even try" check just decides who ATTEMPTS,
+ * not who succeeds, and multiple simultaneous attempts are exactly
+ * what that CAS already handles (see Stage 2's own concurrency test,
+ * and this stage's own version of the same test against the real
+ * submit path).
+ */
+function spp_kq_submit_court_score( int $occurrence_id, int $round_number, int $red_score, int $black_score, int $user_id ) : array {
+    $state = spp_kq_get_event_state( $occurrence_id );
+    if ( ! $state || $state['phase'] !== 'in_play' || (int) $state['current_round'] !== $round_number ) {
+        return array( 'success' => false, 'error' => 'This round is no longer accepting scores -- refresh to see the current state.' );
+    }
+
+    $assignment = spp_kq_get_my_court_assignment( $occurrence_id, $round_number, $user_id );
+    if ( ! $assignment ) {
+        return array( 'success' => false, 'error' => 'You are not assigned to a court this round.' );
+    }
+
+    if ( $red_score < 0 || $red_score > 99 || $black_score < 0 || $black_score > 99 ) {
+        return array( 'success' => false, 'error' => 'Scores must be between 0 and 99.' );
+    }
+    if ( $red_score === $black_score ) {
+        return array( 'success' => false, 'error' => "Scores can't be tied -- games are extended by a point specifically to avoid this. Please check and resubmit." );
+    }
+
+    global $wpdb;
+    $scores_table = spp_kq_scores_table();
+    $wpdb->query( $wpdb->prepare(
+        "UPDATE {$scores_table} SET red_score = %d, black_score = %d, updated_by = %d
+         WHERE occurrence_id = %d AND round_number = %d AND court_name = %s",
+        $red_score, $black_score, $user_id, $occurrence_id, $round_number, $assignment['court_name']
+    ) );
+
+    $progress = spp_kq_get_round_progress( $occurrence_id, $round_number );
+    $advanced = false;
+
+    if ( $progress['total'] > 0 && $progress['reported'] === $progress['total'] ) {
+        $advance = spp_kq_transition_advance_round( $occurrence_id, $round_number );
+        $advanced = $advance['won']; // false just means someone else's simultaneous attempt already won it -- not an error.
+    }
+
+    return array(
+        'success'      => true,
+        'court_name'   => $assignment['court_name'],
+        'team_color'   => $assignment['team_color'],
+        'reported'     => $progress['reported'],
+        'total'        => $progress['total'],
+        'advanced'     => $advanced,
+    );
+}

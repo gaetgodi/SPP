@@ -266,6 +266,12 @@ function spp_kq_styles() : string {
         .kq-round-label-tight { font-weight:bold; font-size:16px; margin:0 0 2px; color:#2c3e50; }
         .kq-notice { padding:10px 14px; border-radius:6px; margin-bottom:14px; font-size:14px; }
         .kq-notice-err { background:#f8d7da; border:1px solid #dc3545; color:#721c24; }
+        .kq-notice-ok { background:#d4edda; border:1px solid #28a745; color:#155724; }
+        .kq-status { background:#f0f7ff; border:1px solid #3766AB; border-radius:8px; padding:10px 14px; margin-bottom:16px; font-size:14px; color:#2c3e50; }
+        .kq-score-row { display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; margin-top:14px; }
+        .kq-score-row label { font-size:13px; color:#555; }
+        .kq-score-input { display:block; width:70px; padding:8px; font-size:18px; text-align:center; border:1px solid #bbb; border-radius:6px; margin-top:4px; }
+        .kq-saved { font-size:13px; color:#27ae60; font-weight:bold; }
         .kq-warn { background:#fff8e1; border:1px solid #e67e22; border-radius:6px; padding:12px 14px; color:#7a4a00; }
         .kq-warn a { color:#3766AB; }
         .kq-btn { padding:10px 20px; border:none; border-radius:6px; font-size:15px; cursor:pointer; }
@@ -597,12 +603,165 @@ function spp_kq_render_overview_screen( int $occurrence_id, int $round ) : strin
     return ob_get_clean();
 }
 
-/** Screen 5: In-Play placeholder (Stage 3 owns the real content) */
+/**
+ * Screen 5: In-Play -- the narrowed per-court score-entry view (Stage
+ * 3). Access to the score itself is gated a SECOND time here, on top
+ * of the feature-wide is_user_logged_in() check the shortcode
+ * dispatcher already applied: spp_kq_get_my_court_assignment() is the
+ * single source of truth, called identically here and in the AJAX
+ * submit handler below, so the two can never diverge. A logged-in
+ * user with no assignment this round sees only the live status line
+ * -- never another court's names or score.
+ */
 function spp_kq_render_in_play_screen( int $occurrence_id, int $round ) : string {
+    $user_id    = get_current_user_id();
+    $assignment = spp_kq_get_my_court_assignment( $occurrence_id, $round, $user_id );
+    $progress   = spp_kq_get_round_progress( $occurrence_id, $round );
+
+    $court_view  = array();
+    $current     = array( 'red_score' => null, 'black_score' => null );
+    if ( $assignment ) {
+        $all_courts = spp_kq_get_round_court_view( $occurrence_id, $round );
+        $court_view = $all_courts[ $assignment['court_name'] ] ?? array( 'red' => array(), 'black' => array() );
+
+        global $wpdb;
+        $current = $wpdb->get_row( $wpdb->prepare(
+            "SELECT red_score, black_score FROM " . spp_kq_scores_table() . "
+             WHERE occurrence_id = %d AND round_number = %d AND court_name = %s",
+            $occurrence_id, $round, $assignment['court_name']
+        ), ARRAY_A ) ?: $current;
+    }
+
     ob_start();
     ?>
     <p class="kq-round-label">Round <?php echo esc_html( $round ); ?> &mdash; In Play</p>
-    <p class="kq-meta">Score entry is coming in Stage 3.</p>
+
+    <div class="kq-status" id="kq-status">
+        <span id="kq-status-progress"><?php echo esc_html( "{$progress['reported']} of {$progress['total']} courts reported" ); ?></span>
+    </div>
+
+    <?php if ( ! $assignment ) : ?>
+        <p class="kq-meta">You're not assigned to a court this round.</p>
+    <?php else : ?>
+        <div class="kq-msg kq-notice" id="kq-score-msg" style="display:none;"></div>
+
+        <div class="kq-court-card">
+            <div class="kq-court-name">Your court: <?php echo esc_html( $assignment['court_name'] ); ?></div>
+            <div class="kq-team kq-team-red">Red: <?php echo esc_html( implode( ', ', $court_view['red'] ) ); ?></div>
+            <div class="kq-team kq-team-black">Black: <?php echo esc_html( implode( ', ', $court_view['black'] ) ); ?></div>
+        </div>
+
+        <div class="kq-score-row">
+            <label>Red score<br>
+                <input type="number" id="kq-red-score" class="kq-score-input" min="0" max="99" inputmode="numeric" pattern="[0-9]*"
+                       value="<?php echo esc_attr( $current['red_score'] ?? '' ); ?>">
+            </label>
+            <label>Black score<br>
+                <input type="number" id="kq-black-score" class="kq-score-input" min="0" max="99" inputmode="numeric" pattern="[0-9]*"
+                       value="<?php echo esc_attr( $current['black_score'] ?? '' ); ?>">
+            </label>
+            <button type="button" class="kq-btn kq-btn-primary" id="kq-save-score-btn">Save Score</button>
+            <span class="kq-saved" id="kq-saved-tag" style="display:none;">Saved &#10003;</span>
+        </div>
+    <?php endif; ?>
+
+    <script>
+    (function() {
+        var ajaxUrl      = <?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>;
+        var nonce        = <?php echo wp_json_encode( wp_create_nonce( 'spp_kq_live_action' ) ); ?>;
+        var occ          = <?php echo (int) $occurrence_id; ?>;
+        var renderedRound = <?php echo (int) $round; ?>;
+
+        var progressEl = document.getElementById('kq-status-progress');
+        var msgEl      = document.getElementById('kq-score-msg');
+        var redInput   = document.getElementById('kq-red-score');
+        var blackInput = document.getElementById('kq-black-score');
+        var saveBtn    = document.getElementById('kq-save-score-btn');
+        var savedTag   = document.getElementById('kq-saved-tag');
+
+        function showMsg(text, ok) {
+            if (!msgEl) return;
+            msgEl.textContent = text;
+            msgEl.className = 'kq-msg kq-notice ' + (ok ? 'kq-notice-ok' : 'kq-notice-err');
+            msgEl.style.display = 'block';
+        }
+
+        function updateSaveState() {
+            if (!saveBtn) return;
+            var r = redInput.value, b = blackInput.value;
+            if (r === '' || b === '') { saveBtn.disabled = true; return; }
+            if (parseInt(r, 10) === parseInt(b, 10)) {
+                saveBtn.disabled = true;
+                showMsg("Scores can't be tied -- games are extended by a point specifically to avoid this.", false);
+            } else {
+                saveBtn.disabled = false;
+                if (msgEl) msgEl.style.display = 'none';
+            }
+        }
+
+        if (redInput && blackInput) {
+            redInput.addEventListener('input', updateSaveState);
+            blackInput.addEventListener('input', updateSaveState);
+            updateSaveState();
+        }
+
+        if (saveBtn) {
+            saveBtn.addEventListener('click', function() {
+                saveBtn.disabled = true;
+                savedTag.style.display = 'none';
+
+                var data = new FormData();
+                data.append('action', 'spp_kq_submit_score');
+                data.append('nonce', nonce);
+                data.append('occ', occ);
+                data.append('round', renderedRound);
+                data.append('red_score', redInput.value);
+                data.append('black_score', blackInput.value);
+
+                fetch(ajaxUrl, { method: 'POST', body: data, credentials: 'same-origin' })
+                    .then(function(r) { return r.json(); })
+                    .then(function(res) {
+                        updateSaveState();
+                        if (!res.success) {
+                            showMsg(res.data || 'Save failed.', false);
+                            return;
+                        }
+                        savedTag.style.display = 'inline';
+                        progressEl.textContent = res.data.reported + ' of ' + res.data.total + ' courts reported';
+                    })
+                    .catch(function() {
+                        saveBtn.disabled = false;
+                        showMsg('Network error -- try again.', false);
+                    });
+            });
+        }
+
+        // Lightweight poll: update the live count, and reload only once
+        // this round has actually moved on (no real-time push needed --
+        // "people are standing together anyway").
+        function poll() {
+            var data = new FormData();
+            data.append('action', 'spp_kq_poll_status');
+            data.append('nonce', nonce);
+            data.append('occ', occ);
+
+            fetch(ajaxUrl, { method: 'POST', body: data, credentials: 'same-origin' })
+                .then(function(r) { return r.json(); })
+                .then(function(res) {
+                    if (!res.success) return;
+                    var d = res.data;
+                    if (d.phase !== 'in_play' || d.current_round !== renderedRound) {
+                        window.location.reload();
+                        return;
+                    }
+                    if (progressEl) progressEl.textContent = d.reported + ' of ' + d.total + ' courts reported';
+                })
+                .catch(function() {});
+        }
+        setInterval(poll, 4000);
+    })();
+    </script>
+
     <div class="kq-action-row kq-action-row-right">
         <form method="post" class="kq-inline-form" onsubmit="return confirm('Cancel today\'s event? Any court that hasn\'t reported its score yet will lose this round\'s data entirely. Courts that already reported keep their result.');">
             <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
@@ -789,4 +948,74 @@ add_action( 'wp_ajax_spp_kq_draw_card', function() {
     }
 
     wp_send_json_success( $result );
+} );
+
+// =============================================================
+// AJAX: score submit (Stage 3)
+//
+// The base gate here is still just is_user_logged_in() -- the SAME
+// feature-wide gate everything else uses -- but that alone is NOT
+// sufficient for a score: spp_kq_submit_court_score() (inc/spp-kq-
+// live.php) independently re-derives the caller's own court via
+// spp_kq_get_my_court_assignment() and refuses anyone without a real
+// assignment row for occ+round+user_id. This handler never reads a
+// court_name from $_POST at all -- there is nothing here for a client
+// to spoof.
+// =============================================================
+
+add_action( 'wp_ajax_spp_kq_submit_score', function() {
+    if ( ! is_user_logged_in() ) {
+        wp_send_json_error( 'Not authorized' );
+    }
+    check_ajax_referer( 'spp_kq_live_action', 'nonce' );
+
+    $occurrence_id = isset( $_POST['occ'] ) ? absint( $_POST['occ'] ) : 0;
+    $round         = isset( $_POST['round'] ) ? absint( $_POST['round'] ) : 0;
+    $red_score     = isset( $_POST['red_score'] ) ? intval( $_POST['red_score'] ) : -1;
+    $black_score   = isset( $_POST['black_score'] ) ? intval( $_POST['black_score'] ) : -1;
+
+    if ( ! $occurrence_id || ! $round ) {
+        wp_send_json_error( 'Missing parameters.' );
+    }
+
+    $result = spp_kq_submit_court_score( $occurrence_id, $round, $red_score, $black_score, get_current_user_id() );
+    if ( ! $result['success'] ) {
+        wp_send_json_error( $result['error'] );
+    }
+
+    wp_send_json_success( $result );
+} );
+
+// =============================================================
+// AJAX: lightweight status poll (Stage 3) -- lets the in-play screen
+// update its "N of M reported" line live and detect a round advance
+// without a full reload, while staying well short of real-time push.
+// Read-only, no access restriction beyond being logged in: the count
+// alone identifies no one's score.
+// =============================================================
+
+add_action( 'wp_ajax_spp_kq_poll_status', function() {
+    if ( ! is_user_logged_in() ) {
+        wp_send_json_error( 'Not authorized' );
+    }
+    check_ajax_referer( 'spp_kq_live_action', 'nonce' );
+
+    $occurrence_id = isset( $_POST['occ'] ) ? absint( $_POST['occ'] ) : 0;
+    if ( ! $occurrence_id ) {
+        wp_send_json_error( 'Missing parameters.' );
+    }
+
+    $state = spp_kq_get_event_state( $occurrence_id );
+    if ( ! $state ) {
+        wp_send_json_error( 'Occurrence not found.' );
+    }
+
+    $progress = spp_kq_get_round_progress( $occurrence_id, (int) $state['current_round'] );
+
+    wp_send_json_success( array(
+        'phase'         => $state['phase'],
+        'current_round' => (int) $state['current_round'],
+        'reported'      => $progress['reported'],
+        'total'         => $progress['total'],
+    ) );
 } );
