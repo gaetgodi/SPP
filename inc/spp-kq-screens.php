@@ -323,6 +323,8 @@ function spp_kq_styles() : string {
         .kq-kept h3 { color:#155724 !important; font-size:14px; margin:0 0 6px; }
         .kq-discarded h3 { color:#721c24 !important; font-size:14px; margin:0 0 6px; }
         .kq-cancel-summary ul { margin:0; padding-left:18px; font-size:14px; }
+        .kq-full-reset-row { margin-top:28px; padding-top:14px; border-top:1px dashed #ccc; text-align:right; }
+        .kq-full-reset-row .kq-btn { font-size:13px; padding:6px 14px; opacity:.85; }
     </style>';
 }
 
@@ -522,6 +524,15 @@ function spp_kq_render_draw_screen( int $occurrence_id ) : string {
         </div>
     </div>
 
+    <div class="kq-action-row kq-action-row-right">
+        <form method="post" class="kq-inline-form" onsubmit="return confirm('Clear this draw and start over? Any cards already drawn will be discarded -- players will need to draw again from scratch.');">
+            <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
+            <input type="hidden" name="spp_kq_action" value="reset_event">
+            <input type="hidden" name="spp_kq_round" value="1">
+            <button type="submit" class="kq-btn kq-btn-secondary">Reset</button>
+        </form>
+    </div>
+
     <script>
     (function() {
         var ajaxUrl = <?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>;
@@ -606,9 +617,22 @@ function spp_kq_render_draw_screen( int $occurrence_id ) : string {
     return ob_get_clean();
 }
 
-/** Screen 4: Overview screen (organizing, draw complete or round > 1) */
+/**
+ * Screen 4: Overview screen (organizing, draw complete or round > 1)
+ *
+ * End Event is only offered once at least one real score exists
+ * somewhere for this occurrence -- "declare a winner" makes no sense
+ * before a single game has been played (round 1's overview, right
+ * after the draw). When zero scores exist yet, this screen offers only
+ * Start Play -- deliberately NOT a Reset button here either: a
+ * completed draw with Start Play not yet tapped has nothing to undo
+ * (Reset Event only ever appears on the Draw screen, for a genuinely
+ * incomplete draw, or the In-Play screen, to undo Start Play itself --
+ * see spp_kq_transition_reset_event()'s own docblock).
+ */
 function spp_kq_render_overview_screen( int $occurrence_id, int $round ) : string {
-    $courts_data = spp_kq_get_round_court_view( $occurrence_id, $round );
+    $courts_data   = spp_kq_get_round_court_view( $occurrence_id, $round );
+    $scores_exist  = spp_kq_has_any_recorded_score( $occurrence_id );
 
     ob_start();
     ?>
@@ -622,7 +646,11 @@ function spp_kq_render_overview_screen( int $occurrence_id, int $round ) : strin
             </div>
         <?php endforeach; ?>
     </div>
-    <p class="kq-hint">Start Play shows each player only their own court; End Event closes the day for good &mdash; no more rounds.</p>
+    <?php if ( $scores_exist ) : ?>
+        <p class="kq-hint">Start Play shows each player only their own court; End Event closes the day for good &mdash; no more rounds.</p>
+    <?php else : ?>
+        <p class="kq-hint">Start Play shows each player only their own court.</p>
+    <?php endif; ?>
     <div class="kq-action-row">
         <form method="post" class="kq-inline-form">
             <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
@@ -630,12 +658,14 @@ function spp_kq_render_overview_screen( int $occurrence_id, int $round ) : strin
             <input type="hidden" name="spp_kq_round" value="<?php echo esc_attr( $round ); ?>">
             <button type="submit" class="kq-btn kq-btn-primary">Start Play</button>
         </form>
+        <?php if ( $scores_exist ) : ?>
         <form method="post" class="kq-inline-form" onsubmit="return confirm('End the event now? This closes the day — no more rounds.');">
             <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
             <input type="hidden" name="spp_kq_action" value="end_event">
             <input type="hidden" name="spp_kq_round" value="<?php echo esc_attr( $round ); ?>">
             <button type="submit" class="kq-btn kq-btn-secondary">End Event</button>
         </form>
+        <?php endif; ?>
     </div>
     <?php
     return ob_get_clean();
@@ -652,9 +682,13 @@ function spp_kq_render_overview_screen( int $occurrence_id, int $round ) : strin
  * -- never another court's names or score.
  */
 function spp_kq_render_in_play_screen( int $occurrence_id, int $round ) : string {
-    $user_id    = get_current_user_id();
-    $assignment = spp_kq_get_my_court_assignment( $occurrence_id, $round, $user_id );
-    $progress   = spp_kq_get_round_progress( $occurrence_id, $round );
+    $user_id      = get_current_user_id();
+    $assignment   = spp_kq_get_my_court_assignment( $occurrence_id, $round, $user_id );
+    $progress     = spp_kq_get_round_progress( $occurrence_id, $round );
+    // Reset is only offered once, before anything real has happened this
+    // round (by the state machine, only possible in round 1) -- once any
+    // court anywhere has reported, only Cancel Event remains available.
+    $scores_exist = spp_kq_has_any_recorded_score( $occurrence_id );
 
     $court_view  = array();
     $current     = array( 'red_score' => null, 'black_score' => null );
@@ -693,11 +727,11 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round ) : string
 
         <div class="kq-score-row">
             <label>Red score<br>
-                <input type="number" id="kq-red-score" class="kq-score-input" min="0" max="99" inputmode="numeric" pattern="[0-9]*"
+                <input type="number" id="kq-red-score" class="kq-score-input" min="0" max="11" inputmode="numeric" pattern="[0-9]*"
                        value="<?php echo esc_attr( $current['red_score'] ?? '' ); ?>">
             </label>
             <label>Black score<br>
-                <input type="number" id="kq-black-score" class="kq-score-input" min="0" max="99" inputmode="numeric" pattern="[0-9]*"
+                <input type="number" id="kq-black-score" class="kq-score-input" min="0" max="11" inputmode="numeric" pattern="[0-9]*"
                        value="<?php echo esc_attr( $current['black_score'] ?? '' ); ?>">
             </label>
             <button type="button" class="kq-btn kq-btn-primary" id="kq-save-score-btn">Save Score</button>
@@ -730,7 +764,14 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round ) : string
             if (!saveBtn) return;
             var r = redInput.value, b = blackInput.value;
             if (r === '' || b === '') { saveBtn.disabled = true; return; }
-            if (parseInt(r, 10) === parseInt(b, 10)) {
+            var rn = parseInt(r, 10), bn = parseInt(b, 10);
+            // Same rules, same order, as spp_kq_submit_court_score()'s
+            // server-side checks -- this is immediate feedback only, the
+            // server re-validates independently regardless.
+            if (rn === 11 && bn === 11) {
+                saveBtn.disabled = true;
+                showMsg("11-11 isn't possible -- the game ends the instant either team reaches 11. Please double-check.", false);
+            } else if (rn === bn) {
                 saveBtn.disabled = true;
                 showMsg("Scores can't be tied -- games are extended by a point specifically to avoid this.", false);
             } else {
@@ -803,6 +844,14 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round ) : string
     </script>
 
     <div class="kq-action-row kq-action-row-right">
+        <?php if ( ! $scores_exist ) : ?>
+        <form method="post" class="kq-inline-form" onsubmit="return confirm('Undo Start Play? This keeps the same drawn courts and returns everyone to the Ready to play screen -- nothing is lost, since no scores have been entered yet.');">
+            <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
+            <input type="hidden" name="spp_kq_action" value="reset_event">
+            <input type="hidden" name="spp_kq_round" value="<?php echo esc_attr( $round ); ?>">
+            <button type="submit" class="kq-btn kq-btn-secondary">Reset</button>
+        </form>
+        <?php endif; ?>
         <form method="post" class="kq-inline-form" onsubmit="return confirm('Cancel today\'s event? Any court that hasn\'t reported its score yet will lose this round\'s data entirely. Courts that already reported keep their result.');">
             <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
             <input type="hidden" name="spp_kq_action" value="cancel_event">
@@ -902,11 +951,46 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date ) : 
             return '';
 
         case 'end_event':
+            // Same gate the Overview screen's own button visibility
+            // enforces (see spp_kq_render_overview_screen()) -- must
+            // match what the UI offers, re-checked here so a crafted or
+            // stale POST can't declare a winner before anything's been
+            // played.
+            if ( ! spp_kq_has_any_recorded_score( $occurrence_id ) ) {
+                return 'End Event isn\'t available yet -- no scores have been recorded for this event.';
+            }
             spp_kq_transition_end_event( $occurrence_id, $round );
             return '';
 
         case 'cancel_event':
             spp_kq_transition_cancel_event( $occurrence_id, $round );
+            return '';
+
+        case 'reset_event':
+            // Available to any facilitator (spp_kq_can_facilitate(), the
+            // feature-wide gate already checked at the shortcode
+            // dispatcher) -- deliberately NOT admin-restricted, unlike
+            // Full Reset below. Re-derives the real current phase itself
+            // rather than trusting anything from the client; the actual
+            // safety guarantee is the atomic CAS inside
+            // spp_kq_transition_reset_event() itself, not this read.
+            $state = spp_kq_get_event_state( $occurrence_id );
+            if ( $state ) {
+                spp_kq_transition_reset_event( $occurrence_id, $round, $state['phase'] );
+            }
+            return '';
+
+        case 'full_reset':
+            // Administrator-only -- checked here, server-side, as the
+            // real enforcement; the button itself is also never printed
+            // into the page for a non-admin (see spp_kq_live_shortcode()),
+            // but that's belt-and-suspenders, not the actual gate. A
+            // crafted POST from a non-admin session must fail here
+            // regardless of what the UI would have shown them.
+            if ( ! spp_is_admin() ) {
+                return 'You do not have permission to do that.';
+            }
+            spp_kq_full_reset( $occurrence_id );
             return '';
     }
 
@@ -974,7 +1058,37 @@ function spp_kq_live_shortcode() : string {
             break;
     }
 
+    echo spp_kq_render_full_reset( $occurrence_id, $round );
+
     echo '</div>';
+    return ob_get_clean();
+}
+
+/**
+ * Full Reset button -- administrator-only, deliberately available from
+ * ANY phase (rendered once here, in the main dispatcher, not inside any
+ * one screen's own render function, so it's present regardless of which
+ * screen the switch above chose). Not printed into the page at all for
+ * a non-administrator -- spp_is_admin() gates whether this function
+ * emits anything, and the real enforcement is the matching check in
+ * spp_kq_handle_post_actions()'s 'full_reset' case, not this visibility
+ * check alone.
+ */
+function spp_kq_render_full_reset( int $occurrence_id, int $round ) : string {
+    if ( ! spp_is_admin() ) {
+        return '';
+    }
+    ob_start();
+    ?>
+    <div class="kq-full-reset-row">
+        <form method="post" class="kq-inline-form" onsubmit="return confirm('FULL RESET -- this permanently discards ALL recorded data for this event, including any real, already-saved scores. This cannot be undone. Only continue if you are certain. Proceed?');">
+            <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
+            <input type="hidden" name="spp_kq_action" value="full_reset">
+            <input type="hidden" name="spp_kq_round" value="<?php echo esc_attr( $round ); ?>">
+            <button type="submit" class="kq-btn kq-btn-danger">Full Reset (Admin Only)</button>
+        </form>
+    </div>
+    <?php
     return ob_get_clean();
 }
 

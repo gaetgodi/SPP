@@ -457,6 +457,120 @@ function spp_kq_transition_cancel_event( int $occurrence_id, int $expected_round
     return array( 'won' => true, 'error' => null, 'discarded_courts' => $unreported_courts );
 }
 
+/**
+ * Whether ANY court, in ANY round, of this occurrence has ever had a
+ * real score recorded (both red_score and black_score NOT NULL). The
+ * one gate both End Event's availability and Reset Event's
+ * availability key off -- "has anything real happened yet" is the
+ * same question from opposite directions. Scans every round, not just
+ * the current one: reaching round 2+ requires round 1 to have been
+ * fully scored first, so in practice this can only be true once
+ * something genuinely real has happened, regardless of which round is
+ * current now.
+ */
+function spp_kq_has_any_recorded_score( int $occurrence_id ) : bool {
+    global $wpdb;
+    $t = spp_kq_scores_table();
+    return (int) $wpdb->get_var( $wpdb->prepare(
+        "SELECT COUNT(*) FROM {$t} WHERE occurrence_id = %d AND red_score IS NOT NULL AND black_score IS NOT NULL",
+        $occurrence_id
+    ) ) > 0;
+}
+
+/**
+ * Reset Event: safe, any logged-in facilitator (spp_kq_can_facilitate()
+ * -- the feature-wide gate -- is all that's required, checked once at
+ * the shortcode dispatcher; nothing extra here). Only ever reachable
+ * from two screens, each offering exactly one of these two behaviors
+ * -- never a general "reset from wherever you are":
+ *
+ * - Draw screen (organizing, round 1, draw INCOMPLETE -- real unclaimed
+ *   slots remain): full clear. Deletes this occurrence's assignments/
+ *   scores and resets the events row to (round=0, phase='not_started').
+ * - In-Play screen (in_play, nothing reported yet this round): undoes
+ *   Start Play ONLY -- phase back to 'organizing', same round,
+ *   assignments left completely untouched, so the Overview screen
+ *   reappears showing the exact same drawn courts.
+ *
+ * Deliberately NOT offered once a round-1 draw is complete but Start
+ * Play hasn't been tapped yet (the Overview screen, organizing, zero
+ * scores) -- there is nothing to undo in that state, so no Reset
+ * button is rendered there at all; see spp_kq_render_overview_screen().
+ *
+ * CONCURRENCY: the has-any-recorded-score check is folded directly
+ * into the same atomic UPDATE's WHERE clause (a NOT EXISTS subquery),
+ * not a separate pre-check -- a naive "check, then separately CAS"
+ * has a real gap where a real score could commit in between, and this
+ * transition would then silently discard it. A single UPDATE
+ * statement's WHERE evaluation and write are atomic with respect to
+ * concurrent statements, so this closes that gap entirely rather than
+ * just narrowing it. Both branches are still additionally guarded by
+ * the ordinary current_round/phase CAS every other transition uses.
+ */
+function spp_kq_transition_reset_event( int $occurrence_id, int $expected_round, string $current_phase ) : array {
+    global $wpdb;
+    $events_table = spp_kq_events_table();
+    $scores_table = spp_kq_scores_table();
+
+    $no_scores_yet_sql = "NOT EXISTS (
+        SELECT 1 FROM {$scores_table} s
+        WHERE s.occurrence_id = {$events_table}.occurrence_id
+          AND s.red_score IS NOT NULL AND s.black_score IS NOT NULL
+    )";
+
+    if ( $current_phase === 'in_play' ) {
+        $affected = $wpdb->query( $wpdb->prepare(
+            "UPDATE {$events_table}
+             SET phase = 'organizing'
+             WHERE occurrence_id = %d AND current_round = %d AND phase = 'in_play'
+               AND {$no_scores_yet_sql}",
+            $occurrence_id, $expected_round
+        ) );
+        return array( 'won' => ( (int) $affected === 1 ), 'error' => null );
+    }
+
+    if ( $current_phase === 'organizing' ) {
+        $affected = $wpdb->query( $wpdb->prepare(
+            "UPDATE {$events_table}
+             SET current_round = 0, phase = 'not_started'
+             WHERE occurrence_id = %d AND current_round = %d AND phase = 'organizing'
+               AND {$no_scores_yet_sql}",
+            $occurrence_id, $expected_round
+        ) );
+        if ( (int) $affected !== 1 ) {
+            return array( 'won' => false, 'error' => null );
+        }
+        // Only reachable here if the CAS above just confirmed zero scores
+        // exist -- by construction (see docblock) this can only mean
+        // round 1's own placeholder rows, nothing from any other round.
+        $wpdb->delete( spp_kq_assignments_table(), array( 'occurrence_id' => $occurrence_id ) );
+        $wpdb->delete( $scores_table, array( 'occurrence_id' => $occurrence_id ) );
+        return array( 'won' => true, 'error' => null );
+    }
+
+    return array( 'won' => false, 'error' => 'Nothing to reset.' );
+}
+
+/**
+ * Full Reset: administrator-only (enforced by the caller,
+ * spp_is_admin(), checked before this is ever invoked -- this function
+ * itself performs no capability check of its own, matching every other
+ * transition function in this file, which all rely on their caller for
+ * that). Deliberately more powerful and more dangerous than Reset
+ * Event above: works from ANY phase, including complete/cancelled, and
+ * unconditionally discards this occurrence's entire spp_kq_* state,
+ * real recorded scores included. No CAS -- this is an intentional
+ * unconditional wipe, not a state-machine transition guarding against
+ * a stale click; the admin-only gate is the safety mechanism here, not
+ * a compare-and-swap.
+ */
+function spp_kq_full_reset( int $occurrence_id ) : void {
+    global $wpdb;
+    $wpdb->delete( spp_kq_events_table(), array( 'occurrence_id' => $occurrence_id ) );
+    $wpdb->delete( spp_kq_assignments_table(), array( 'occurrence_id' => $occurrence_id ) );
+    $wpdb->delete( spp_kq_scores_table(), array( 'occurrence_id' => $occurrence_id ) );
+}
+
 // =============================================================
 // Card draw (round 1 only)
 // =============================================================
@@ -599,9 +713,11 @@ function spp_kq_get_round_progress( int $occurrence_id, int $round_number ) : ar
  *    load and submit -- rejected, not silently misapplied).
  *  - the court is whatever spp_kq_get_my_court_assignment() says for
  *    this user_id, never a client-supplied value.
- *  - scores must be 0-99 and not equal (a tie is a data-entry error
- *    to correct, never guessed at or silently resolved -- games are
- *    extended by a point specifically so a real tie should not occur).
+ *  - scores must be 0-11 (games are played to 11) and not equal -- a
+ *    tie is a data-entry error to correct, never guessed at or
+ *    silently resolved (games are extended by a point specifically so
+ *    a real tie should not occur); 11-11 specifically gets its own
+ *    message, since it's a logical impossibility, not just a tie.
  *
  * After a successful write, checks whether every court in this round
  * has now reported and, if so, attempts spp_kq_transition_advance_round()
@@ -624,8 +740,16 @@ function spp_kq_submit_court_score( int $occurrence_id, int $round_number, int $
         return array( 'success' => false, 'error' => 'You are not assigned to a court this round.' );
     }
 
-    if ( $red_score < 0 || $red_score > 99 || $black_score < 0 || $black_score > 99 ) {
-        return array( 'success' => false, 'error' => 'Scores must be between 0 and 99.' );
+    if ( $red_score < 0 || $red_score > 11 || $black_score < 0 || $black_score > 11 ) {
+        return array( 'success' => false, 'error' => 'Scores must be between 0 and 11 -- games are played to 11.' );
+    }
+    // Checked before the generic tie rejection below: 11-11 specifically
+    // is a logical impossibility (the game ends the instant either team
+    // reaches 11 -- both sides can never simultaneously be at 11), not
+    // just an ordinary tie, and it's an easy digit-repeated data-entry
+    // mistake -- worth its own clearer message.
+    if ( $red_score === 11 && $black_score === 11 ) {
+        return array( 'success' => false, 'error' => "11-11 isn't possible -- the game ends the instant either team reaches 11. Please double-check before saving." );
     }
     if ( $red_score === $black_score ) {
         return array( 'success' => false, 'error' => "Scores can't be tied -- games are extended by a point specifically to avoid this. Please check and resubmit." );
