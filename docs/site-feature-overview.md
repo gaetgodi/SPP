@@ -76,7 +76,7 @@ A purpose-built live, in-person tournament runner for the club's "Ace of the Cou
 - **Live score entry per court** — during play, each court's players enter their own score on their phone; a live status line shows the facilitator how many courts have reported in, refreshing automatically without needing to reload.
 - **Facilitator controls** — any logged-in member can help run the event (start the draw, start play, end or cancel the event) — no special role or registration is required, matching the informal, anyone-can-help nature of these events.
 - **Full event lifecycle** — from "not started" through the draw, live play, round-by-round advancement, and a final "Complete" screen naming the event's ultimate Aces-court winner — plus a graceful cancellation path mid-event that records which courts' results were kept versus discarded.
-- **Not yet connected to Club Rating** — every game's score is fully recorded, but nothing currently feeds those results into the club's Glicko-based Club Rating system (Section 1) — that integration hasn't been built yet, so Ace/Queen results don't affect a player's Club Rating today.
+- **Feeds the same Club Rating system as the ladder** — every completed or cancelled event's game scores automatically feed into the club's Glicko-based Club Rating system (Section 1), combining seamlessly with a player's existing rating regardless of which event(s) — ladder, Ace, or Queen — they play. One shared rating per player, no matter where they earned it.
 
 ## 7. Other Member-Facing Features
 
