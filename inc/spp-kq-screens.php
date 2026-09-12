@@ -261,6 +261,7 @@ function spp_kq_styles() : string {
         .kq-back a { color:#3766AB; text-decoration:none; font-size:14px; }
         .kq-heading { margin:6px 0 2px; font-size:20px; }
         .kq-subheading { margin:0 0 14px; color:#666; font-size:14px; }
+        .kq-hint { margin:0 0 14px; color:#666; font-size:14px; font-style:italic; }
         .kq-caveat { margin:0 0 14px; padding:8px 12px; background:#f7f7f7; border-left:3px solid #999; color:#555; font-size:13px; }
         .kq-meta { color:#555; margin-bottom:14px; }
         .kq-round-label { font-weight:bold; font-size:16px; margin:0 0 12px; color:#2c3e50; }
@@ -439,6 +440,7 @@ function spp_kq_render_start_screen( int $occurrence_id, string $event_date ) : 
     ob_start();
     ?>
     <p class="kq-meta"><?php echo esc_html( $count ); ?> confirmed registrant<?php echo $count === 1 ? '' : 's'; ?></p>
+    <p class="kq-hint">Starts a random card draw that assigns everyone's starting court for Round 1.</p>
     <?php if ( ! $valid ) : ?>
         <p class="kq-warn">
             Cannot start: <?php echo esc_html( $count ); ?> confirmed registrant(s) &mdash; need a multiple of 4,
@@ -472,6 +474,7 @@ function spp_kq_render_draw_screen( int $occurrence_id ) : string {
     ob_start();
     ?>
     <p class="kq-round-label-tight">Round 1 &mdash; Draw in progress</p>
+    <p class="kq-hint">Tap a player's name, then tap any face-down card to reveal their court.</p>
     <p class="kq-draw-progress" id="kq-draw-progress">
         <span id="kq-draw-count"><?php echo esc_html( "{$drawn_so_far} of {$total_slots} drawn" ); ?></span>
     </p>
@@ -619,6 +622,7 @@ function spp_kq_render_overview_screen( int $occurrence_id, int $round ) : strin
             </div>
         <?php endforeach; ?>
     </div>
+    <p class="kq-hint">Start Play shows each player only their own court; End Event closes the day for good &mdash; no more rounds.</p>
     <div class="kq-action-row">
         <form method="post" class="kq-inline-form">
             <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
@@ -684,6 +688,8 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round ) : string
             <div class="kq-team kq-team-red">Red: <?php echo esc_html( implode( ', ', $court_view['red'] ) ); ?></div>
             <div class="kq-team kq-team-black">Black: <?php echo esc_html( implode( ', ', $court_view['black'] ) ); ?></div>
         </div>
+
+        <p class="kq-hint">Enter both teams' real scores &mdash; play continues until someone wins by a point, so an equal score is treated as a mistake to fix.</p>
 
         <div class="kq-score-row">
             <label>Red score<br>
