@@ -284,7 +284,7 @@ function spp_kq_styles() : string {
         .kq-action-row-right { justify-content:flex-end; }
         .kq-inline-form { display:inline-block; }
         .kq-picker-list { display:flex; flex-direction:column; gap:8px; }
-        .kq-picker-row { display:flex; align-items:center; gap:6px; padding:12px 14px; border:1px solid #ddd; border-radius:8px; text-decoration:none; color:#222; flex-wrap:wrap; }
+        .kq-picker-row { display:flex; align-items:center; gap:4px; padding:10px 10px; border:1px solid #ddd; border-radius:8px; text-decoration:none; color:#222; flex-wrap:wrap; }
         .kq-picker-row:hover { background:#f5f8fc; }
         /* flex-shrink:0 (via 1 0 auto) matters here: title is the only
            item whose text can wrap across multiple words, so a plain
@@ -293,14 +293,19 @@ function spp_kq_styles() : string {
            automatic minimum is already their full natural width, never
            really shrinking. Letting the whole ROW wrap onto a second
            line under real pressure (flex-wrap:wrap on the row, still
-           active) degrades far more gracefully than wrapping mid-title. */
+           active) degrades far more gracefully than wrapping mid-title.
+           Every other measurement on this row (padding, gap, badge/status
+           padding) is trimmed as tight as still reads comfortably, purely
+           to buy title the room it needs within the fixed 560px .kq-wrap
+           max-width -- the longest real titles ("Queen of the Courts...")
+           were still a couple dozen px over budget even with 1 0 auto alone. */
         .kq-picker-title { font-weight:bold; flex:1 0 auto; }
         .kq-picker-date { color:#666; font-size:13px; white-space:nowrap; }
         .kq-picker-regcount { color:#666; font-size:13px; white-space:nowrap; }
-        .kq-picker-status { font-size:12px; font-weight:bold; padding:3px 8px; border-radius:12px; white-space:nowrap; }
+        .kq-picker-status { font-size:12px; font-weight:bold; padding:2px 6px; border-radius:12px; white-space:nowrap; }
         .kq-picker-row--test { background:#faf7ff; border-color:#d8cdf0; }
         .kq-picker-row--test:hover { background:#f3edfc; }
-        .kq-picker-badge { font-size:10px; font-weight:bold; padding:1px 6px; border-radius:9px; white-space:nowrap; letter-spacing:.02em; }
+        .kq-picker-badge { font-size:10px; font-weight:bold; padding:1px 5px; border-radius:9px; white-space:nowrap; letter-spacing:.02em; }
         .kq-picker-badge--test { background:#e8def8; color:#6b3fa0; }
         .kq-picker-section-heading { font-size:15px; margin:22px 0 4px; color:#555; }
         .kq-status-not-started { background:#eee; color:#666; }
