@@ -593,8 +593,22 @@ function spp_report_generator_build_selected_keys( array $full_columns, array $i
             $selected_keys[] = $col['key'];
         }
     }
-    usort( $selected_keys, function( $a, $b ) use ( $order ) {
-        return ( $order[ $a ] ?? 0 ) <=> ( $order[ $b ] ?? 0 );
+
+    // Ties (two columns sharing the same order number) are broken by
+    // original/default column position -- the whole point being that
+    // bumping ONE column's number to match another's doesn't require
+    // renumbering every other column too; the untouched ones just keep
+    // their relative order among themselves. usort() has been a
+    // guaranteed-stable sort since PHP 8.0 (this codebase's floor), and
+    // $selected_keys is already in default column order at this point
+    // (built by the loop above), so this tiebreak would already happen
+    // implicitly -- $original_index makes it an explicit property of the
+    // comparator itself instead, so it holds regardless of PHP version or
+    // any future change to how $selected_keys gets built pre-sort.
+    $original_index = array_flip( $selected_keys );
+    usort( $selected_keys, function( $a, $b ) use ( $order, $original_index ) {
+        $cmp = ( $order[ $a ] ?? 0 ) <=> ( $order[ $b ] ?? 0 );
+        return $cmp !== 0 ? $cmp : ( $original_index[ $a ] <=> $original_index[ $b ] );
     } );
     return $selected_keys;
 }
