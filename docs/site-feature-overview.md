@@ -18,7 +18,7 @@ The core of the site: a recurring weekly event with skill-based group assignment
 - **Schedule validation** — an on-demand diagnostic check flags carpool conflicts, travel-time conflicts, and other scheduling issues, either right after a schedule is built or any time after a manual edit.
 - **Score entry & correction** (see Section 5) feed directly into ranking.
 - **Results & the ranking ladder** — after each event, results are compiled and every player's ladder rank is updated. A "shadow" calculation lets the club test changes to the ranking formula against real historical data before it ever touches live rankings.
-- **Club Rating** — a continuous 2.0–5.0 rating computed from each player's current standing on the ladder, used as a friendlier, comparable number alongside raw rank.
+- **Club Rating** — a continuous 2.0–5.0 rating powered by a Glicko rating system, the same family of rating math used in chess and other competitive games. It weighs real game outcomes together with a built-in "how confident are we in this number yet" measure that narrows as more results come in, then rescales the result to the club's own 2.0–5.0 display number — a friendlier, more comparable figure than raw ladder rank alone.
 - **Rank history** — every player can see a narrative history of their own rank changes over their last several events; ladder admins can look up anyone's history.
 - **Membership & tag management** — an admin-facing table of all members with editable ratings (DUPR rating validated against its real 2.0–8.0 scale, kept separate from Club Rating's own scale) and custom tags.
 - **Player-management tools** — admin tools to change a new player's starting rank, copy computed ranks onto player profiles, remove inactive players from the ladder (with a review step before anything is removed), and swap two players between groups mid-schedule with automatic notification.
@@ -76,6 +76,7 @@ A purpose-built live, in-person tournament runner for the club's "Ace of the Cou
 - **Live score entry per court** — during play, each court's players enter their own score on their phone; a live status line shows the facilitator how many courts have reported in, refreshing automatically without needing to reload.
 - **Facilitator controls** — any logged-in member can help run the event (start the draw, start play, end or cancel the event) — no special role or registration is required, matching the informal, anyone-can-help nature of these events.
 - **Full event lifecycle** — from "not started" through the draw, live play, round-by-round advancement, and a final "Complete" screen naming the event's ultimate Aces-court winner — plus a graceful cancellation path mid-event that records which courts' results were kept versus discarded.
+- **Not yet connected to Club Rating** — every game's score is fully recorded, but nothing currently feeds those results into the club's Glicko-based Club Rating system (Section 1) — that integration hasn't been built yet, so Ace/Queen results don't affect a player's Club Rating today.
 
 ## 7. Other Member-Facing Features
 
