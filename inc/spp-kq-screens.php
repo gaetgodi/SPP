@@ -284,9 +284,9 @@ function spp_kq_styles() : string {
         .kq-action-row-right { justify-content:flex-end; }
         .kq-inline-form { display:inline-block; }
         .kq-picker-list { display:flex; flex-direction:column; gap:8px; }
-        .kq-picker-row { display:flex; align-items:center; gap:10px; padding:12px 14px; border:1px solid #ddd; border-radius:8px; text-decoration:none; color:#222; flex-wrap:wrap; }
+        .kq-picker-row { display:flex; align-items:center; gap:8px; padding:12px 14px; border:1px solid #ddd; border-radius:8px; text-decoration:none; color:#222; flex-wrap:wrap; }
         .kq-picker-row:hover { background:#f5f8fc; }
-        .kq-picker-title { font-weight:bold; flex:1 1 200px; }
+        .kq-picker-title { font-weight:bold; flex:1 1 150px; }
         .kq-picker-date { color:#666; font-size:14px; }
         .kq-picker-regcount { color:#666; font-size:14px; white-space:nowrap; }
         .kq-picker-status { font-size:12px; font-weight:bold; padding:3px 10px; border-radius:12px; white-space:nowrap; }
