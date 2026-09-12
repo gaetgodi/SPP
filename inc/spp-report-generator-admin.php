@@ -1392,6 +1392,15 @@ function spp_render_report_generator_page() {
             tbody.addEventListener( 'input', function( e ) {
                 if ( e.target.classList.contains( 'spp-rg-order-input' ) ) resort();
             } );
+
+            // Without this, the table shows $full_columns' raw default
+            // order until the first keystroke into any Order field --
+            // resort() was only ever wired to the 'input' listener above,
+            // never invoked for the state the page already loaded in
+            // (fresh load, or a loaded variant with non-sequential Order
+            // values). Same function, same rules -- just also run once
+            // immediately so the table is correct from the first paint.
+            resort();
         })();
         </script>
 
