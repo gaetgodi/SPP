@@ -290,6 +290,11 @@ function spp_kq_styles() : string {
         .kq-picker-date { color:#666; font-size:14px; }
         .kq-picker-regcount { color:#666; font-size:14px; white-space:nowrap; }
         .kq-picker-status { font-size:12px; font-weight:bold; padding:3px 10px; border-radius:12px; white-space:nowrap; }
+        .kq-picker-row--test { background:#faf7ff; border-color:#d8cdf0; }
+        .kq-picker-row--test:hover { background:#f3edfc; }
+        .kq-picker-badge { font-size:11px; font-weight:bold; padding:2px 8px; border-radius:10px; white-space:nowrap; letter-spacing:.03em; }
+        .kq-picker-badge--test { background:#e8def8; color:#6b3fa0; }
+        .kq-picker-section-heading { font-size:15px; margin:22px 0 4px; color:#555; }
         .kq-status-not-started { background:#eee; color:#666; }
         .kq-status-organizing { background:#fff3cd; color:#8a6100; }
         .kq-status-in_play { background:#d4edda; color:#155724; }
@@ -345,6 +350,37 @@ function spp_kq_status_label( ?string $phase, int $round ) : array {
 // Screen 1: Event picker
 // =============================================================
 
+/**
+ * One picker row -- shared by both the upcoming list and the practice
+ * sandbox list below, so the two can never drift apart in what they
+ * show. $is_test adds the PRACTICE badge and a distinct row class;
+ * everything else (title, date, registrant count, phase status) is
+ * identical either way.
+ */
+function spp_kq_render_picker_row( array $r, bool $is_test = false ) : string {
+    $status = spp_kq_status_label( $r['phase'] ?? null, (int) ( $r['current_round'] ?? 0 ) );
+    $date_str = date_i18n( 'M j', strtotime( $r['event_date'] ) );
+    $time_str = $r['eff_event_time'] ? date_i18n( 'g:ia', strtotime( $r['eff_event_time'] ) ) : '';
+    // Same GL_Registration-backed count the Start screen shows
+    // ("N confirmed registrants") -- spp_kq_confirmed_count()
+    // (inc/spp-kq-live.php), not a new query.
+    $reg_count = spp_kq_confirmed_count( (int) $r['occurrence_id'] );
+
+    ob_start();
+    ?>
+    <a class="kq-picker-row<?php echo $is_test ? ' kq-picker-row--test' : ''; ?>" href="<?php echo esc_url( add_query_arg( 'occ', $r['occurrence_id'] ) ); ?>">
+        <?php if ( $is_test ) : ?>
+            <span class="kq-picker-badge kq-picker-badge--test">PRACTICE</span>
+        <?php endif; ?>
+        <span class="kq-picker-title"><?php echo esc_html( $r['eff_title'] ); ?></span>
+        <span class="kq-picker-date"><?php echo esc_html( trim( $date_str . ' ' . $time_str ) ); ?></span>
+        <span class="kq-picker-regcount"><?php echo esc_html( $reg_count ); ?> confirmed</span>
+        <span class="kq-picker-status kq-status-<?php echo esc_attr( $status['class'] ); ?>"><?php echo esc_html( $status['label'] ); ?></span>
+    </a>
+    <?php
+    return ob_get_clean();
+}
+
 function spp_kq_render_event_picker() : string {
     global $wpdb;
     $view = $wpdb->prefix . 'gl_events_v';
@@ -365,6 +401,27 @@ function spp_kq_render_event_picker() : string {
         ARRAY_A
     );
 
+    // Practice / Test Sandbox: the 4 most recent PAST occurrences,
+    // auto-selected by date (never hand-picked), same category pooling
+    // and cancelled=0 filter as the upcoming list above. event_date <
+    // CURDATE() is a live, self-maintaining boundary -- not a frozen
+    // literal date -- so this set naturally rolls forward on its own as
+    // today's date advances, the same way the upcoming list already
+    // does via event_date >= CURDATE(). Safe to offer to any logged-in
+    // member with zero risk regardless of what happens to it: this
+    // feature didn't exist before this week, so no past occurrence has
+    // ever had any spp_kq_* rows of its own to begin with.
+    $test_rows = $wpdb->get_results(
+        "SELECT v.occurrence_id, v.eff_title, v.event_date, v.eff_event_time,
+                e.current_round, e.phase
+         FROM {$view} v
+         LEFT JOIN {$events_table} e ON e.occurrence_id = v.occurrence_id
+         WHERE v.eff_category_id IN (2,3) AND v.cancelled = 0 AND v.event_date < CURDATE()
+         ORDER BY v.event_date DESC, v.eff_event_time DESC
+         LIMIT 4",
+        ARRAY_A
+    );
+
     ob_start();
     echo spp_kq_styles();
     ?>
@@ -375,21 +432,18 @@ function spp_kq_render_event_picker() : string {
             <p>No upcoming Ace or Queen occurrences found.</p>
         <?php else : ?>
             <div class="kq-picker-list">
-                <?php foreach ( $rows as $r ) :
-                    $status = spp_kq_status_label( $r['phase'] ?? null, (int) ( $r['current_round'] ?? 0 ) );
-                    $date_str = date_i18n( 'M j', strtotime( $r['event_date'] ) );
-                    $time_str = $r['eff_event_time'] ? date_i18n( 'g:ia', strtotime( $r['eff_event_time'] ) ) : '';
-                    // Same GL_Registration-backed count the Start screen shows
-                    // ("N confirmed registrants") -- spp_kq_confirmed_count()
-                    // (inc/spp-kq-live.php), not a new query.
-                    $reg_count = spp_kq_confirmed_count( (int) $r['occurrence_id'] );
-                ?>
-                    <a class="kq-picker-row" href="<?php echo esc_url( add_query_arg( 'occ', $r['occurrence_id'] ) ); ?>">
-                        <span class="kq-picker-title"><?php echo esc_html( $r['eff_title'] ); ?></span>
-                        <span class="kq-picker-date"><?php echo esc_html( trim( $date_str . ' ' . $time_str ) ); ?></span>
-                        <span class="kq-picker-regcount"><?php echo esc_html( $reg_count ); ?> confirmed</span>
-                        <span class="kq-picker-status kq-status-<?php echo esc_attr( $status['class'] ); ?>"><?php echo esc_html( $status['label'] ); ?></span>
-                    </a>
+                <?php foreach ( $rows as $r ) : ?>
+                    <?php echo spp_kq_render_picker_row( $r ); ?>
+                <?php endforeach; ?>
+            </div>
+        <?php endif; ?>
+
+        <?php if ( ! empty( $test_rows ) ) : ?>
+            <h3 class="kq-picker-section-heading">Practice / Test Sandbox</h3>
+            <p class="kq-hint">These are past, real events &mdash; safe to experiment on freely, since this tool didn't exist yet when they happened. Any logged-in member can use them. If a real score gets entered while testing, an administrator will need to clean it up (Reset only works before any score exists) before the next person tries.</p>
+            <div class="kq-picker-list">
+                <?php foreach ( $test_rows as $r ) : ?>
+                    <?php echo spp_kq_render_picker_row( $r, true ); ?>
                 <?php endforeach; ?>
             </div>
         <?php endif; ?>
