@@ -1,8 +1,8 @@
 <?php
 /* =========================================================
    Update Club Ratings
-   Version: 1.0.0
-   Date: 2026-09-06
+   Version: 1.1.0
+   Date: 2026-09-12
    Based on: Code Manager snippet "Update Club Ratings" (CM284)
    fresh-pulled tonight (27570 bytes,
    sha256 efd168b2f4e7a9575a57479a4ca65af52aff59b064ff55d83852ee6db38c05a9,
@@ -24,6 +24,10 @@
      per player (mu, rd, games_played, first_event, last_event) --
      seeded once from two years of history (club_rating_state_bootstrap.sql,
      already in the repo, already run -- not touched by this migration).
+     Keyed PURELY on user_id, no category/source column -- confirmed
+     via DESCRIBE, and deliberately never changed by 1.1.0 below: a
+     player's rating is the same person's rating no matter which
+     category (ladder, Ace, Queen) they earned it in.
    - club_rating_event_log: a ledger of before/after snapshots per
      (event_id, user_id), used only to make a same-week re-publish
      safe (see STEP 2a below).
@@ -50,17 +54,25 @@
    this event, if at least 4 such peers exist; otherwise everyone new
    starts at the standard Glicko defaults (mu 1500, rd 300).
 
-     STEP 2a -- re-publish safety. If this event_id already has ledger
-     rows (a prior run already processed it -- scores got corrected
-     and Apply Override was re-run), first checks that every affected
-     player's CURRENT state still exactly matches what that prior run
-     left them at. If a LATER event has since built on top of one of
-     them, it aborts loudly instead of rolling back (which would
-     silently corrupt that later event's result). Otherwise it rolls
-     every affected player back to their pre-event snapshot (or
+     STEP 2a -- re-publish safety. If this event_id (within this
+     $source's own stream -- see 1.1.0 changelog below) already has
+     ledger rows (a prior run already processed it -- scores got
+     corrected and Apply Override was re-run), first checks that every
+     affected player's CURRENT state still exactly matches what that
+     prior run left them at. If a LATER event has since built on top
+     of one of them, it aborts loudly instead of rolling back (which
+     would silently corrupt that later event's result). Otherwise it
+     rolls every affected player back to their pre-event snapshot (or
      removes them entirely if this event created them from scratch),
      deletes the event's ledger rows, and reprocesses cleanly with
      the corrected data -- so a re-publish never double-counts.
+     Verified empirically (not just by reading the code), 2026-09-12:
+     a disposable-table test publishing a game, then re-publishing the
+     SAME event_id with a corrected score, lands on bit-for-bit the
+     same final mu/rd/games_played as a single clean publish of the
+     corrected score from scratch -- confirming this rollback is real,
+     not just a log entry. See the Stage 4 conversation for the full
+     test.
 
    STEP 3 -- the actual Glicko-1 update, applied as one rating period
    per event (not one update per game). For each reconstructed game,
@@ -96,17 +108,19 @@
    population (217 rows, 157 established as of this migration), this
    threshold is nowhere close to being hit.
 
-   STEP 6 -- once this event is being processed, every OLDER event's
-   schedule is necessarily already locked (schedule production only
-   moves forward), so its ledger row (needed only to protect a
-   same-week re-publish) is dead weight and gets purged, keeping the
-   ledger at essentially one event's worth of rows. Confirmed live:
-   58 ledger rows, all for event 162 (the current one) -- matches
-   this design exactly. NOTE: because this step runs after STEP 5's
-   `n_est < 10` early return, the purge would be skipped in that same
-   edge case. Purely theoretical at the current population size (157
-   established, vs. a threshold of 10) -- not changed here, matches
-   live control flow exactly.
+   STEP 6 -- once this event is being processed, every OLDER event IN
+   THE SAME SOURCE'S OWN STREAM is necessarily already locked (that
+   category's own schedule production only moves forward), so its
+   ledger row (needed only to protect a same-week re-publish) is dead
+   weight and gets purged, keeping the ledger at essentially one
+   event's worth of rows PER SOURCE. Confirmed live: 51 ledger rows,
+   all for event 164, source 'ladder' (the current one) -- matches
+   this design exactly.
+   NOTE: because this step runs after STEP 5's `n_est < 10` early
+   return, the purge would be skipped in that same edge case. Purely
+   theoretical at the current population size (157 established, vs. a
+   threshold of 10) -- not changed here, matches live control flow
+   exactly.
 
    Does NOT touch spp_dupr_rating (self-reported, entered elsewhere).
 
@@ -152,20 +166,23 @@
    asked to do; flagging it for a separate decision.
 
    CALLED FROM (verified exhaustively -- theme/mu-plugin grep, Code
-   Manager DB grep, and a full post_content scan): exactly one caller,
-   internally, as spp_update_club_ratings(), from the already-migrated
-   spp_apply_override_to_results_table() (CM52) -- that file has been
-   updated to call this function directly instead of going through
-   [cmruncode] (see its own changelog entry). No page calls
-   [cmruncode name='Update Club Ratings'] directly, and no other Code
-   Manager snippet calls it either.
+   Manager DB grep, and a full post_content scan): spp_update_club_
+   ratings() (the ladder path, unchanged default), from the already-
+   migrated spp_apply_override_to_results_table() (CM52) -- that file
+   calls it directly instead of going through [cmruncode] (see its
+   own changelog entry). As of 1.1.0 below, the shared inner function
+   spp_crt_process_event_ratings() also has a second caller: Ace/Queen
+   of the Courts (inc/spp-kq-club-rating.php), automatically after a
+   completed or cancelled occurrence, subject to its own pre-launch
+   date guard. No page calls [cmruncode name='Update Club Ratings']
+   directly, and no other Code Manager snippet calls it either.
 
-   EXPLICIT PARAMETERS: like CM52, this snippet receives nothing from
-   its caller -- `global $wpdb;` is the only global read, and $Event
-   is derived entirely internally from Results.event_id. Confirmed no
-   hidden dependency on caller scope.
+   EXPLICIT PARAMETERS: like CM52, spp_update_club_ratings() receives
+   nothing from its caller -- `global $wpdb;` is the only global read,
+   and $Event is derived entirely internally from Results.event_id.
+   Confirmed no hidden dependency on caller scope.
 
-   Changes from CM284: wrapped in a real function,
+   Changes from CM284 (1.0.0): wrapped in a real function,
    spp_update_club_ratings( bool $dry_run = false ) -- the previously
    hardcoded `$DRY_RUN = false;` is now a parameter defaulting to the
    same value, so a dry run (as used to validate v1.0 against event
@@ -182,6 +199,55 @@
    require_once'd exactly once. No other behavior change: identical
    reconstruction logic, identical Glicko math, identical rescale,
    identical writes.
+
+   Changes from 1.0.0 (1.1.0, Stage 4 -- KQ Club Rating integration):
+   Ace/Queen of the Courts needed to feed the exact same rating engine
+   (a player's identity, and therefore rating, doesn't change by
+   category) without corrupting the ladder's own re-publish safety --
+   the ORIGINAL STEP 6 purge (`DELETE FROM club_rating_event_log
+   WHERE event_id != %d`) assumed a single, strictly-sequential event
+   stream (the ladder's own numbering advancing forward over time).
+   Confirmed live that this assumption doesn't hold across categories:
+   the ladder's own $event and KQ's occurrence_id both come from the
+   SAME shared GL Events occurrence autoincrement (gl-schedule-
+   production.php uses $event directly as occurrence_id against
+   gl_registrations; spp-kq-schema.php's occurrence_id is that same
+   table, filtered to categories 2/3) -- so Ace/Queen occurrence IDs
+   interleave numerically with ladder event IDs, and a blind
+   "everything but me" purge would silently delete another category's
+   still-valid rollback-safety rows the moment that category
+   published.
+   - club_rating_event_log gains a `source` column (VARCHAR(10) NOT
+     NULL DEFAULT 'ladder', indexed as (source, event_id)) -- three
+     buckets ('ladder' | 'ace' | 'queen'), not a combined 'kq', since
+     Ace and Queen are independent, non-overlapping event streams in
+     their own right; lumping them together would just move the same
+     bug one level down. club_rating_state itself gets NO such column
+     -- confirmed via DESCRIBE it's keyed purely on user_id already,
+     and that's exactly right: one shared rating per real person.
+   - Steps 2/2a/3/4/5/6 (everything after "have I got real games to
+     process") are extracted verbatim into a new function,
+     spp_crt_process_event_ratings( $games, $rank_by_user, $Event,
+     $source, $dry_run ), with `source` scoping added to STEP 2a's
+     lookup/delete and STEP 4's ledger insert and STEP 6's purge.
+     spp_update_club_ratings() keeps STEP 1 (reading Results/
+     Schedules_Scores_*, exactly as before) and now just builds
+     $games/$rank_by_user and calls the shared function, defaulting
+     $source to 'ladder' -- so its own sole caller,
+     spp_apply_override_to_results_table(), needs zero changes and
+     produces byte-identical output to before.
+   - spp_crt_process_event_ratings() returns plain data (no echoing)
+     so a caller without page-rendering context -- KQ's automatic
+     post-transition trigger -- can build its own short plain-text
+     notice; spp_update_club_ratings() reconstructs the exact same
+     HTML it always echoed, now driven by that returned data instead
+     of local variables, verified line-by-line against the pre-1.1.0
+     version for byte-identical output on every branch (abort,
+     rollback notice, dry-run table, low-population warning, final
+     summary, unreconstructed note, purge notice).
+   - The KQ side of this (Step-1 adapter, automatic trigger, pre-
+     launch date guard) lives entirely in the new inc/spp-kq-club-
+     rating.php -- see that file's own header.
    ========================================================= */
 
 defined( 'ABSPATH' ) || exit;
@@ -294,17 +360,306 @@ function spp_crt_to_scale( $mu, $mean_mu, $std_mu, $k ) {
 }
 }
 
-function spp_update_club_ratings( bool $dry_run = false ) {
+/**
+ * STEPS 2-6 of the club-rating pipeline, extracted so both the ladder
+ * (via spp_update_club_ratings(), below) and Ace/Queen of the Courts
+ * (via spp_kq_maybe_publish_to_club_ratings(), inc/spp-kq-club-
+ * rating.php) feed the exact same Glicko engine and the exact same
+ * club_rating_state / club_rating_event_log tables -- see this file's
+ * 1.1.0 changelog above for why, and for the empirical proof that
+ * STEP 2a's rollback is genuine.
+ *
+ * Takes STEP 1's output directly ($games / $rank_by_user) instead of
+ * reading Schedules_Scores_* itself, so this function has zero
+ * knowledge of where its games came from. $games is a flat array of
+ * array('team1'=>[uid,uid], 'team2'=>[uid,uid], 'score1'=>int,
+ * 'score2'=>int); $rank_by_user is user_id => ladder Rank (int),
+ * safe to omit any player entirely (falls back to Glicko defaults in
+ * spp_crt_seed_new_player()).
+ *
+ * $source scopes club_rating_event_log ('ladder' | 'ace' | 'queen')
+ * so STEP 2a's re-publish rollback and STEP 6's purge only ever
+ * operate within ONE category's own event stream.
+ *
+ * Returns plain data only -- no echoing -- so a caller with no page-
+ * rendering context (KQ's automatic trigger) can build its own short
+ * plain-text notice; spp_update_club_ratings() below reconstructs the
+ * exact HTML it always echoed from these same fields.
+ */
+function spp_crt_process_event_ratings( array $games, array $rank_by_user, int $Event, string $source, bool $dry_run ) : array {
+
+    global $wpdb;
+
+    $prefix      = $wpdb->prefix;
+    $umetatable  = $prefix . 'usermeta';
+    $state_table = "club_rating_state";
+    $log_table   = "club_rating_event_log";
+
+    $Q = log(10) / 400;
+    $DEFAULT_MU = 1500.0;
+    $DEFAULT_RD = 300.0;
+    $MIN_RD = 40.0;
+    $MAX_RD = 350.0;
+    $EPS = 0.001; // float-comparison tolerance for STEP 2a's drift check
+
+    $result = array(
+        'aborted' => false, 'aborted_users' => array(),
+        'rolled_back_count' => 0,
+        'updated_count' => 0, 'new_player_count' => 0,
+        'n_established' => 0, 'usermeta_written' => false,
+        'purged_count' => 0, 'dry_run_rows' => array(),
+    );
+
+    $players_this_event = array();
+    foreach ($games as $g) {
+        foreach ($g['team1'] as $u) $players_this_event[$u] = true;
+        foreach ($g['team2'] as $u) $players_this_event[$u] = true;
+    }
+    $players_this_event = array_keys($players_this_event);
+
+    // load existing state for everyone (needed both for this event's players and
+    // for seeding-regression peers)
+    $all_state_rows = $wpdb->get_results("SELECT user_id, mu, rd, games_played, first_event, last_event FROM {$state_table}", ARRAY_A);
+    $state = array();
+    foreach ($all_state_rows as $r) {
+        $state[(int)$r['user_id']] = array(
+            'mu' => (float)$r['mu'], 'rd' => (float)$r['rd'],
+            'games_played' => (int)$r['games_played'],
+            'first_event' => (int)$r['first_event'], 'last_event' => (int)$r['last_event'],
+        );
+    }
+
+    // ==============================================================
+    // STEP 2a — if this event (within THIS source's own stream) was
+    // already processed, roll every affected player back to their
+    // pre-event snapshot before reprocessing, so this run doesn't
+    // double-count the event on top of the earlier one.
+    // ==============================================================
+
+    $prior_log_rows = $wpdb->get_results(
+        $wpdb->prepare("SELECT * FROM {$log_table} WHERE event_id = %d AND source = %s", $Event, $source),
+        ARRAY_A
+    );
+
+    if ( ! empty($prior_log_rows) ) {
+        $drifted = array();
+        foreach ($prior_log_rows as $lr) {
+            $uid = (int)$lr['user_id'];
+            if ( ! isset($state[$uid]) ) { $drifted[] = $uid; continue; }
+            $cur = $state[$uid];
+            if ( abs($cur['mu'] - (float)$lr['mu_after']) > $EPS
+              || abs($cur['rd'] - (float)$lr['rd_after']) > $EPS
+              || $cur['games_played'] !== (int)$lr['games_after'] ) {
+                $drifted[] = $uid;
+            }
+        }
+        if ( ! empty($drifted) ) {
+            $result['aborted'] = true;
+            $result['aborted_users'] = $drifted;
+            return $result;
+        }
+
+        $rolled_back = 0;
+        foreach ($prior_log_rows as $lr) {
+            $uid = (int)$lr['user_id'];
+            if ( (int)$lr['games_before'] === 0 && (int)$lr['last_event_before'] === $Event ) {
+                unset($state[$uid]);
+                if (!$dry_run) $wpdb->query($wpdb->prepare("DELETE FROM {$state_table} WHERE user_id = %d", $uid));
+            } else {
+                $state[$uid] = array(
+                    'mu' => (float)$lr['mu_before'], 'rd' => (float)$lr['rd_before'],
+                    'games_played' => (int)$lr['games_before'],
+                    'first_event' => isset($state[$uid]) ? $state[$uid]['first_event'] : $Event,
+                    'last_event' => (int)$lr['last_event_before'],
+                );
+            }
+            $rolled_back++;
+        }
+        if (!$dry_run) $wpdb->query($wpdb->prepare("DELETE FROM {$log_table} WHERE event_id = %d AND source = %s", $Event, $source));
+        $result['rolled_back_count'] = $rolled_back;
+    }
+
+    $new_player_count = 0;
+    foreach ($players_this_event as $uid) {
+        if (!isset($state[$uid])) {
+            list($mu0, $rd0) = spp_crt_seed_new_player($uid, $rank_by_user, $state, $DEFAULT_MU, $DEFAULT_RD);
+            $state[$uid] = array('mu' => $mu0, 'rd' => $rd0, 'games_played' => 0, 'first_event' => $Event, 'last_event' => $Event);
+            $new_player_count++;
+        }
+    }
+    $result['new_player_count'] = $new_player_count;
+
+    // snapshot every affected player's state as it stands going into this
+    // event's update — this is the ledger's "before" row for each of them.
+    $before_snapshot = array();
+    foreach ($players_this_event as $uid) {
+        $before_snapshot[$uid] = $state[$uid];
+    }
+
+    // ==============================================================
+    // STEP 3 — apply this event's games as one Glicko rating period
+    // ==============================================================
+
+    $deltas = array(); // uid => array of [opp_rd, actual, expected]
+
+    foreach ($games as $g) {
+        $t1 = $g['team1']; $t2 = $g['team2'];
+        $mu1 = ($state[$t1[0]]['mu'] + $state[$t1[1]]['mu']) / 2;
+        $mu2 = ($state[$t2[0]]['mu'] + $state[$t2[1]]['mu']) / 2;
+        $rd1 = ($state[$t1[0]]['rd'] + $state[$t1[1]]['rd']) / 2;
+        $rd2 = ($state[$t2[0]]['rd'] + $state[$t2[1]]['rd']) / 2;
+
+        $exp1 = spp_crt_expected_score($mu1, $mu2, $rd2, $Q);
+        $actual1 = spp_crt_margin_scale($g['score1'], $g['score2']);
+
+        foreach ($t1 as $u) $deltas[$u][] = array($rd2, $actual1, $exp1);
+        foreach ($t2 as $u) $deltas[$u][] = array($rd1, 1 - $actual1, 1 - $exp1);
+    }
+
+    foreach ($deltas as $uid => $obs) {
+        $st = $state[$uid];
+        $d2_inv = 0; $sum_term = 0;
+        foreach ($obs as $o) {
+            list($opp_rd, $actual, $expected) = $o;
+            $gval = spp_crt_g_rd($opp_rd, $Q);
+            $d2_inv += $Q * $Q * $gval * $gval * $expected * (1 - $expected);
+            $sum_term += $gval * ($actual - $expected);
+        }
+        if ($d2_inv > 0) {
+            $d2 = 1.0 / $d2_inv;
+            $new_rd = sqrt(1.0 / (1.0 / ($st['rd'] * $st['rd']) + 1.0 / $d2));
+            $new_mu = $st['mu'] + $Q * $new_rd * $new_rd * $sum_term;
+        } else {
+            $new_rd = $st['rd']; $new_mu = $st['mu'];
+        }
+        $new_rd = max($MIN_RD, min($MAX_RD, $new_rd));
+        $state[$uid]['mu'] = $new_mu;
+        $state[$uid]['rd'] = $new_rd;
+        $state[$uid]['games_played'] += count($obs);
+        $state[$uid]['last_event'] = $Event;
+    }
+
+    // ==============================================================
+    // STEP 4 — persist updated state (upsert) and record the ledger,
+    // scoped by source
+    // ==============================================================
+
+    $updated_count = 0;
+    foreach ($players_this_event as $uid) {
+        $st = $state[$uid];
+        $before = $before_snapshot[$uid];
+
+        if (!$dry_run) {
+            $exists = $wpdb->get_var($wpdb->prepare("SELECT user_id FROM {$state_table} WHERE user_id = %d", $uid));
+            if ($exists) {
+                $wpdb->query($wpdb->prepare(
+                    "UPDATE {$state_table} SET mu=%f, rd=%f, games_played=%d, last_event=%d, updated_at=NOW() WHERE user_id=%d",
+                    $st['mu'], $st['rd'], $st['games_played'], $st['last_event'], $uid
+                ));
+            } else {
+                $wpdb->query($wpdb->prepare(
+                    "INSERT INTO {$state_table} (user_id, mu, rd, games_played, first_event, last_event, updated_at) VALUES (%d, %f, %f, %d, %d, %d, NOW())",
+                    $uid, $st['mu'], $st['rd'], $st['games_played'], $st['first_event'], $st['last_event']
+                ));
+            }
+
+            // ledger row for this event — lets a future re-publish roll back cleanly
+            $wpdb->query($wpdb->prepare(
+                "INSERT INTO {$log_table} (event_id, user_id, source, mu_before, rd_before, games_before, last_event_before, mu_after, rd_after, games_after, processed_at)
+                 VALUES (%d, %d, %s, %f, %f, %d, %d, %f, %f, %d, NOW())",
+                $Event, $uid, $source, $before['mu'], $before['rd'], $before['games_played'], $before['last_event'],
+                $st['mu'], $st['rd'], $st['games_played']
+            ));
+        } // end !$dry_run
+
+        $updated_count++;
+    }
+    $result['updated_count'] = $updated_count;
+
+    // ==============================================================
+    // STEP 5 — rescale to 2.0-5.0 Club Rating and write usermeta
+    // ==============================================================
+    // Recomputed fresh each run from the CURRENT established population
+    // (games_played >= 15), so the scale stays anchored as the club evolves.
+    // Written for EVERY user_id in club_rating_state (not just this event's
+    // players): the scale (mean_mu/std_mu/k) shifts slightly every run as the
+    // population changes, so a non-playing member's displayed rating can drift
+    // even though their own mu didn't move. Their mu itself is untouched here
+    // either way — this only controls who gets their usermeta rewritten.
+
+    $established = $wpdb->get_results("SELECT mu FROM {$state_table} WHERE games_played >= 15", ARRAY_A);
+    $mus = array_map(function($r) { return (float)$r['mu']; }, $established);
+    $n_est = count($mus);
+    $result['n_established'] = $n_est;
+
+    if ($n_est < 10) {
+        // matches live control flow exactly: STEP 4 already ran (state +
+        // ledger are written), but usermeta is skipped and STEP 6's purge
+        // never runs this call, same as before 1.1.0.
+        return $result;
+    }
+
+    $mean_mu = array_sum($mus) / $n_est;
+    $var = 0;
+    foreach ($mus as $m) { $var += ($m - $mean_mu) * ($m - $mean_mu); }
+    $std_mu = sqrt($var / ($n_est - 1));
+    $max_mu = max($mus); $min_mu = min($mus);
+    $z_top = ($max_mu - $mean_mu) / $std_mu;
+    $z_bot = ($min_mu - $mean_mu) / $std_mu;
+    $k = min(1.5 / $z_top, 1.5 / abs($z_bot));
+
+    if (!$dry_run) {
+        foreach ($state as $uid => $st) {
+            $rating = spp_crt_to_scale($st['mu'], $mean_mu, $std_mu, $k);
+            $games_played = $st['games_played'];
+
+            $wpdb->query($wpdb->prepare("DELETE FROM {$umetatable} WHERE meta_key = 'spp_glicko_rating' AND user_id = %d", $uid));
+            $wpdb->query($wpdb->prepare("INSERT INTO {$umetatable} (user_id, meta_key, meta_value) VALUES (%d, 'spp_glicko_rating', %s)", $uid, $rating));
+
+            $wpdb->query($wpdb->prepare("DELETE FROM {$umetatable} WHERE meta_key = 'spp_glicko_rating_games' AND user_id = %d", $uid));
+            $wpdb->query($wpdb->prepare("INSERT INTO {$umetatable} (user_id, meta_key, meta_value) VALUES (%d, 'spp_glicko_rating_games', %d)", $uid, $games_played));
+        }
+    }
+    $result['usermeta_written'] = true;
+
+    if ($dry_run) {
+        foreach ($players_this_event as $uid) {
+            $before = $before_snapshot[$uid];
+            $after  = $state[$uid];
+            $rating = spp_crt_to_scale($after['mu'], $mean_mu, $std_mu, $k);
+            $is_new = ($before['games_played'] === 0 && $before['last_event'] === $Event);
+            $result['dry_run_rows'][] = array(
+                'user_id' => $uid, 'mu_before' => $before['mu'], 'mu_after' => $after['mu'],
+                'games_before' => $before['games_played'], 'games_after' => $after['games_played'],
+                'rating' => $rating, 'is_new' => $is_new,
+            );
+        }
+    }
+
+    // ==============================================================
+    // STEP 6 — purge ledger rows for any OTHER event, WITHIN THIS
+    // SAME SOURCE ONLY (the 1.1.0 fix -- see this file's changelog)
+    // ==============================================================
+    if (!$dry_run) {
+        $purged = (int) $wpdb->query($wpdb->prepare("DELETE FROM {$log_table} WHERE source = %s AND event_id != %d", $source, $Event));
+        $result['purged_count'] = $purged;
+    }
+
+    return $result;
+}
+
+/**
+ * Ladder entry point. $source defaults to 'ladder' so the existing
+ * sole caller, spp_apply_override_to_results_table(), needs zero
+ * changes and produces byte-identical output to pre-1.1.0.
+ */
+function spp_update_club_ratings( bool $dry_run = false, string $source = 'ladder' ) {
 
     global $wpdb;
 
     $DRY_RUN = $dry_run;
 
-    $prefix        = $wpdb->prefix;
-    $umetatable    = $prefix . 'usermeta';
     $results_table = "Results";
-    $state_table   = "club_rating_state";
-    $log_table     = "club_rating_event_log";
 
     // -- Determine the event being published, same defensive pattern as ----------
     // -- "Apply Override to Results Table" Stage 2 (read from Results, not $Event --
@@ -373,12 +728,12 @@ function spp_update_club_ratings( bool $dry_run = false ) {
             }
             if ($all_zero) { $not_played++; continue; }
 
-            $result = spp_crt_reconstruct_round($present);
-            if ($result === null) {
+            $reconstructed = spp_crt_reconstruct_round($present);
+            if ($reconstructed === null) {
                 $unreconstructed++;
                 continue;
             }
-            $games[] = $result;
+            $games[] = $reconstructed;
         }
     }
 
@@ -386,16 +741,6 @@ function spp_update_club_ratings( bool $dry_run = false ) {
         echo "<p style='color:#c0392b;font-weight:bold;'>⚠ Update Club Ratings: no game slots found in {$scores_table} — aborting, no ratings changed.</p>";
         return;
     }
-
-    // ==============================================================
-    // STEP 2 — load prior state, seed any brand-new players
-    // ==============================================================
-
-    $Q = log(10) / 400;
-    $DEFAULT_MU = 1500.0;
-    $DEFAULT_RD = 300.0;
-    $MIN_RD = 40.0;
-    $MAX_RD = 350.0;
 
     $players_this_event = array();
     foreach ($games as $g) {
@@ -409,243 +754,51 @@ function spp_update_club_ratings( bool $dry_run = false ) {
         return;
     }
 
-    // load existing state for everyone (needed both for this event's players and
-    // for seeding-regression peers)
-    $all_state_rows = $wpdb->get_results("SELECT user_id, mu, rd, games_played, first_event, last_event FROM {$state_table}", ARRAY_A);
-    $state = array();
-    foreach ($all_state_rows as $r) {
-        $state[(int)$r['user_id']] = array(
-            'mu' => (float)$r['mu'], 'rd' => (float)$r['rd'],
-            'games_played' => (int)$r['games_played'],
-            'first_event' => (int)$r['first_event'], 'last_event' => (int)$r['last_event'],
-        );
-    }
-
     // ==============================================================
-    // STEP 2a — if this event was already processed (results were
-    // corrected and re-published), roll every affected player back to
-    // their pre-event snapshot before reprocessing, so this run doesn't
-    // double-count the event on top of the earlier one.
+    // STEPS 2-6 — shared with KQ; see spp_crt_process_event_ratings()
     // ==============================================================
 
-    $EPS = 0.001; // float-comparison tolerance for the safety check below
+    $r = spp_crt_process_event_ratings( $games, $rank_by_user, $Event, $source, $DRY_RUN );
 
-    $prior_log_rows = $wpdb->get_results(
-        $wpdb->prepare("SELECT * FROM {$log_table} WHERE event_id = %d", $Event),
-        ARRAY_A
-    );
-
-    if ( ! empty($prior_log_rows) ) {
-        // Safety check first: every logged player's CURRENT state must still
-        // match what this event left them at. If it doesn't, a later event has
-        // already used this (about-to-be-invalidated) rating as an input, and
-        // rolling back now would leave the system inconsistent. Abort loudly
-        // rather than silently corrupt — same posture as the row-count checks
-        // in Apply Override.
-        $drifted = array();
-        foreach ($prior_log_rows as $lr) {
-            $uid = (int)$lr['user_id'];
-            if ( ! isset($state[$uid]) ) { $drifted[] = $uid; continue; }
-            $cur = $state[$uid];
-            if ( abs($cur['mu'] - (float)$lr['mu_after']) > $EPS
-              || abs($cur['rd'] - (float)$lr['rd_after']) > $EPS
-              || $cur['games_played'] !== (int)$lr['games_after'] ) {
-                $drifted[] = $uid;
-            }
-        }
-        if ( ! empty($drifted) ) {
-            echo "<p style='color:#c0392b;font-weight:bold;background:#fdf3f2;border:2px solid #c0392b;border-radius:6px;padding:14px;'>";
-            echo "⚠ Update Club Ratings: event {$Event} was already processed, but " . count($drifted) . " player(s) (user_id: " . implode(', ', $drifted) . ") have since been updated by a LATER event. ";
-            echo "Rolling back event {$Event} now would corrupt those later updates. Aborting — no ratings changed. This needs a manual look before reprocessing this event.";
-            echo "</p>";
-            return;
-        }
-
-        // Safe to roll back (in-memory $state always updated so downstream math
-        // stays correct even in dry-run mode; only the actual writes are gated).
-        $rolled_back = 0;
-        foreach ($prior_log_rows as $lr) {
-            $uid = (int)$lr['user_id'];
-            if ( (int)$lr['games_before'] === 0 && (int)$lr['last_event_before'] === $Event ) {
-                // this event created the player from scratch — undo the creation entirely
-                unset($state[$uid]);
-                if (!$DRY_RUN) $wpdb->query($wpdb->prepare("DELETE FROM {$state_table} WHERE user_id = %d", $uid));
-            } else {
-                $state[$uid] = array(
-                    'mu' => (float)$lr['mu_before'], 'rd' => (float)$lr['rd_before'],
-                    'games_played' => (int)$lr['games_before'],
-                    'first_event' => isset($state[$uid]) ? $state[$uid]['first_event'] : $Event,
-                    'last_event' => (int)$lr['last_event_before'],
-                );
-            }
-            $rolled_back++;
-        }
-        if (!$DRY_RUN) $wpdb->query($wpdb->prepare("DELETE FROM {$log_table} WHERE event_id = %d", $Event));
-        echo "<p style='color:#e67e22;font-weight:bold;'>Event {$Event} was already processed once — " . ($DRY_RUN ? "would roll back" : "rolled back") . " {$rolled_back} player(s) to their pre-event rating before reprocessing with corrected scores.</p>";
-    }
-
-    $new_player_count = 0;
-    foreach ($players_this_event as $uid) {
-        if (!isset($state[$uid])) {
-            list($mu0, $rd0) = spp_crt_seed_new_player($uid, $rank_by_user, $state, $DEFAULT_MU, $DEFAULT_RD);
-            $state[$uid] = array('mu' => $mu0, 'rd' => $rd0, 'games_played' => 0, 'first_event' => $Event, 'last_event' => $Event);
-            $new_player_count++;
-        }
-    }
-
-    // snapshot every affected player's state as it stands going into this
-    // event's update — this is the ledger's "before" row for each of them.
-    $before_snapshot = array();
-    foreach ($players_this_event as $uid) {
-        $before_snapshot[$uid] = $state[$uid];
-    }
-
-    // ==============================================================
-    // STEP 3 — apply this event's games as one Glicko rating period
-    // ==============================================================
-
-    $deltas = array(); // uid => array of [opp_rd, actual, expected]
-
-    foreach ($games as $g) {
-        $t1 = $g['team1']; $t2 = $g['team2'];
-        $mu1 = ($state[$t1[0]]['mu'] + $state[$t1[1]]['mu']) / 2;
-        $mu2 = ($state[$t2[0]]['mu'] + $state[$t2[1]]['mu']) / 2;
-        $rd1 = ($state[$t1[0]]['rd'] + $state[$t1[1]]['rd']) / 2;
-        $rd2 = ($state[$t2[0]]['rd'] + $state[$t2[1]]['rd']) / 2;
-
-        $exp1 = spp_crt_expected_score($mu1, $mu2, $rd2, $Q);
-        $actual1 = spp_crt_margin_scale($g['score1'], $g['score2']);
-
-        foreach ($t1 as $u) $deltas[$u][] = array($rd2, $actual1, $exp1);
-        foreach ($t2 as $u) $deltas[$u][] = array($rd1, 1 - $actual1, 1 - $exp1);
-    }
-
-    foreach ($deltas as $uid => $obs) {
-        $st = $state[$uid];
-        $d2_inv = 0; $sum_term = 0;
-        foreach ($obs as $o) {
-            list($opp_rd, $actual, $expected) = $o;
-            $gval = spp_crt_g_rd($opp_rd, $Q);
-            $d2_inv += $Q * $Q * $gval * $gval * $expected * (1 - $expected);
-            $sum_term += $gval * ($actual - $expected);
-        }
-        if ($d2_inv > 0) {
-            $d2 = 1.0 / $d2_inv;
-            $new_rd = sqrt(1.0 / (1.0 / ($st['rd'] * $st['rd']) + 1.0 / $d2));
-            $new_mu = $st['mu'] + $Q * $new_rd * $new_rd * $sum_term;
-        } else {
-            $new_rd = $st['rd']; $new_mu = $st['mu'];
-        }
-        $new_rd = max($MIN_RD, min($MAX_RD, $new_rd));
-        $state[$uid]['mu'] = $new_mu;
-        $state[$uid]['rd'] = $new_rd;
-        $state[$uid]['games_played'] += count($obs);
-        $state[$uid]['last_event'] = $Event;
-    }
-
-    // ==============================================================
-    // STEP 4 — persist updated state (upsert) and record the ledger
-    // ==============================================================
-
-    $updated_count = 0;
-    foreach ($players_this_event as $uid) {
-        $st = $state[$uid];
-        $before = $before_snapshot[$uid];
-
-        if (!$DRY_RUN) {
-            $exists = $wpdb->get_var($wpdb->prepare("SELECT user_id FROM {$state_table} WHERE user_id = %d", $uid));
-            if ($exists) {
-                $wpdb->query($wpdb->prepare(
-                    "UPDATE {$state_table} SET mu=%f, rd=%f, games_played=%d, last_event=%d, updated_at=NOW() WHERE user_id=%d",
-                    $st['mu'], $st['rd'], $st['games_played'], $st['last_event'], $uid
-                ));
-            } else {
-                $wpdb->query($wpdb->prepare(
-                    "INSERT INTO {$state_table} (user_id, mu, rd, games_played, first_event, last_event, updated_at) VALUES (%d, %f, %f, %d, %d, %d, NOW())",
-                    $uid, $st['mu'], $st['rd'], $st['games_played'], $st['first_event'], $st['last_event']
-                ));
-            }
-
-            // ledger row for this event — lets a future re-publish roll back cleanly
-            $wpdb->query($wpdb->prepare(
-                "INSERT INTO {$log_table} (event_id, user_id, mu_before, rd_before, games_before, last_event_before, mu_after, rd_after, games_after, processed_at)
-                 VALUES (%d, %d, %f, %f, %d, %d, %f, %f, %d, NOW())",
-                $Event, $uid, $before['mu'], $before['rd'], $before['games_played'], $before['last_event'],
-                $st['mu'], $st['rd'], $st['games_played']
-            ));
-        } // end !$DRY_RUN
-
-        $updated_count++;
-    }
-
-    // ==============================================================
-    // STEP 5 — rescale to 2.0-5.0 Club Rating and write usermeta
-    // ==============================================================
-    // Recomputed fresh each run from the CURRENT established population
-    // (games_played >= 15), so the scale stays anchored as the club evolves.
-    // Written for EVERY user_id in club_rating_state (not just this event's
-    // players): the scale (mean_mu/std_mu/k) shifts slightly every run as the
-    // population changes, so a non-playing member's displayed rating can drift
-    // even though their own mu didn't move. Their mu itself is untouched here
-    // either way — this only controls who gets their usermeta rewritten.
-
-    $established = $wpdb->get_results("SELECT mu FROM {$state_table} WHERE games_played >= 15", ARRAY_A);
-    $mus = array_map(function($r) { return (float)$r['mu']; }, $established);
-    $n_est = count($mus);
-
-    if ($n_est < 10) {
-        echo "<p style='color:#e67e22;font-weight:bold;'>⚠ Update Club Ratings: only {$n_est} established players (need at least a handful for a stable scale) — ratings updated in club_rating_state, but usermeta NOT written this run.</p>";
+    if ( $r['aborted'] ) {
+        echo "<p style='color:#c0392b;font-weight:bold;background:#fdf3f2;border:2px solid #c0392b;border-radius:6px;padding:14px;'>";
+        echo "⚠ Update Club Ratings: event {$Event} was already processed, but " . count($r['aborted_users']) . " player(s) (user_id: " . implode(', ', $r['aborted_users']) . ") have since been updated by a LATER event. ";
+        echo "Rolling back event {$Event} now would corrupt those later updates. Aborting — no ratings changed. This needs a manual look before reprocessing this event.";
+        echo "</p>";
         return;
     }
 
-    $mean_mu = array_sum($mus) / $n_est;
-    $var = 0;
-    foreach ($mus as $m) { $var += ($m - $mean_mu) * ($m - $mean_mu); }
-    $std_mu = sqrt($var / ($n_est - 1));
-    $max_mu = max($mus); $min_mu = min($mus);
-    $z_top = ($max_mu - $mean_mu) / $std_mu;
-    $z_bot = ($min_mu - $mean_mu) / $std_mu;
-    $k = min(1.5 / $z_top, 1.5 / abs($z_bot));
-
-    foreach ($state as $uid => $st) {
-        $rating = spp_crt_to_scale($st['mu'], $mean_mu, $std_mu, $k);
-        $games_played = $st['games_played'];
-
-        if (!$DRY_RUN) {
-            $wpdb->query($wpdb->prepare("DELETE FROM {$umetatable} WHERE meta_key = 'spp_glicko_rating' AND user_id = %d", $uid));
-            $wpdb->query($wpdb->prepare("INSERT INTO {$umetatable} (user_id, meta_key, meta_value) VALUES (%d, 'spp_glicko_rating', %s)", $uid, $rating));
-
-            $wpdb->query($wpdb->prepare("DELETE FROM {$umetatable} WHERE meta_key = 'spp_glicko_rating_games' AND user_id = %d", $uid));
-            $wpdb->query($wpdb->prepare("INSERT INTO {$umetatable} (user_id, meta_key, meta_value) VALUES (%d, 'spp_glicko_rating_games', %d)", $uid, $games_played));
-        }
+    if ( $r['rolled_back_count'] > 0 ) {
+        echo "<p style='color:#e67e22;font-weight:bold;'>Event {$Event} was already processed once — " . ($DRY_RUN ? "would roll back" : "rolled back") . " {$r['rolled_back_count']} player(s) to their pre-event rating before reprocessing with corrected scores.</p>";
     }
 
-    if ($DRY_RUN) {
+    if ( ! $r['usermeta_written'] ) {
+        echo "<p style='color:#e67e22;font-weight:bold;'>⚠ Update Club Ratings: only {$r['n_established']} established players (need at least a handful for a stable scale) — ratings updated in club_rating_state, but usermeta NOT written this run.</p>";
+        return;
+    }
+
+    if ( $DRY_RUN ) {
         echo "<div style='max-width:900px;margin:16px 0;padding:14px 18px;background:#fff8e1;border:2px solid #e67e22;border-radius:6px;font-family:Arial,sans-serif;'>";
         echo "<h3 style='color:#e67e22;margin:0 0 10px;'>DRY RUN — no data was changed</h3>";
         echo "<p style='font-size:13px;color:#666;margin:0 0 12px;'>club_rating_state, club_rating_event_log, and usermeta were not written. ";
         echo "Note: the scale below (mean/std) was computed from club_rating_state as it stands BEFORE this run — in live mode it would reflect this event's own updates too, so the very last decimal of each rating may shift slightly once actually applied.</p>";
         echo "<table style='width:100%;border-collapse:collapse;font-size:13px;'>";
         echo "<tr style='background:#fdf3f2;text-align:left;'><th style='padding:6px;'>user_id</th><th style='padding:6px;'>mu before → after</th><th style='padding:6px;'>games before → after</th><th style='padding:6px;'>Club Rating (would write)</th><th style='padding:6px;'>New player?</th></tr>";
-        foreach ($players_this_event as $uid) {
-            $before = $before_snapshot[$uid];
-            $after  = $state[$uid];
-            $rating = spp_crt_to_scale($after['mu'], $mean_mu, $std_mu, $k);
-            $is_new = ($before['games_played'] === 0 && $before['last_event'] === $Event) ? 'yes' : '';
+        foreach ( $r['dry_run_rows'] as $row ) {
             echo "<tr style='border-top:1px solid #eee;'>";
-            echo "<td style='padding:6px;'>{$uid}</td>";
-            echo "<td style='padding:6px;'>" . number_format($before['mu'],1) . " → " . number_format($after['mu'],1) . "</td>";
-            echo "<td style='padding:6px;'>{$before['games_played']} → {$after['games_played']}</td>";
-            echo "<td style='padding:6px;font-weight:bold;'>{$rating}</td>";
-            echo "<td style='padding:6px;'>{$is_new}</td>";
+            echo "<td style='padding:6px;'>{$row['user_id']}</td>";
+            echo "<td style='padding:6px;'>" . number_format($row['mu_before'],1) . " → " . number_format($row['mu_after'],1) . "</td>";
+            echo "<td style='padding:6px;'>{$row['games_before']} → {$row['games_after']}</td>";
+            echo "<td style='padding:6px;font-weight:bold;'>{$row['rating']}</td>";
+            echo "<td style='padding:6px;'>" . ($row['is_new'] ? 'yes' : '') . "</td>";
             echo "</tr>";
         }
         echo "</table></div>";
     }
 
-    $msg = ($DRY_RUN ? "DRY RUN: would update " : "OK: Club ratings updated for ") . count($players_this_event) . " player(s) from event {$Event} "
+    $msg = ($DRY_RUN ? "DRY RUN: would update " : "OK: Club ratings updated for ") . $r['updated_count'] . " player(s) from event {$Event} "
          . "({$total_slots} game slot(s), " . count($games) . " reconstructed, {$not_played} not played, {$unreconstructed} unreconstructed";
-    if ($new_player_count > 0) $msg .= ", {$new_player_count} new player(s) seeded";
+    if ($r['new_player_count'] > 0) $msg .= ", {$r['new_player_count']} new player(s) seeded";
     $msg .= ").";
     echo "<br><span style='font-size:14px;color:" . ($DRY_RUN ? '#e67e22' : '#339966') . ";'>{$msg}</span>";
 
@@ -653,20 +806,7 @@ function spp_update_club_ratings( bool $dry_run = false ) {
         echo "<br><span style='font-size:13px;color:#e67e22;'>Note: {$unreconstructed} of {$total_slots} slot(s) in {$scores_table} couldn't be cleanly reconstructed into two teams (likely a genuine score-entry mismatch, distinct from the {$not_played} slot(s) that simply weren't played) — those games contributed nothing to any rating this week.</span>";
     }
 
-    // ==============================================================
-    // STEP 6 — purge ledger rows for any OTHER event
-    // ==============================================================
-    // Once we're processing event $Event's results, every OLDER event's
-    // schedule has necessarily already been superseded (schedule production
-    // advances sequentially), which per the club's own rule means that older
-    // event's scores can no longer be corrected. Its ledger row (needed only
-    // to protect against a same-week re-publish) is dead weight from here on,
-    // so it's safe to drop — keeping the ledger at essentially one event's
-    // worth of rows at all times, with no separate cleanup job needed.
-    if (!$DRY_RUN) {
-        $purged = (int) $wpdb->query($wpdb->prepare("DELETE FROM {$log_table} WHERE event_id != %d", $Event));
-        if ($purged > 0) {
-            echo "<br><span style='font-size:13px;color:#666;'>Cleared {$purged} ledger row(s) from prior, now-locked event(s).</span>";
-        }
+    if ( $r['purged_count'] > 0 ) {
+        echo "<br><span style='font-size:13px;color:#666;'>Cleared {$r['purged_count']} ledger row(s) from prior, now-locked event(s).</span>";
     }
 }

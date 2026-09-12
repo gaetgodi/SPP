@@ -97,7 +97,8 @@ require_once get_stylesheet_directory() . '/inc/spp-report-edit.php';
 require_once get_stylesheet_directory() . '/inc/spp-kq-schema.php'; // Ace/Queen of the Courts live event runner -- must load before spp-kq-movement.php/spp-kq-live.php below
 require_once get_stylesheet_directory() . '/inc/spp-kq-movement.php'; // pure movement algorithm, no dependency on spp-kq-schema.php itself, but grouped with the rest of this feature
 require_once get_stylesheet_directory() . '/inc/spp-kq-live.php'; // calls functions from both files above
-require_once get_stylesheet_directory() . '/inc/spp-kq-screens.php'; // [spp_kq_live] shortcode + AJAX draw handler -- calls functions from all three files above
+require_once get_stylesheet_directory() . '/inc/spp-kq-club-rating.php'; // Stage 4: feeds completed/cancelled KQ occurrences into the shared spp_crt_process_event_ratings() (inc/spp-update-club-ratings.php) -- must load after spp-update-club-ratings.php (line 69) and spp-kq-live.php/spp-kq-schema.php above; called from spp-kq-screens.php's post-action dispatcher below
+require_once get_stylesheet_directory() . '/inc/spp-kq-screens.php'; // [spp_kq_live] shortcode + AJAX draw handler -- calls functions from all four files above
 
 add_filter('template_include', function($template) {
     if (is_singular('tribe_events')) {
