@@ -261,6 +261,7 @@ function spp_kq_styles() : string {
         .kq-back a { color:#3766AB; text-decoration:none; font-size:14px; }
         .kq-heading { margin:6px 0 2px; font-size:20px; }
         .kq-subheading { margin:0 0 14px; color:#666; font-size:14px; }
+        .kq-caveat { margin:0 0 14px; padding:8px 12px; background:#f7f7f7; border-left:3px solid #999; color:#555; font-size:13px; }
         .kq-meta { color:#555; margin-bottom:14px; }
         .kq-round-label { font-weight:bold; font-size:16px; margin:0 0 12px; color:#2c3e50; }
         .kq-round-label-tight { font-weight:bold; font-size:16px; margin:0 0 2px; color:#2c3e50; }
@@ -366,6 +367,7 @@ function spp_kq_render_event_picker() : string {
     ?>
     <div class="kq-wrap">
         <h2 class="kq-heading">Ace / Queen of the Courts &mdash; Live</h2>
+        <p class="kq-caveat">Actions here affect real, live event data &mdash; please be careful.</p>
         <?php if ( empty( $rows ) ) : ?>
             <p>No upcoming Ace or Queen occurrences found.</p>
         <?php else : ?>
@@ -412,26 +414,47 @@ function spp_kq_render_occurrence_header( array $occurrence, string $notice = ''
     return ob_get_clean();
 }
 
-/** Screen 2: Start screen (not_started) */
-function spp_kq_render_start_screen( int $occurrence_id ) : string {
+/**
+ * Screen 2: Start screen (not_started)
+ *
+ * @param string $event_date The occurrence's real event date ('Y-m-d'),
+ *   from spp_kq_get_occurrence_summary() -- passed in by the caller rather
+ *   than re-queried here.
+ */
+function spp_kq_render_start_screen( int $occurrence_id, string $event_date ) : string {
     $count = spp_kq_confirmed_count( $occurrence_id );
     $valid = ( $count >= 4 && $count <= 16 && $count % 4 === 0 );
+
+    // Day-of restriction: this feature has no access gate beyond
+    // is_user_logged_in() (see spp_kq_can_facilitate()), so this is the one
+    // guard against an event being started on the wrong day by mistake --
+    // block rather than invent a workaround, same convention as the
+    // non-multiple-of-4 headcount case above. Administrators are exempt,
+    // for testing (spp_is_admin() -- same helper this codebase already uses
+    // for administrator-only exceptions elsewhere). Ordinary members,
+    // editors included, stay restricted to the actual event day.
+    $is_event_day    = ( current_time( 'Y-m-d' ) === $event_date );
+    $can_start_today = $is_event_day || spp_is_admin();
 
     ob_start();
     ?>
     <p class="kq-meta"><?php echo esc_html( $count ); ?> confirmed registrant<?php echo $count === 1 ? '' : 's'; ?></p>
-    <?php if ( $valid ) : ?>
-        <form method="post">
-            <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
-            <input type="hidden" name="spp_kq_action" value="start_round1">
-            <button type="submit" class="kq-btn kq-btn-primary">Start Round 1 Draw</button>
-        </form>
-    <?php else : ?>
+    <?php if ( ! $valid ) : ?>
         <p class="kq-warn">
             Cannot start: <?php echo esc_html( $count ); ?> confirmed registrant(s) &mdash; need a multiple of 4,
             between 4 and 16. Adjust the roster via
             <a href="<?php echo esc_url( add_query_arg( 'gl_reg_occ_id', $occurrence_id, home_url( '/gl-registration-admin/' ) ) ); ?>">Registration Admin</a> first.
         </p>
+    <?php elseif ( ! $can_start_today ) : ?>
+        <p class="kq-warn">
+            This event is scheduled for <?php echo esc_html( date_i18n( 'l, F j', strtotime( $event_date ) ) ); ?> &mdash; come back on the day to start it.
+        </p>
+    <?php else : ?>
+        <form method="post">
+            <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
+            <input type="hidden" name="spp_kq_action" value="start_round1">
+            <button type="submit" class="kq-btn kq-btn-primary">Start Round 1 Draw</button>
+        </form>
     <?php endif; ?>
     <?php
     return ob_get_clean();
@@ -839,7 +862,13 @@ function spp_kq_render_cancelled_screen( int $occurrence_id, int $round ) : stri
 // the main shortcode re-render whatever screen the new state calls for.
 // =============================================================
 
-function spp_kq_handle_post_actions( int $occurrence_id ) : string {
+/**
+ * @param string $event_date The occurrence's real event date ('Y-m-d'),
+ *   passed by the caller -- same value spp_kq_render_start_screen() uses,
+ *   so the button's own day-of gate and this server-side check can never
+ *   diverge.
+ */
+function spp_kq_handle_post_actions( int $occurrence_id, string $event_date ) : string {
     if ( ! isset( $_POST['spp_kq_action'], $_POST['spp_kq_nonce'] ) ) {
         return '';
     }
@@ -852,6 +881,13 @@ function spp_kq_handle_post_actions( int $occurrence_id ) : string {
 
     switch ( $action ) {
         case 'start_round1':
+            // Same day-of gate the Start screen's button enforces (see that
+            // function's docblock) -- re-checked here so a crafted or stale
+            // POST can't bypass it. Must match what the UI offers, same
+            // discipline as every other access check in this codebase.
+            if ( current_time( 'Y-m-d' ) !== $event_date && ! spp_is_admin() ) {
+                return 'This event can only be started on its actual event date.';
+            }
             $r = spp_kq_transition_start_round1( $occurrence_id );
             return ( ! $r['won'] && $r['error'] ) ? $r['error'] : '';
 
@@ -893,7 +929,7 @@ function spp_kq_live_shortcode() : string {
         return '<p>Occurrence not found.</p>';
     }
 
-    $notice = spp_kq_handle_post_actions( $occurrence_id );
+    $notice = spp_kq_handle_post_actions( $occurrence_id, $occurrence['event_date'] );
 
     spp_kq_ensure_event_row( $occurrence_id );
     $state = spp_kq_get_event_state( $occurrence_id );
@@ -907,7 +943,7 @@ function spp_kq_live_shortcode() : string {
 
     switch ( $phase ) {
         case 'not_started':
-            echo spp_kq_render_start_screen( $occurrence_id );
+            echo spp_kq_render_start_screen( $occurrence_id, $occurrence['event_date'] );
             break;
 
         case 'organizing':
