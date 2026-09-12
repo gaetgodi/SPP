@@ -286,6 +286,7 @@ function spp_kq_styles() : string {
         .kq-picker-row:hover { background:#f5f8fc; }
         .kq-picker-title { font-weight:bold; flex:1 1 200px; }
         .kq-picker-date { color:#666; font-size:14px; }
+        .kq-picker-regcount { color:#666; font-size:14px; white-space:nowrap; }
         .kq-picker-status { font-size:12px; font-weight:bold; padding:3px 10px; border-radius:12px; white-space:nowrap; }
         .kq-status-not-started { background:#eee; color:#666; }
         .kq-status-organizing { background:#fff3cd; color:#8a6100; }
@@ -345,13 +346,18 @@ function spp_kq_render_event_picker() : string {
     $view = $wpdb->prefix . 'gl_events_v';
     $events_table = spp_kq_events_table();
 
+    // Next 8 upcoming occurrences only, combined across Ace and Queen
+    // (eff_category_id IN (2,3) already pools both) -- same chronological
+    // order as before, just truncated so this list doesn't grow unbounded
+    // as far-future occurrences get scheduled.
     $rows = $wpdb->get_results(
         "SELECT v.occurrence_id, v.eff_title, v.event_date, v.eff_event_time,
                 e.current_round, e.phase
          FROM {$view} v
          LEFT JOIN {$events_table} e ON e.occurrence_id = v.occurrence_id
          WHERE v.eff_category_id IN (2,3) AND v.cancelled = 0 AND v.event_date >= CURDATE()
-         ORDER BY v.event_date ASC, v.eff_event_time ASC",
+         ORDER BY v.event_date ASC, v.eff_event_time ASC
+         LIMIT 8",
         ARRAY_A
     );
 
@@ -368,10 +374,15 @@ function spp_kq_render_event_picker() : string {
                     $status = spp_kq_status_label( $r['phase'] ?? null, (int) ( $r['current_round'] ?? 0 ) );
                     $date_str = date_i18n( 'M j', strtotime( $r['event_date'] ) );
                     $time_str = $r['eff_event_time'] ? date_i18n( 'g:ia', strtotime( $r['eff_event_time'] ) ) : '';
+                    // Same GL_Registration-backed count the Start screen shows
+                    // ("N confirmed registrants") -- spp_kq_confirmed_count()
+                    // (inc/spp-kq-live.php), not a new query.
+                    $reg_count = spp_kq_confirmed_count( (int) $r['occurrence_id'] );
                 ?>
                     <a class="kq-picker-row" href="<?php echo esc_url( add_query_arg( 'occ', $r['occurrence_id'] ) ); ?>">
                         <span class="kq-picker-title"><?php echo esc_html( $r['eff_title'] ); ?></span>
                         <span class="kq-picker-date"><?php echo esc_html( trim( $date_str . ' ' . $time_str ) ); ?></span>
+                        <span class="kq-picker-regcount"><?php echo esc_html( $reg_count ); ?> confirmed</span>
                         <span class="kq-picker-status kq-status-<?php echo esc_attr( $status['class'] ); ?>"><?php echo esc_html( $status['label'] ); ?></span>
                     </a>
                 <?php endforeach; ?>
