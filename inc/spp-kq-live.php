@@ -654,34 +654,25 @@ function spp_kq_draw_card( int $occurrence_id, int $user_id ) : array {
 }
 
 // =============================================================
-// Score entry (Stage 3) -- a SECOND, NARROWER access model layered
-// on top of spp_kq_can_facilitate(). Viewing or submitting a specific
-// court's score requires a real spp_kq_assignments row for THAT
-// occurrence/round/user_id -- not just being logged in. This one
-// function is the single source of truth for that check, called
-// identically by the screen render AND the AJAX submit handler, so
-// they can never drift apart the way spp-score-entry.php's own two
-// checks once did (see that file's 1.4.0 changelog). The client is
-// never trusted to name its own court -- only ever the court_name
-// this function itself returns.
+// Score entry (Stage 3). Real, informed access-model change (2026-09,
+// based on Gaetan's own hands-on testing): this used to require a real
+// spp_kq_assignments row for the specific occurrence/round/user_id --
+// a SECOND, narrower gate on top of spp_kq_can_facilitate() -- and it
+// turned out to block legitimate facilitation (testing solo, or
+// helping run an event, means touching scores for courts you are not
+// personally playing on). Removed entirely: viewing and submitting ANY
+// court's score for the current round now uses the exact same
+// feature-wide gate as every other action here (the draw, Start Play,
+// End Event, Cancel Event, Reset) -- any logged-in user, full stop.
+// One access model for the whole feature, not one carved-out exception.
+//
+// The client still never gets to invent a court out of thin air, just
+// on different terms: court_name is now a real POST value (previously
+// there was nothing to send -- the court was derived from the caller's
+// own assignment), so spp_kq_submit_court_score() validates it against
+// a real spp_kq_scores placeholder row for this occurrence/round
+// rather than against who the caller happens to be.
 // =============================================================
-
-/**
- * The court/team a specific user is assigned to for a specific round,
- * or null if they have no assignment there at all (not playing this
- * round -- e.g. a facilitator who isn't a player, or a substituted-out
- * player past the round they left).
- */
-function spp_kq_get_my_court_assignment( int $occurrence_id, int $round_number, int $user_id ) : ?array {
-    global $wpdb;
-    $table = spp_kq_assignments_table();
-    $row = $wpdb->get_row( $wpdb->prepare(
-        "SELECT court_name, team_color FROM {$table}
-         WHERE occurrence_id = %d AND round_number = %d AND user_id = %d",
-        $occurrence_id, $round_number, $user_id
-    ), ARRAY_A );
-    return $row ?: null;
-}
 
 /**
  * How many of this round's courts have a fully-reported score vs. the
@@ -711,8 +702,12 @@ function spp_kq_get_round_progress( int $occurrence_id, int $round_number ) : ar
  *  - phase must still be 'in_play' AND current_round must still equal
  *    $round_number (the round may have already advanced between page
  *    load and submit -- rejected, not silently misapplied).
- *  - the court is whatever spp_kq_get_my_court_assignment() says for
- *    this user_id, never a client-supplied value.
+ *  - $court_name must be a real court that genuinely exists for this
+ *    occurrence/round -- checked against a real spp_kq_scores
+ *    placeholder row, never taken on faith. Unlike the assignment
+ *    check this replaces, this is NOT who-are-you gated: any logged-in
+ *    facilitator may submit for any real court (see this section's own
+ *    header for why).
  *  - scores must be 0-11 (games are played to 11) and not equal -- a
  *    tie is a data-entry error to correct, never guessed at or
  *    silently resolved (games are extended by a point specifically so
@@ -729,15 +724,21 @@ function spp_kq_get_round_progress( int $occurrence_id, int $round_number ) : ar
  * and this stage's own version of the same test against the real
  * submit path).
  */
-function spp_kq_submit_court_score( int $occurrence_id, int $round_number, int $red_score, int $black_score, int $user_id ) : array {
+function spp_kq_submit_court_score( int $occurrence_id, int $round_number, string $court_name, int $red_score, int $black_score, int $user_id ) : array {
     $state = spp_kq_get_event_state( $occurrence_id );
     if ( ! $state || $state['phase'] !== 'in_play' || (int) $state['current_round'] !== $round_number ) {
         return array( 'success' => false, 'error' => 'This round is no longer accepting scores -- refresh to see the current state.' );
     }
 
-    $assignment = spp_kq_get_my_court_assignment( $occurrence_id, $round_number, $user_id );
-    if ( ! $assignment ) {
-        return array( 'success' => false, 'error' => 'You are not assigned to a court this round.' );
+    global $wpdb;
+    $scores_table = spp_kq_scores_table();
+
+    $court_is_real = (bool) $wpdb->get_var( $wpdb->prepare(
+        "SELECT COUNT(*) FROM {$scores_table} WHERE occurrence_id = %d AND round_number = %d AND court_name = %s",
+        $occurrence_id, $round_number, $court_name
+    ) );
+    if ( ! $court_is_real ) {
+        return array( 'success' => false, 'error' => 'Not a valid court for this round -- refresh to see the current state.' );
     }
 
     if ( $red_score < 0 || $red_score > 11 || $black_score < 0 || $black_score > 11 ) {
@@ -755,12 +756,10 @@ function spp_kq_submit_court_score( int $occurrence_id, int $round_number, int $
         return array( 'success' => false, 'error' => "Scores can't be tied -- games are extended by a point specifically to avoid this. Please check and resubmit." );
     }
 
-    global $wpdb;
-    $scores_table = spp_kq_scores_table();
     $wpdb->query( $wpdb->prepare(
         "UPDATE {$scores_table} SET red_score = %d, black_score = %d, updated_by = %d
          WHERE occurrence_id = %d AND round_number = %d AND court_name = %s",
-        $red_score, $black_score, $user_id, $occurrence_id, $round_number, $assignment['court_name']
+        $red_score, $black_score, $user_id, $occurrence_id, $round_number, $court_name
     ) );
 
     $progress = spp_kq_get_round_progress( $occurrence_id, $round_number );
@@ -772,11 +771,10 @@ function spp_kq_submit_court_score( int $occurrence_id, int $round_number, int $
     }
 
     return array(
-        'success'      => true,
-        'court_name'   => $assignment['court_name'],
-        'team_color'   => $assignment['team_color'],
-        'reported'     => $progress['reported'],
-        'total'        => $progress['total'],
-        'advanced'     => $advanced,
+        'success'    => true,
+        'court_name' => $court_name,
+        'reported'   => $progress['reported'],
+        'total'      => $progress['total'],
+        'advanced'   => $advanced,
     );
 }

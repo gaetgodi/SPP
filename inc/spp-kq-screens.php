@@ -714,9 +714,9 @@ function spp_kq_render_overview_screen( int $occurrence_id, int $round ) : strin
         <?php endforeach; ?>
     </div>
     <?php if ( $scores_exist ) : ?>
-        <p class="kq-hint">Start Play shows each player only their own court; End Event closes the day for good &mdash; no more rounds.</p>
+        <p class="kq-hint">Start Play opens score entry for every court; End Event closes the day for good &mdash; no more rounds.</p>
     <?php else : ?>
-        <p class="kq-hint">Start Play shows each player only their own court.</p>
+        <p class="kq-hint">Start Play opens score entry for every court.</p>
     <?php endif; ?>
     <div class="kq-action-row">
         <form method="post" class="kq-inline-form">
@@ -739,36 +739,28 @@ function spp_kq_render_overview_screen( int $occurrence_id, int $round ) : strin
 }
 
 /**
- * Screen 5: In-Play -- the narrowed per-court score-entry view (Stage
- * 3). Access to the score itself is gated a SECOND time here, on top
- * of the feature-wide is_user_logged_in() check the shortcode
- * dispatcher already applied: spp_kq_get_my_court_assignment() is the
- * single source of truth, called identically here and in the AJAX
- * submit handler below, so the two can never diverge. A logged-in
- * user with no assignment this round sees only the live status line
- * -- never another court's names or score.
+ * Screen 5: In-Play -- every court's score-entry view (Stage 3;
+ * broadened 2026-09 -- see spp_kq_submit_court_score()'s own section
+ * header in inc/spp-kq-live.php for the access-model change this is
+ * part of). No per-user assignment check here anymore: every court in
+ * the round is shown, to every logged-in facilitator, each with its
+ * own score inputs. The AJAX submit handler below independently
+ * validates the same way (real court for this occurrence/round) --
+ * the two must never diverge, same discipline as everywhere else in
+ * this codebase.
  */
 function spp_kq_render_in_play_screen( int $occurrence_id, int $round ) : string {
-    $user_id      = get_current_user_id();
-    $assignment   = spp_kq_get_my_court_assignment( $occurrence_id, $round, $user_id );
     $progress     = spp_kq_get_round_progress( $occurrence_id, $round );
     // Reset is only offered once, before anything real has happened this
     // round (by the state machine, only possible in round 1) -- once any
     // court anywhere has reported, only Cancel Event remains available.
     $scores_exist = spp_kq_has_any_recorded_score( $occurrence_id );
 
-    $court_view  = array();
-    $current     = array( 'red_score' => null, 'black_score' => null );
-    if ( $assignment ) {
-        $all_courts = spp_kq_get_round_court_view( $occurrence_id, $round );
-        $court_view = $all_courts[ $assignment['court_name'] ] ?? array( 'red' => array(), 'black' => array() );
+    $court_view = spp_kq_get_round_court_view( $occurrence_id, $round );
 
-        global $wpdb;
-        $current = $wpdb->get_row( $wpdb->prepare(
-            "SELECT red_score, black_score FROM " . spp_kq_scores_table() . "
-             WHERE occurrence_id = %d AND round_number = %d AND court_name = %s",
-            $occurrence_id, $round, $assignment['court_name']
-        ), ARRAY_A ) ?: $current;
+    $scores_by_court = array();
+    foreach ( spp_kq_get_round_scores( $occurrence_id, $round ) as $s ) {
+        $scores_by_court[ $s['court_name'] ] = $s;
     }
 
     ob_start();
@@ -779,32 +771,32 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round ) : string
         <span id="kq-status-progress"><?php echo esc_html( "{$progress['reported']} of {$progress['total']} courts reported" ); ?></span>
     </div>
 
-    <?php if ( ! $assignment ) : ?>
-        <p class="kq-meta">You're not assigned to a court this round.</p>
-    <?php else : ?>
-        <div class="kq-msg kq-notice" id="kq-score-msg" style="display:none;"></div>
+    <p class="kq-hint">Enter both teams' real scores for any court &mdash; play continues until someone wins by a point, so an equal score is treated as a mistake to fix.</p>
 
-        <div class="kq-court-card">
-            <div class="kq-court-name">Your court: <?php echo esc_html( $assignment['court_name'] ); ?></div>
-            <div class="kq-team kq-team-red">Red: <?php echo esc_html( implode( ', ', $court_view['red'] ) ); ?></div>
-            <div class="kq-team kq-team-black">Black: <?php echo esc_html( implode( ', ', $court_view['black'] ) ); ?></div>
+    <div class="kq-msg kq-notice" id="kq-score-msg" style="display:none;"></div>
+
+    <?php foreach ( $court_view as $court => $teams ) :
+        $current = $scores_by_court[ $court ] ?? array( 'red_score' => null, 'black_score' => null );
+    ?>
+        <div class="kq-court-card" data-court="<?php echo esc_attr( $court ); ?>">
+            <div class="kq-court-name"><?php echo esc_html( $court ); ?></div>
+            <div class="kq-team kq-team-red">Red: <?php echo esc_html( implode( ', ', $teams['red'] ) ); ?></div>
+            <div class="kq-team kq-team-black">Black: <?php echo esc_html( implode( ', ', $teams['black'] ) ); ?></div>
+
+            <div class="kq-score-row">
+                <label>Red score<br>
+                    <input type="number" class="kq-score-input kq-court-red-input" min="0" max="11" inputmode="numeric" pattern="[0-9]*"
+                           value="<?php echo esc_attr( $current['red_score'] ?? '' ); ?>">
+                </label>
+                <label>Black score<br>
+                    <input type="number" class="kq-score-input kq-court-black-input" min="0" max="11" inputmode="numeric" pattern="[0-9]*"
+                           value="<?php echo esc_attr( $current['black_score'] ?? '' ); ?>">
+                </label>
+                <button type="button" class="kq-btn kq-btn-primary kq-save-score-btn">Save Score</button>
+                <span class="kq-saved" style="display:none;">Saved &#10003;</span>
+            </div>
         </div>
-
-        <p class="kq-hint">Enter both teams' real scores &mdash; play continues until someone wins by a point, so an equal score is treated as a mistake to fix.</p>
-
-        <div class="kq-score-row">
-            <label>Red score<br>
-                <input type="number" id="kq-red-score" class="kq-score-input" min="0" max="11" inputmode="numeric" pattern="[0-9]*"
-                       value="<?php echo esc_attr( $current['red_score'] ?? '' ); ?>">
-            </label>
-            <label>Black score<br>
-                <input type="number" id="kq-black-score" class="kq-score-input" min="0" max="11" inputmode="numeric" pattern="[0-9]*"
-                       value="<?php echo esc_attr( $current['black_score'] ?? '' ); ?>">
-            </label>
-            <button type="button" class="kq-btn kq-btn-primary" id="kq-save-score-btn">Save Score</button>
-            <span class="kq-saved" id="kq-saved-tag" style="display:none;">Saved &#10003;</span>
-        </div>
-    <?php endif; ?>
+    <?php endforeach; ?>
 
     <script>
     (function() {
@@ -815,10 +807,6 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round ) : string
 
         var progressEl = document.getElementById('kq-status-progress');
         var msgEl      = document.getElementById('kq-score-msg');
-        var redInput   = document.getElementById('kq-red-score');
-        var blackInput = document.getElementById('kq-black-score');
-        var saveBtn    = document.getElementById('kq-save-score-btn');
-        var savedTag   = document.getElementById('kq-saved-tag');
 
         function showMsg(text, ok) {
             if (!msgEl) return;
@@ -827,33 +815,40 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round ) : string
             msgEl.style.display = 'block';
         }
 
-        function updateSaveState() {
-            if (!saveBtn) return;
-            var r = redInput.value, b = blackInput.value;
-            if (r === '' || b === '') { saveBtn.disabled = true; return; }
-            var rn = parseInt(r, 10), bn = parseInt(b, 10);
-            // Same rules, same order, as spp_kq_submit_court_score()'s
-            // server-side checks -- this is immediate feedback only, the
-            // server re-validates independently regardless.
-            if (rn === 11 && bn === 11) {
-                saveBtn.disabled = true;
-                showMsg("11-11 isn't possible -- the game ends the instant either team reaches 11. Please double-check.", false);
-            } else if (rn === bn) {
-                saveBtn.disabled = true;
-                showMsg("Scores can't be tied -- games are extended by a point specifically to avoid this.", false);
-            } else {
-                saveBtn.disabled = false;
-                if (msgEl) msgEl.style.display = 'none';
-            }
-        }
+        // One wiring pass per court card -- each card owns its own pair
+        // of inputs, save button, and saved-tag, so submitting one
+        // court's score never touches another's inputs on the page.
+        document.querySelectorAll('.kq-court-card').forEach(function(card) {
+            var court      = card.dataset.court;
+            var redInput   = card.querySelector('.kq-court-red-input');
+            var blackInput = card.querySelector('.kq-court-black-input');
+            var saveBtn    = card.querySelector('.kq-save-score-btn');
+            var savedTag   = card.querySelector('.kq-saved');
 
-        if (redInput && blackInput) {
+            function updateSaveState() {
+                if (!saveBtn) return;
+                var r = redInput.value, b = blackInput.value;
+                if (r === '' || b === '') { saveBtn.disabled = true; return; }
+                var rn = parseInt(r, 10), bn = parseInt(b, 10);
+                // Same rules, same order, as spp_kq_submit_court_score()'s
+                // server-side checks -- this is immediate feedback only,
+                // the server re-validates independently regardless.
+                if (rn === 11 && bn === 11) {
+                    saveBtn.disabled = true;
+                    showMsg("11-11 isn't possible -- the game ends the instant either team reaches 11. Please double-check.", false);
+                } else if (rn === bn) {
+                    saveBtn.disabled = true;
+                    showMsg("Scores can't be tied -- games are extended by a point specifically to avoid this.", false);
+                } else {
+                    saveBtn.disabled = false;
+                    if (msgEl) msgEl.style.display = 'none';
+                }
+            }
+
             redInput.addEventListener('input', updateSaveState);
             blackInput.addEventListener('input', updateSaveState);
             updateSaveState();
-        }
 
-        if (saveBtn) {
             saveBtn.addEventListener('click', function() {
                 saveBtn.disabled = true;
                 savedTag.style.display = 'none';
@@ -863,6 +858,7 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round ) : string
                 data.append('nonce', nonce);
                 data.append('occ', occ);
                 data.append('round', renderedRound);
+                data.append('court_name', court);
                 data.append('red_score', redInput.value);
                 data.append('black_score', blackInput.value);
 
@@ -875,14 +871,14 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round ) : string
                             return;
                         }
                         savedTag.style.display = 'inline';
-                        progressEl.textContent = res.data.reported + ' of ' + res.data.total + ' courts reported';
+                        if (progressEl) progressEl.textContent = res.data.reported + ' of ' + res.data.total + ' courts reported';
                     })
                     .catch(function() {
                         saveBtn.disabled = false;
                         showMsg('Network error -- try again.', false);
                     });
             });
-        }
+        });
 
         // Lightweight poll: update the live count, and reload only once
         // this round has actually moved on (no real-time push needed --
@@ -1187,14 +1183,15 @@ add_action( 'wp_ajax_spp_kq_draw_card', function() {
 // =============================================================
 // AJAX: score submit (Stage 3)
 //
-// The base gate here is still just is_user_logged_in() -- the SAME
-// feature-wide gate everything else uses -- but that alone is NOT
-// sufficient for a score: spp_kq_submit_court_score() (inc/spp-kq-
-// live.php) independently re-derives the caller's own court via
-// spp_kq_get_my_court_assignment() and refuses anyone without a real
-// assignment row for occ+round+user_id. This handler never reads a
-// court_name from $_POST at all -- there is nothing here for a client
-// to spoof.
+// The gate here is is_user_logged_in() -- the SAME feature-wide gate
+// everything else in this feature uses, full stop. No second, narrower
+// check: any logged-in user may submit any real court's score (2026-09
+// access-model change, see spp_kq_submit_court_score()'s own section
+// header in inc/spp-kq-live.php for why). court_name now comes from
+// $_POST -- unavoidable now that it is no longer derived from the
+// caller's own assignment -- but it is never trusted at face value:
+// spp_kq_submit_court_score() validates it against a real
+// spp_kq_scores row for this occurrence/round before writing anything.
 // =============================================================
 
 add_action( 'wp_ajax_spp_kq_submit_score', function() {
@@ -1205,14 +1202,15 @@ add_action( 'wp_ajax_spp_kq_submit_score', function() {
 
     $occurrence_id = isset( $_POST['occ'] ) ? absint( $_POST['occ'] ) : 0;
     $round         = isset( $_POST['round'] ) ? absint( $_POST['round'] ) : 0;
+    $court_name    = isset( $_POST['court_name'] ) ? sanitize_text_field( wp_unslash( $_POST['court_name'] ) ) : '';
     $red_score     = isset( $_POST['red_score'] ) ? intval( $_POST['red_score'] ) : -1;
     $black_score   = isset( $_POST['black_score'] ) ? intval( $_POST['black_score'] ) : -1;
 
-    if ( ! $occurrence_id || ! $round ) {
+    if ( ! $occurrence_id || ! $round || $court_name === '' ) {
         wp_send_json_error( 'Missing parameters.' );
     }
 
-    $result = spp_kq_submit_court_score( $occurrence_id, $round, $red_score, $black_score, get_current_user_id() );
+    $result = spp_kq_submit_court_score( $occurrence_id, $round, $court_name, $red_score, $black_score, get_current_user_id() );
     if ( ! $result['success'] ) {
         wp_send_json_error( $result['error'] );
     }
