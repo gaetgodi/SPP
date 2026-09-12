@@ -1022,12 +1022,17 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date ) : 
             if ( ! spp_kq_has_any_recorded_score( $occurrence_id ) ) {
                 return 'End Event isn\'t available yet -- no scores have been recorded for this event.';
             }
-            spp_kq_transition_end_event( $occurrence_id, $round );
-            return '';
+            $r = spp_kq_transition_end_event( $occurrence_id, $round );
+            // Stage 4: automatic Club Rating publish on a successful
+            // transition only -- spp_kq_maybe_publish_to_club_ratings()
+            // (inc/spp-kq-club-rating.php) owns the pre-launch date guard
+            // and the source ('ace'/'queen') resolution; this dispatcher
+            // has no rating-engine knowledge of its own.
+            return $r['won'] ? spp_kq_maybe_publish_to_club_ratings( $occurrence_id, $event_date ) : '';
 
         case 'cancel_event':
-            spp_kq_transition_cancel_event( $occurrence_id, $round );
-            return '';
+            $r = spp_kq_transition_cancel_event( $occurrence_id, $round );
+            return $r['won'] ? spp_kq_maybe_publish_to_club_ratings( $occurrence_id, $event_date ) : '';
 
         case 'reset_event':
             // Available to any facilitator (spp_kq_can_facilitate(), the
