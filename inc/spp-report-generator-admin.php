@@ -1325,22 +1325,75 @@ function spp_render_report_generator_page() {
                     <th style="width:100px;">Order</th>
                 </tr>
             </thead>
-            <tbody>
-                <?php foreach ( $full_columns as $col ) :
+            <tbody id="spp_rg_columns_tbody">
+                <?php foreach ( $full_columns as $i => $col ) :
                     $key = $col['key'];
                     ?>
-                    <tr>
+                    <tr data-key="<?php echo esc_attr( $key ); ?>" data-orig-index="<?php echo (int) $i; ?>">
                         <td>
                             <input type="checkbox" name="col_include[<?php echo esc_attr( $key ); ?>]" value="1" <?php checked( ! empty( $include[ $key ] ) ); ?>>
                         </td>
                         <td><?php echo esc_html( $col['label'] ?? $key ); ?></td>
                         <td>
-                            <input type="number" name="col_order[<?php echo esc_attr( $key ); ?>]" value="<?php echo esc_attr( $order[ $key ] ?? 1 ); ?>" style="width:70px;">
+                            <input type="number" name="col_order[<?php echo esc_attr( $key ); ?>]" value="<?php echo esc_attr( $order[ $key ] ?? 1 ); ?>" class="spp-rg-order-input" style="width:70px;">
                         </td>
                     </tr>
                 <?php endforeach; ?>
             </tbody>
         </table>
+
+        <?php
+        // Live row re-sort: the table above is otherwise rendered in fixed
+        // $full_columns order regardless of what's typed into the Order
+        // fields -- a column can carry Order=1 and still sit visually below
+        // one carrying Order=6, so knowing the real resulting order meant
+        // mentally sorting the numbers yourself. This re-sorts the rows the
+        // instant any Order field changes, using the exact same comparator
+        // spp_report_generator_build_selected_keys() uses server-side (order
+        // value, then original/default column position as the tiebreak) --
+        // so the table always visually shows, live, the order that will
+        // actually be produced. data-orig-index is stamped once above, from
+        // $full_columns' fixed definition order, and never recomputed here
+        // from the DOM -- it must stay anchored to the true original order
+        // (matching what the PHP side always re-derives from $full_columns
+        // itself, never from a previous sort's result), or repeated edits in
+        // one sitting would drift from what the server actually computes.
+        // Sorts every row, checked or not -- Show and Order are independent
+        // questions, and pinning unchecked rows would make this table answer
+        // a different question ("order among only the ones I've checked so
+        // far") than the one it's meant to answer ("where does this number
+        // currently place this column").
+        ?>
+        <script>
+        (function() {
+            'use strict';
+            var tbody = document.getElementById( 'spp_rg_columns_tbody' );
+            if ( ! tbody ) return;
+
+            function currentOrder( row ) {
+                var input = row.querySelector( '.spp-rg-order-input' );
+                var n = input ? parseInt( input.value, 10 ) : 0;
+                return isNaN( n ) ? 0 : n; // mirrors the (int) cast PHP applies to a blank/non-numeric posted value
+            }
+
+            function resort() {
+                var rows = Array.prototype.slice.call( tbody.querySelectorAll( 'tr[data-key]' ) );
+                rows.sort( function( a, b ) {
+                    var cmp = currentOrder( a ) - currentOrder( b );
+                    if ( cmp !== 0 ) return cmp;
+                    return ( +a.dataset.origIndex ) - ( +b.dataset.origIndex ); // same tiebreak as spp_report_generator_build_selected_keys()
+                } );
+                // appendChild on an already-attached node MOVES it rather than
+                // cloning/recreating it -- the row (and any input mid-edit
+                // inside it) keeps its value, focus, and cursor position.
+                rows.forEach( function( row ) { tbody.appendChild( row ); } );
+            }
+
+            tbody.addEventListener( 'input', function( e ) {
+                if ( e.target.classList.contains( 'spp-rg-order-input' ) ) resort();
+            } );
+        })();
+        </script>
 
         <p>
             <label>
