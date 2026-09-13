@@ -1,8 +1,23 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Screens
-   Version: 1.3.0
+   Version: 1.4.0
    Date: 2026-09-13
+
+   Changes from 1.3.0:
+   - UX FIX (Full Reset investigated, confirmed working correctly at the
+     DB level via marker-value testing -- see that investigation): a
+     successful Full Reset rendered byte-identical to a silent failure,
+     since this dispatcher's own convention was '' on success, plain
+     text only on error, and Full Reset itself has nothing to visibly
+     clear when the occurrence never progressed past 'not_started'.
+     Added SPP_KQ_NOTICE_OK_PREFIX, a minimal opt-in marker a case can
+     prefix its return with to have spp_kq_render_occurrence_header()
+     style it kq-notice-ok (this file's own existing success-color CSS,
+     already used by the in-play score-submission JS) instead of the
+     default kq-notice-err -- 'full_reset' is the only case using it so
+     far. No other case's returned text changes, so no other action's
+     rendering changes at all.
 
    Changes from 1.2.0:
    - Replaced the Start screen's "fix your roster" link -- previously
@@ -83,6 +98,16 @@
    ========================================================= */
 
 defined( 'ABSPATH' ) || exit;
+
+/**
+ * Opt-in marker prefix a spp_kq_handle_post_actions() case can put on its
+ * returned string to have spp_kq_render_occurrence_header() style it as a
+ * success notice (kq-notice-ok) instead of the dispatcher's longstanding
+ * default (kq-notice-err, historically used for every notice since this
+ * dispatcher's only convention was "'' on success, plain text on
+ * failure"). See that function's own comment for the full reasoning.
+ */
+const SPP_KQ_NOTICE_OK_PREFIX = "\u{2713} "; // "✓ "
 
 // =============================================================
 // Small read helpers specific to rendering (mechanics live in
@@ -518,13 +543,29 @@ function spp_kq_render_event_picker() : string {
 function spp_kq_render_occurrence_header( array $occurrence, string $notice = '' ) : string {
     $date_str = date_i18n( 'l, F j', strtotime( $occurrence['event_date'] ) );
     $time_str = $occurrence['eff_event_time'] ? date_i18n( 'g:ia', strtotime( $occurrence['eff_event_time'] ) ) : '';
+
+    // Every other notice returned by spp_kq_handle_post_actions() today is
+    // an error string (this dispatcher's longstanding convention: '' on
+    // success, plain text on failure) -- rendered kq-notice-err
+    // unconditionally, unchanged. SPP_KQ_NOTICE_OK_PREFIX is the one
+    // opt-in exception: a case that wants to confirm a real success (so
+    // far, only 'full_reset' -- see that case's own comment) prefixes its
+    // returned string with this exact marker; stripped here before
+    // display, rendered kq-notice-ok instead (already-defined CSS, same
+    // class this file's own AJAX score-submission JS already uses for
+    // success feedback -- reused for consistency, not invented fresh).
+    // No other existing notice text starts with this marker, so every
+    // other action's rendering is unchanged, byte for byte.
+    $is_success = str_starts_with( $notice, SPP_KQ_NOTICE_OK_PREFIX );
+    $display_notice = $is_success ? substr( $notice, strlen( SPP_KQ_NOTICE_OK_PREFIX ) ) : $notice;
+
     ob_start();
     ?>
     <p class="kq-back"><a href="<?php echo esc_url( remove_query_arg( 'occ' ) ); ?>">&larr; All events</a></p>
     <h2 class="kq-heading"><?php echo esc_html( $occurrence['eff_title'] ); ?></h2>
     <p class="kq-subheading"><?php echo esc_html( $date_str ) . ( $time_str ? ' &middot; ' . esc_html( $time_str ) : '' ); ?></p>
     <?php if ( $notice ) : ?>
-        <div class="kq-notice kq-notice-err"><?php echo esc_html( $notice ); ?></div>
+        <div class="kq-notice <?php echo $is_success ? 'kq-notice-ok' : 'kq-notice-err'; ?>"><?php echo esc_html( $display_notice ); ?></div>
     <?php endif; ?>
     <?php
     return ob_get_clean();
@@ -1129,7 +1170,18 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date ) : 
                 return 'You do not have permission to do that.';
             }
             spp_kq_full_reset( $occurrence_id );
-            return '';
+            // UX fix: a fully successful Full Reset on an occurrence with
+            // nothing visible in assignments/scores to clear (e.g. still
+            // 'not_started') previously rendered byte-identical to a
+            // silent failure -- this dispatcher's own convention is '' on
+            // success, plain text only on error, so nothing ever told the
+            // facilitator it actually worked. SPP_KQ_NOTICE_OK_PREFIX
+            // (see this file's own definition, and
+            // spp_kq_render_occurrence_header()) opts this one message
+            // into the success (kq-notice-ok) style instead of the
+            // default error one -- confirmed via marker-value testing
+            // that the deletes themselves were never the problem.
+            return SPP_KQ_NOTICE_OK_PREFIX . 'Event fully reset.';
 
         case 'roster_add':
         case 'roster_remove':
