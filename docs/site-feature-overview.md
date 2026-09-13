@@ -37,13 +37,14 @@ A player photo-sharing system tied to the club's events.
 
 ## 3. Reporting System
 
-A flexible, reusable reporting engine used throughout the ladder and membership tools.
+A flexible, reusable reporting engine used throughout the ladder, membership, and Ace/Queen tools.
 
-- **Built-in reports** — ladder ratings, full membership list, master player list, and a results/rankings report with an inline-editable ranking override column (restricted to admins/editors).
+- **Built-in reports** — ladder ratings, full membership list, master player list, a results/rankings report with an inline-editable ranking override column (restricted to admins/editors), and a full Ace/Queen of the Courts game history log (open to all members).
 - **Saved report variants** — any report's exact configuration (which columns show, sort behavior, rows-per-page) can be saved as a named, reusable "variant" and reloaded later — the same report can be presented multiple different ways for different audiences without rebuilding it each time.
 - **Live visual style customization** — a Report Generator admin screen lets an admin visually restyle any report's table (colors, borders, corner radius, margins, font size, cell padding, background) with a live preview, save the resulting custom CSS as part of a variant, and reset any property back to its default individually.
 - **Inline cell editing** — specific report columns (like the ranking override) can be edited directly in the table by authorized users, with changes saved immediately and securely.
 - **Access-controlled by design** — every report requires login, and reports carrying sensitive internal data enforce an admin/editor-only view regardless of how the report is embedded.
+- **Always-visible structure** — every report shows its full column layout even when there's no data yet to display, rather than an unhelpfully blank page.
 
 ## 4. Blog
 
@@ -70,12 +71,16 @@ The system players use to record their own game results.
 
 A purpose-built live, in-person tournament runner for the club's "Ace of the Courts" and "Queen of the Courts" event formats — a self-contained round-by-round court ladder that plays out over a single event.
 
+- **Roster adjustment before play starts** — any facilitator can add or remove registrants directly from the event's roster to fix the headcount before the draw begins (players must total a multiple of 4, between 4 and 16) — no admin dependency required, matching the anyone-can-facilitate spirit of these events.
 - **Court draw** — at the start of the event, players tap to claim their own starting court/team slot on their phone, first-come-first-served, with real-time updates as slots fill.
 - **Round-by-round movement** — after each round, winning pairs move up a court and losing pairs move down (top and bottom courts have nowhere further to go), following the "Ace/Queen of the Courts" format exactly.
 - **Smart partner rotation** — when four players land on the same court together, the system prefers whichever pairing of partners hasn't played together yet that day, avoiding repeat partnerships unless unavoidable.
 - **Live score entry per court** — during play, each court's players enter their own score on their phone; a live status line shows the facilitator how many courts have reported in, refreshing automatically without needing to reload.
-- **Facilitator controls** — any logged-in member can help run the event (start the draw, start play, end or cancel the event) — no special role or registration is required, matching the informal, anyone-can-help nature of these events.
-- **Full event lifecycle** — from "not started" through the draw, live play, round-by-round advancement, and a final "Complete" screen naming the event's ultimate Aces-court winner — plus a graceful cancellation path mid-event that records which courts' results were kept versus discarded.
+- **Full live scoreboard, mid-event** — at any point during a live event, anyone can view a complete round-by-round scoreboard showing every court, every pairing, and every score recorded so far — not just the current round — so players can see exactly how earlier results led to their current court placement.
+- **Facilitator controls** — any logged-in member can help run the event (start the draw, start play, end or cancel the event) — no special role or registration is required, matching the informal, anyone-can-help nature of these events. A clear on-screen confirmation now appears whenever an admin fully resets an event's data.
+- **Full event lifecycle** — from "not started" through the draw, live play, round-by-round advancement, and a final "Complete" screen naming the event's ultimate Aces-court winner — plus a graceful cancellation path mid-event that records which courts' results were kept versus discarded, with any rounds actually played before a cancellation preserved the same as a normally completed event.
+- **Permanent event history** — every completed or cancelled event's full round-by-round results are permanently archived, independent of the live event data (which resets between events). Any member can browse this history two ways: a full searchable/sortable log of every game ever played, or a look-up view that shows one specific past event's complete scoreboard — round by round, court by court, exactly as it appeared live.
+- **Automatic post-event recap email** — once an event ends or is cancelled, every player who took part automatically receives a personal recap of their rounds, courts, partners, opponents, and scores — the same kind of after-the-fact summary ladder players already get, adapted for Ace/Queen's round-robin format.
 - **Feeds the same Club Rating system as the ladder** — every completed or cancelled event's game scores automatically feed into the club's Glicko-based Club Rating system (Section 1), combining seamlessly with a player's existing rating regardless of which event(s) — ladder, Ace, or Queen — they play. One shared rating per player, no matter where they earned it.
 
 ## 7. Other Member-Facing Features
