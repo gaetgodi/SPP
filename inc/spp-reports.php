@@ -1,8 +1,69 @@
 <?php
 /* =========================================================
    Report Registry
-   Version: 1.6.0
+   Version: 1.8.0
    Date: 2026-09-13
+
+   Changes from 1.7.0:
+   - SECURITY FIX -- PII exposure: preferred_new and preferred_permanent
+     now require spp_is_admin_or_editor(), same gating pattern as
+     spp_report_results()/spp_report_membership_tags(), instead of relying
+     on the shortcode's blanket is_user_logged_in() floor. Per Gaetan's
+     review of the access-gating audit (read-only pass, no code changed
+     at the time): both reports' user_phone column is real member PII,
+     and both live pages were reachable by any logged-in member -- the
+     Editor-dropdown nav link hiding them from the menu was never real
+     access control, a pattern this codebase had already caught once
+     before (the MembershipTags refresh wrapper's own history). No other
+     report changed: membership and master_list were confirmed in that
+     same audit as intentional logged-in-only member directories and are
+     left exactly as they were; courts/times/ladder_ratings/results/
+     membership_tags were all confirmed already correct.
+
+   Changes from 1.6.0 (Phase 2 of the WPDA-to-spp-reports migration --
+   see the Phase 1 inventory/cross-reference that preceded this):
+   - Added 5 new registry entries, each replacing a still-live WPDA
+     "App Builder" app: courts (app_id=12, table Courts),
+     times (app_id=30, table Times), preferred_new (app_id=29, table
+     preferred_new), preferred_permanent (app_id=31, table
+     preferred_permanent), membership_tags (app_id=3, table
+     MembershipTags). See each function's own docblock for exactly what
+     was/wasn't reproduced from its WPDA config -- in short: Courts and
+     MembershipTags keep the same inline-editable columns WPDA actually
+     exposed (Crt_name/active, and Balls/Tag respectively); Times/
+     preferred_new/preferred_permanent are read-only reports, which is
+     an exact behavioral match for those three (none of them had any
+     inlineEditing:true column in WPDA despite table-level insert/
+     update/delete transaction flags). None of the 5 reproduce WPDA's
+     row-level add/delete -- this shared registry
+     (spp_render_report_table() + spp-report-edit.php) only ever UPDATEs
+     an existing row's editable columns; there is no insert/delete
+     mechanism here at all, for any report. Courts and Preferred
+     Permanent are the two WPDA apps that actually had insert/delete
+     enabled, so those two are where this gap has real (if likely
+     infrequent) practical impact -- flagged per-function above.
+   - membership_tags is the one report of the 5 with a stricter-than-
+     logged-in view gate (spp_is_admin_or_editor(), same pattern as
+     spp_report_results()) -- WPDA's own app_settings for app_id=3
+     restrict its REST API to administrator/editor, a protection level
+     this shortcode's blanket is_user_logged_in() floor alone wouldn't
+     preserve. See that function's own docblock for the full reasoning,
+     including why inc/spp-membership-tags-refresh-ui.php's separate
+     refresh-then-display wrapper was deliberately left pointed at the
+     old WPDA app rather than repointed at this new report.
+   - Live pages repointed from [wpda_app app_id="X"] to
+     [spp_report table="..."] for all 5: 20006436 (Courts),
+     20007885 (Times), 20007853 (Preferred New), 20007891 (Preferred
+     Permanent), 20005729 (MembershipTags). The old WPDA apps themselves
+     were left active/unmodified per this migration's own instructions
+     -- Gaetan retires them and deactivates WPDA once all 5 are
+     verified.
+   - Corrected master_list's docblock (below): it previously named
+     app_id=18 as the WPDA app it replaces; that app_id is a dead,
+     unembedded app that happens to share the same table/near-identical
+     name as app_id=24, the app actually still live (page 1517) in
+     parallel with master_list's own page. See that function's updated
+     docblock for the full correction.
 
    Changes from 1.5.0:
    - BUG FIX: ladder_ratings' recently-added 'default_sort' => 'ClubRating'
@@ -187,10 +248,15 @@ defined( 'ABSPATH' ) || exit;
  *   ['columns' => <see spp_render_report_table()>, 'rows' => <see spp_render_report_table()>]
  */
 $GLOBALS['spp_report_registry'] = array(
-    'ladder_ratings' => 'spp_report_ladder_ratings',
-    'membership'     => 'spp_report_membership',
-    'master_list'     => 'spp_report_master',
-    'results'     => 'spp_report_results',
+    'ladder_ratings'       => 'spp_report_ladder_ratings',
+    'membership'           => 'spp_report_membership',
+    'master_list'          => 'spp_report_master',
+    'results'              => 'spp_report_results',
+    'courts'               => 'spp_report_courts',
+    'times'                => 'spp_report_times',
+    'preferred_new'        => 'spp_report_preferred_new',
+    'preferred_permanent'  => 'spp_report_preferred_permanent',
+    'membership_tags'      => 'spp_report_membership_tags',
 );
 
 /**
@@ -347,14 +413,23 @@ function spp_report_membership() {
 }
 /**
  * Masterlist report: all tracked columns for every member of the ladder, unfiltered
- * -- replaces the WPDA "Club Membership list" app (app_id=18, see that
- * investigation). Same 11 columns/order/labels that app renders today,
+ * -- replaces the WPDA "Ladder - Master List" app (app_id=24, title
+ * "masterList", table Master, page 1517 -- the app actually still live
+ * and embedded there today via [wpda_app app_id="24"], run in parallel
+ * with this report's own page). CORRECTED (Phase 2 audit, 2026-09-13):
+ * this docblock previously named app_id=18 as the app being replaced --
+ * that app_id is in fact a dead, unembedded app that happens to share
+ * the same "Master" app_name/table as app 24 (title "List of Ladder
+ * Players" vs. 24's "Ladder - Master List"), which is what caused the
+ * mix-up. app_id=18 is harmless context (the original/retired app_id
+ * for this table) but was never the one actually serving traffic here.
+ * Same 11 columns/order/labels that app renders today,
  * plus ClubRating and DUPR (selected in that app's own column picker
  * but never actually wired into its rendered column list). Every
  * column here is sortable, unlike the WPDA app (last_name only) --
  * intentional improvement, not an oversight.
  *
- * ORDER BY last_name, first_name here 
+ * ORDER BY last_name, first_name here
  */
 function spp_report_master() {
     global $wpdb;
@@ -390,6 +465,315 @@ function spp_report_master() {
         'columns'      => $columns,
         'rows'         => $rows,
         'default_sort' => 'Rank',
+    );
+}
+
+/**
+ * Courts report: replaces the WPDA "Courts" app (app_id=12, table
+ * Courts, page 20006436 "Edit Courts" -- linked in the Editor > Schedules
+ * nav). 8 rows.
+ *
+ * PARITY NOTE: WPDA's own config for this app has
+ * transactions.insert/delete = true (an admin could add/remove a court
+ * row directly in that UI), in addition to update. This shared registry
+ * (spp_render_report_table() + spp-report-edit.php's
+ * spp_ajax_save_report_cell()) only ever UPDATEs an existing row's
+ * editable columns -- there is no add-row/delete-row mechanism here at
+ * all. So this report reproduces Courts' two inline-editable columns
+ * (Crt_name, active) exactly, but does NOT reproduce add/remove-a-court
+ * -- that still requires the old WPDA page (left live, per this
+ * migration's own instructions) or a direct DB change until row-level
+ * insert/delete is added to the shared renderer.
+ *
+ * Sortability mirrors WPDA's own orderable flags exactly: only `active`
+ * was orderable there (Crt_ID/Crt_name were not) -- not an oversight,
+ * matching what today's app actually allows.
+ */
+function spp_report_courts() {
+    global $wpdb;
+
+    $rows = $wpdb->get_results(
+        "SELECT Crt_ID, Crt_name, active FROM Courts ORDER BY Crt_ID ASC",
+        ARRAY_A
+    );
+
+    $columns = array(
+        array( 'key' => 'Crt_ID',   'label' => 'Crt ID',  'sortable' => false ),
+        array(
+            'key'           => 'Crt_name',
+            'label'         => 'Crt Name',
+            'sortable'      => false,
+            'editable'      => true,
+            'edit_type'     => 'text',
+            'edit_nullable' => true,
+        ),
+        array(
+            'key'           => 'active',
+            'label'         => 'Active',
+            'sortable'      => true,
+            'editable'      => true,
+            'edit_type'     => 'integer',
+            'edit_nullable' => false,
+        ),
+    );
+
+    return array(
+        'columns'      => $columns,
+        'rows'         => $rows,
+        'default_sort' => 'Crt_ID',
+        'edit'         => array(
+            'table'      => 'Courts',
+            'key_column' => 'Crt_ID',
+        ),
+    );
+}
+
+/**
+ * Times report: replaces the WPDA "Times" app (app_id=30, table Times,
+ * page 20007885 "Edit Times" -- linked in the Editor > Schedules nav).
+ * 3 rows.
+ *
+ * PARITY NOTE: WPDA's transactions.insert/update/delete are all true
+ * for this app, but every one of its columns has inlineEditing:false --
+ * meaning no per-cell inline edit was actually exposed to users despite
+ * the table-level flags. This report is therefore genuinely read-only
+ * (no 'edit' key), an exact behavioral match, not a reduction -- only
+ * add/remove-a-time-slot (a row-level, not cell-level, WPDA capability)
+ * is not reproduced, same shared-renderer limitation as Courts above.
+ */
+function spp_report_times() {
+    global $wpdb;
+
+    $rows = $wpdb->get_results(
+        "SELECT T_ID, T_desc, Active FROM Times ORDER BY T_ID ASC",
+        ARRAY_A
+    );
+
+    $columns = array(
+        array( 'key' => 'T_ID',   'label' => 'T ID',   'sortable' => true ),
+        array( 'key' => 'T_desc', 'label' => 'T Desc', 'sortable' => true ),
+        array( 'key' => 'Active', 'label' => 'Active', 'sortable' => true ),
+    );
+
+    return array(
+        'columns'      => $columns,
+        'rows'         => $rows,
+        'default_sort' => 'T_ID',
+    );
+}
+
+/**
+ * Preferred (travel-time) registrations report: replaces the WPDA
+ * "Preferred New" app (app_id=29, table preferred_new, page 20007853
+ * "Preferred" -- linked in the Editor > Schedules nav). 7 rows.
+ *
+ * PARITY NOTE: WPDA's transactions are all false for this app (pure
+ * read-only view there too) and every column has inlineEditing:false --
+ * this report is read-only (no 'edit' key), an exact match.
+ * defaultWhere excludes a fixed list of user_ids (site accounts /
+ * one-off exclusions, not ladder members) -- reproduced verbatim below
+ * rather than reinterpreted, since the original intent behind each
+ * excluded id isn't recorded anywhere else. WPDA itself had no default
+ * sort column (empty defaultOrderBy); 'Rank' is used here as the
+ * default, the same fallback this registry already applies everywhere
+ * else a report doesn't have an obvious sort of its own (see
+ * spp_report_resolve_default_sort()).
+ *
+ * ACCESS CONTROL (added per the access-gating audit, see this file's
+ * version history): gated to spp_is_admin_or_editor(), same pattern as
+ * spp_report_results()/spp_report_membership_tags() -- this report's
+ * user_phone/travel columns are real member PII, and its live page was
+ * reachable by any logged-in member with only a hidden Editor-nav-dropdown
+ * link standing in the way, a protection this codebase has already
+ * documented elsewhere (the MembershipTags refresh wrapper) as not
+ * actually restricting access.
+ */
+function spp_report_preferred_new() {
+    global $wpdb;
+
+    if ( ! function_exists( 'spp_is_admin_or_editor' ) || ! spp_is_admin_or_editor() ) {
+        return array(
+            'columns' => array(
+                array( 'key' => 'notice', 'label' => 'Notice', 'sortable' => false ),
+            ),
+            'rows' => array(
+                array( 'notice' => 'You do not have permission to view this report.' ),
+            ),
+        );
+    }
+
+    $rows = $wpdb->get_results(
+        "SELECT user_id, Rank, first_name, last_name, user_phone, travel
+         FROM preferred_new
+         WHERE user_id NOT IN (1,2193,2101,2144,2106,2289,2880)",
+        ARRAY_A
+    );
+
+    $columns = array(
+        array( 'key' => 'user_id',    'label' => 'User Id',    'sortable' => true ),
+        array( 'key' => 'Rank',       'label' => 'Rank',       'sortable' => true ),
+        array( 'key' => 'first_name', 'label' => 'First Name', 'sortable' => true ),
+        array( 'key' => 'last_name',  'label' => 'Last Name',  'sortable' => true ),
+        array( 'key' => 'user_phone', 'label' => 'User Phone', 'sortable' => true ),
+        array( 'key' => 'travel',     'label' => 'Travel',     'sortable' => true ),
+    );
+
+    return array(
+        'columns'      => $columns,
+        'rows'         => $rows,
+        'default_sort' => 'Rank',
+    );
+}
+
+/**
+ * Preferred Permanent (standing travel-time preference) registrations
+ * report: replaces the WPDA "Preferred Permanent" app (app_id=31, table
+ * preferred_permanent, page 20007891 -- linked in the Editor >
+ * Schedules nav). 7 rows.
+ *
+ * PARITY NOTE: unlike preferred_new, WPDA's transactions.insert/update/
+ * delete are all true here -- but, same as Times above, every column
+ * still has inlineEditing:false, so no per-cell inline edit was actually
+ * exposed. This report is read-only (no 'edit' key), a faithful match
+ * of what was editable in place (nothing); only add/remove-a-standing-
+ * preference (a row-level WPDA capability) is not reproduced, same
+ * shared-renderer limitation noted on Courts/Times above. No defaultWhere
+ * filter existed for this app (unlike preferred_new); none applied here
+ * either. WPDA had no default sort column here either -- 'Rank' used as
+ * the same fallback default as preferred_new.
+ *
+ * ACCESS CONTROL (added per the access-gating audit, see this file's
+ * version history): gated to spp_is_admin_or_editor(), same pattern as
+ * spp_report_results()/spp_report_membership_tags() -- same reasoning as
+ * preferred_new above, and the higher-urgency of the two: this table
+ * has 7 live rows with real phone numbers today, not an empty result.
+ */
+function spp_report_preferred_permanent() {
+    global $wpdb;
+
+    if ( ! function_exists( 'spp_is_admin_or_editor' ) || ! spp_is_admin_or_editor() ) {
+        return array(
+            'columns' => array(
+                array( 'key' => 'notice', 'label' => 'Notice', 'sortable' => false ),
+            ),
+            'rows' => array(
+                array( 'notice' => 'You do not have permission to view this report.' ),
+            ),
+        );
+    }
+
+    $rows = $wpdb->get_results(
+        "SELECT user_id, Rank, first_name, last_name, user_phone, travel
+         FROM preferred_permanent",
+        ARRAY_A
+    );
+
+    $columns = array(
+        array( 'key' => 'user_id',    'label' => 'User Id',    'sortable' => true ),
+        array( 'key' => 'Rank',       'label' => 'Rank',       'sortable' => true ),
+        array( 'key' => 'first_name', 'label' => 'First Name', 'sortable' => true ),
+        array( 'key' => 'last_name',  'label' => 'Last Name',  'sortable' => true ),
+        array( 'key' => 'user_phone', 'label' => 'User Phone', 'sortable' => true ),
+        array( 'key' => 'travel',     'label' => 'Travel',     'sortable' => true ),
+    );
+
+    return array(
+        'columns'      => $columns,
+        'rows'         => $rows,
+        'default_sort' => 'Rank',
+    );
+}
+
+/**
+ * Membership Tags report: replaces the WPDA "MembershipTags" app
+ * (app_id=3, table MembershipTags, page 20005729 "Record membership tag
+ * numbers"). 452 rows. Renders the same 5-column subset that app's own
+ * config selects (user_id, Balls, Tag, first_name, last_name) out of
+ * MembershipTags' much wider schema -- not the full table, matching
+ * what was actually curated/visible there.
+ *
+ * ACCESS CONTROL -- deliberately NOT covered by just the [spp_report]
+ * shortcode's blanket is_user_logged_in() floor: WPDA's own app_settings
+ * for app_id=3 restricts its REST API to
+ * authorized_roles: [administrator, editor] only -- i.e. today, any
+ * member who loaded page 20005729 would see the app's empty shell but
+ * could not actually pull row data through it without that role. This
+ * report's own theme-level template_redirect gate
+ * ($migrated_admin_tool_shortcodes in functions.php) does NOT cover
+ * [spp_report] either (that list gates specific one-off legacy shortcode
+ * tags, and spp_report is one shared tag serving many reports of very
+ * different sensitivity -- adding it there would wrongly gate
+ * ladder_ratings/membership too). So, same as spp_report_results()
+ * before it, this report gates its own output on spp_is_admin_or_editor()
+ * to preserve the exact protection level WPDA's REST API already
+ * enforced, rather than silently loosening view access to every logged-
+ * in member the moment this page's shortcode is swapped.
+ * Editing (Balls/Tag) was already separately gated to
+ * spp_is_admin_or_editor() regardless, by spp_render_report_table()'s
+ * own $can_edit check -- this only changes VIEW access, to match.
+ *
+ * NOT touched by this change: inc/spp-membership-tags-refresh-ui.php's
+ * own spp_membership_tags_refresh_ui() shortcode (used via
+ * [cmruncode name='Membership tags table refresh']) still rebuilds
+ * MembershipTags from usermeta and then displays the result via
+ * do_shortcode('[wpda_app app_id="3"]') -- a distinct
+ * refresh-then-immediately-show workflow, not just a display. Left
+ * pointed at the old WPDA app deliberately: repointing it at this new
+ * report is a separate decision outside this migration's five targets,
+ * and this migration is explicitly leaving the old app itself live and
+ * usable in the meantime.
+ */
+function spp_report_membership_tags() {
+    global $wpdb;
+
+    if ( ! function_exists( 'spp_is_admin_or_editor' ) || ! spp_is_admin_or_editor() ) {
+        return array(
+            'columns' => array(
+                array( 'key' => 'notice', 'label' => 'Notice', 'sortable' => false ),
+            ),
+            'rows' => array(
+                array( 'notice' => 'You do not have permission to view this report.' ),
+            ),
+        );
+    }
+
+    $rows = $wpdb->get_results(
+        "SELECT user_id, Balls, Tag, first_name, last_name
+         FROM MembershipTags
+         ORDER BY last_name ASC, first_name ASC",
+        ARRAY_A
+    );
+
+    $columns = array(
+        array( 'key' => 'user_id',    'label' => 'User Id',    'sortable' => false ),
+        array(
+            'key'           => 'Balls',
+            'label'         => 'Balls',
+            'sortable'      => true,
+            'editable'      => true,
+            'edit_type'     => 'integer',
+            'edit_nullable' => true,
+        ),
+        array(
+            'key'           => 'Tag',
+            'label'         => 'Tag',
+            'sortable'      => true,
+            'editable'      => true,
+            'edit_type'     => 'integer',
+            'edit_nullable' => true,
+        ),
+        array( 'key' => 'first_name', 'label' => 'First Name', 'sortable' => false ),
+        array( 'key' => 'last_name',  'label' => 'Last Name',  'sortable' => true ),
+    );
+
+    return array(
+        'columns'      => $columns,
+        'rows'         => $rows,
+        'default_sort' => array( 'column' => 'last_name', 'direction' => 'ASC' ),
+        'edit'         => array(
+            'table'      => 'MembershipTags',
+            'key_column' => 'user_id',
+        ),
     );
 }
 
