@@ -1,8 +1,26 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Screens
-   Version: 1.5.0
+   Version: 1.6.0
    Date: 2026-09-13
+
+   Changes from 1.5.0:
+   - CSS FIX (spp_kq_styles()): scoreboard cards (.kq-court-grid/
+     .kq-court-card, shared by the live Full Scoreboard screen and
+     [spp_kq_event_detail]) stayed narrow at desktop widths, wrapping a
+     "Red: <names> — <score>" line onto two lines. Root cause: .kq-wrap's
+     max-width was a flat 560px with no responsive variance at all -- the
+     only thing bounding the grid's available width on any viewport,
+     phone through desktop alike, so a wide screen never gave the grid
+     any more room than a narrow one did. Added two min-width-only media
+     queries (600px, 900px) that widen .kq-wrap and raise
+     .kq-court-grid's own minmax() floor in step, so cards get wider (not
+     more numerous) as real screen width increases -- 2 columns per round
+     still fits at every tier, only each column's own width grows
+     (~274px base to ~444px at 900px+). min-width-only by construction:
+     nothing here can affect a viewport narrower than 600px, so the
+     already-correct phone rendering is untouched. CSS-only -- no
+     PHP/data logic changed.
 
    Changes from 1.4.0:
    - spp_kq_render_full_scoreboard_screen()'s round/court markup moved
@@ -425,6 +443,41 @@ function spp_kq_styles() : string {
         .kq-cancel-summary ul { margin:0; padding-left:18px; font-size:14px; }
         .kq-full-reset-row { margin-top:28px; padding-top:14px; border-top:1px dashed #ccc; text-align:right; }
         .kq-full-reset-row .kq-btn { font-size:13px; padding:6px 14px; opacity:.85; }
+        /* Responsive scoreboard card width -- min-width media queries only
+           (never max-width), so nothing here can ever affect a viewport
+           narrower than 600px: the existing, already-correct phone
+           rendering (a bare .kq-wrap max-width:560px above, unconditional
+           until now) is untouched below that point.
+           ROOT CAUSE this fixes: the .kq-wrap max-width was a flat 560px
+           with no responsive variance at all -- the ONLY thing bounding
+           the kq-court-grid available width, on every viewport, phone
+           through desktop alike. A wide desktop screen never gave the
+           grid any more room than a phone did, so auto-fit column math
+           (and therefore each card actual rendered width) was capped
+           just as low on a 1920px screen as on a 400px one -- narrow
+           enough that a line like "Red: (names) dash (score)" wrapped
+           onto a second line. Cards were never actually a single column
+           at desktop width in the auto-fit sense; the whole .kq-wrap
+           widget itself just never grew past 560px, so however many
+           columns the grid picked, each one stayed just as cramped as
+           on a phone.
+           FIX: let .kq-wrap grow at wider viewports, and raise the
+           kq-court-grid own minmax() floor to match, so each column
+           gets meaningfully wider -- not more numerous -- as more real
+           screen width becomes available. 2 courts per round (the common
+           case) still fits exactly 2 columns at every tier below
+           (2 times new-minimum plus gap stays under the new .kq-wrap
+           max-width at each step), so the existing 2-column-per-round
+           grouping is unchanged; only the width available to each
+           column grows. */
+        @media (min-width:600px) {
+            .kq-wrap { max-width:760px; }
+            .kq-court-grid { grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); }
+        }
+        @media (min-width:900px) {
+            .kq-wrap { max-width:900px; }
+            .kq-court-grid { grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); }
+        }
     </style>';
 }
 

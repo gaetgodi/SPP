@@ -1,8 +1,21 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Permanent History, Live Scoreboard, Recap Email
-   Version: 1.3.0
+   Version: 1.4.0
    Date: 2026-09-13
+
+   Changes from 1.3.0:
+   - [spp_kq_event_detail]'s Date <select> now auto-submits on change
+     (onchange="this.form.submit()"), same as the Event select already
+     did; the "View" submit button is gone entirely. Selecting a
+     category alone still just reloads with kq_source set (refreshing
+     the date list); selecting a date now immediately reloads with both
+     set, rendering the scoreboard with no separate click. No server-
+     side validation logic changed -- this only affects how the form
+     gets submitted, not what happens once it is. The disabled
+     placeholder options ("Choose an event first", "No events found")
+     remain inert -- a disabled <option> cannot be selected, so neither
+     can trigger the onchange submit on its own.
 
    Changes from 1.2.0:
    - [spp_kq_event_detail]'s free-text <input type="date"> replaced with
@@ -330,18 +343,23 @@ function spp_kq_get_history_dates_for_source( string $source, string $year ) : a
  * lookup with no mutation, so GET (not a nonce-gated POST) is the right
  * tool here, same convention this theme already uses for read-only
  * navigation (e.g. spp-report-table.php's own sort/pagination links).
- * Both fields are <select> dropdowns, not free-text/date-picker inputs:
- * the date list (spp_kq_get_history_dates_for_source() above) only ever
- * contains dates that genuinely have spp_kq_history rows for the
- * selected category, so a "not found" result is unreachable through
- * normal dropdown use -- only a crafted request can still reach it (see
- * the server-side re-validation below, which never trusts the dropdown's
- * own list). The category select reloads the page on change
- * (onchange="this.form.submit()", same plain-GET-resubmit convention
- * this theme's own report table controls already use for their "Rows
- * per page" selector, inc/spp-report-table.php) so the date list
- * refreshes to match whichever category is now selected -- no new JS/
- * AJAX machinery for this.
+ * Both fields are <select> dropdowns, not free-text/date-picker inputs,
+ * and BOTH auto-submit on change (onchange="this.form.submit()", same
+ * plain-GET-resubmit convention this theme's own report table controls
+ * already use for their "Rows per page" selector, inc/spp-report-
+ * table.php) -- no separate submit button anywhere on this form.
+ * Selecting a category reloads with just kq_source set, refreshing the
+ * date list to match; selecting a date immediately reloads with both
+ * set, rendering the scoreboard. The date list itself
+ * (spp_kq_get_history_dates_for_source() above) only ever contains
+ * dates that genuinely have spp_kq_history rows for the selected
+ * category, so a "not found" result is unreachable through normal
+ * dropdown use -- only a crafted request can still reach it (see the
+ * server-side re-validation below, which never trusts the dropdown's
+ * own list). The disabled placeholder options ("Choose an event first",
+ * "No events found") are inert by construction -- a disabled <option>
+ * cannot be selected, so it can never itself trigger the onchange
+ * submit.
  *
  * DATE RANGE: constrained to the current year only (current_time('Y'),
  * WP's own timezone-aware "today" -- same helper
@@ -366,8 +384,9 @@ function spp_kq_event_detail_shortcode() : string {
     // Date dropdown's own contents -- only ever dates that genuinely
     // have spp_kq_history rows for the selected category, so a "not
     // found" result is unreachable via normal dropdown use (picking a
-    // category, then a date from the list it produced, then View).
-    // Category-select-triggers-reload is a plain GET resubmit
+    // category, then a date from the list it produced -- both selects
+    // auto-submit on change, no separate button). Category-select-
+    // triggers-reload is a plain GET resubmit
     // (onchange="this.form.submit()" below) -- same convention this
     // theme's own report table controls already use for their "Rows per
     // page" selector (inc/spp-report-table.php) -- not new JS/AJAX
@@ -415,7 +434,7 @@ function spp_kq_event_detail_shortcode() : string {
             </label>
             <label>
                 Date
-                <select name="kq_event_date" <?php disabled( ! $source_valid ); ?>>
+                <select name="kq_event_date" onchange="this.form.submit()" <?php disabled( ! $source_valid ); ?>>
                     <?php if ( ! $source_valid ) : ?>
                         <option value="">&mdash; Choose an event first &mdash;</option>
                     <?php elseif ( empty( $available_dates ) ) : ?>
@@ -430,7 +449,6 @@ function spp_kq_event_detail_shortcode() : string {
                     <?php endif; ?>
                 </select>
             </label>
-            <button type="submit" class="kq-btn kq-btn-primary">View</button>
         </form>
 
         <?php if ( $notice !== '' ) : ?>
