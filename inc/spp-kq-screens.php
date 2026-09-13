@@ -1,8 +1,39 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Screens
-   Version: 1.0.0
-   Date: 2026-09-11
+   Version: 1.2.0
+   Date: 2026-09-13
+
+   Changes from 1.1.0:
+   - BUG FIX: 'cancel_event' in spp_kq_handle_post_actions() below now
+     also calls spp_kq_finalize_event_history_and_recap()
+     (inc/spp-kq-history.php), same call pattern as 'end_event' --
+     immediately after spp_kq_maybe_publish_to_club_ratings(), only once
+     $r['won'] confirms the transition actually happened. 1.1.0
+     deliberately left this out of 'cancel_event', on the assumption a
+     cancelled event had nothing worth archiving -- wrong: any round
+     that had already reported before the cancellation is real data
+     (spp_kq_transition_cancel_event() only ever discards the CURRENT
+     round's unreported courts; earlier rounds are untouched), and
+     Club Rating publish already treated it that way. Both transitions
+     now trigger archiving/recap identically -- see
+     inc/spp-kq-history.php's own header, which no longer describes this
+     as an intentional asymmetry.
+
+   Changes from 1.0.0:
+   - Added the Full Scoreboard screen (spp_kq_render_full_scoreboard_screen(),
+     spp_kq_render_scoreboard_link()): a ?kq_view=scoreboard flag layered
+     on top of the phase switch below, not a new phase of its own --
+     purely additive/read-only, no schema change, no interaction with
+     spp_kq_events.phase/current_round or the movement algorithm at all.
+     Shows every completed round/court/player/score for the occurrence
+     so far, via spp_kq_get_full_scoreboard() (inc/spp-kq-history.php).
+   - 'end_event' in spp_kq_handle_post_actions() below now also calls
+     spp_kq_finalize_event_history_and_recap() (inc/spp-kq-history.php)
+     immediately after spp_kq_maybe_publish_to_club_ratings(), same
+     trigger point, only once $r['won'] confirms the transition actually
+     happened -- archives spp_kq_history and sends each participant a
+     recap email.
 
    PURPOSE:
    The [spp_kq_live] shortcode and its seven screens, plus the one
@@ -1023,16 +1054,40 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date ) : 
                 return 'End Event isn\'t available yet -- no scores have been recorded for this event.';
             }
             $r = spp_kq_transition_end_event( $occurrence_id, $round );
+            if ( ! $r['won'] ) {
+                return '';
+            }
             // Stage 4: automatic Club Rating publish on a successful
             // transition only -- spp_kq_maybe_publish_to_club_ratings()
             // (inc/spp-kq-club-rating.php) owns the pre-launch date guard
             // and the source ('ace'/'queen') resolution; this dispatcher
             // has no rating-engine knowledge of its own.
-            return $r['won'] ? spp_kq_maybe_publish_to_club_ratings( $occurrence_id, $event_date ) : '';
+            $rating_notice = spp_kq_maybe_publish_to_club_ratings( $occurrence_id, $event_date );
+            // Permanent history archive (spp_kq_history) + per-player
+            // recap email -- same trigger point as the rating publish
+            // above, same pre-launch guard (inc/spp-kq-history.php reuses
+            // SPP_KQ_CLUB_RATING_LAUNCH_DATE, doesn't duplicate it).
+            // 'cancel_event' below calls this exact same way -- any round
+            // that had already reported before a cancellation is still
+            // real data, worth archiving/recapping.
+            $history_notice = spp_kq_finalize_event_history_and_recap( $occurrence_id, $event_date );
+            return trim( $rating_notice . ( $history_notice !== '' ? ' ' . $history_notice : '' ) );
 
         case 'cancel_event':
             $r = spp_kq_transition_cancel_event( $occurrence_id, $round );
-            return $r['won'] ? spp_kq_maybe_publish_to_club_ratings( $occurrence_id, $event_date ) : '';
+            if ( ! $r['won'] ) {
+                return '';
+            }
+            // Same trigger point and same call pattern as 'end_event'
+            // above -- any round that had already reported before
+            // cancellation is still real data, worth archiving/recapping
+            // exactly as if the event had ended normally. See
+            // inc/spp-kq-history.php's own header: cancel_event and
+            // end_event both trigger this, differing only in which CAS
+            // transition got them here.
+            $rating_notice  = spp_kq_maybe_publish_to_club_ratings( $occurrence_id, $event_date );
+            $history_notice = spp_kq_finalize_event_history_and_recap( $occurrence_id, $event_date );
+            return trim( $rating_notice . ( $history_notice !== '' ? ' ' . $history_notice : '' ) );
 
         case 'reset_event':
             // Available to any facilitator (spp_kq_can_facilitate(), the
@@ -1094,42 +1149,118 @@ function spp_kq_live_shortcode() : string {
     $phase = $state['phase'];
     $round = (int) $state['current_round'];
 
+    // Full Scoreboard is its own ?kq_view=scoreboard flag, layered on top
+    // of the phase-driven switch below rather than a new phase of its
+    // own -- purely additive, read-only, no interaction with
+    // spp_kq_events.phase/current_round at all. See
+    // spp_kq_render_full_scoreboard_screen()/spp_kq_render_scoreboard_link()
+    // below and spp_kq_get_full_scoreboard() (inc/spp-kq-history.php).
+    $viewing_scoreboard = isset( $_GET['kq_view'] ) && sanitize_key( wp_unslash( $_GET['kq_view'] ) ) === 'scoreboard';
+
     ob_start();
     echo spp_kq_styles();
     echo '<div class="kq-wrap">';
     echo spp_kq_render_occurrence_header( $occurrence, $notice );
+    echo spp_kq_render_scoreboard_link( $occurrence_id, $viewing_scoreboard );
 
-    switch ( $phase ) {
-        case 'not_started':
-            echo spp_kq_render_start_screen( $occurrence_id, $occurrence['event_date'] );
-            break;
+    if ( $viewing_scoreboard ) {
+        echo spp_kq_render_full_scoreboard_screen( $occurrence_id );
+    } else {
+        switch ( $phase ) {
+            case 'not_started':
+                echo spp_kq_render_start_screen( $occurrence_id, $occurrence['event_date'] );
+                break;
 
-        case 'organizing':
-            $unclaimed = spp_kq_count_unclaimed( $occurrence_id, $round );
-            if ( $round === 1 && $unclaimed > 0 ) {
-                echo spp_kq_render_draw_screen( $occurrence_id );
-            } else {
-                echo spp_kq_render_overview_screen( $occurrence_id, $round );
-            }
-            break;
+            case 'organizing':
+                $unclaimed = spp_kq_count_unclaimed( $occurrence_id, $round );
+                if ( $round === 1 && $unclaimed > 0 ) {
+                    echo spp_kq_render_draw_screen( $occurrence_id );
+                } else {
+                    echo spp_kq_render_overview_screen( $occurrence_id, $round );
+                }
+                break;
 
-        case 'in_play':
-            echo spp_kq_render_in_play_screen( $occurrence_id, $round );
-            break;
+            case 'in_play':
+                echo spp_kq_render_in_play_screen( $occurrence_id, $round );
+                break;
 
-        case 'complete':
-            echo spp_kq_render_complete_screen( $occurrence_id, $round );
-            break;
+            case 'complete':
+                echo spp_kq_render_complete_screen( $occurrence_id, $round );
+                break;
 
-        case 'cancelled':
-            echo spp_kq_render_cancelled_screen( $occurrence_id, $round );
-            break;
+            case 'cancelled':
+                echo spp_kq_render_cancelled_screen( $occurrence_id, $round );
+                break;
+        }
     }
 
     echo spp_kq_render_full_reset( $occurrence_id, $round );
 
     echo '</div>';
     return ob_get_clean();
+}
+
+/**
+ * Full Scoreboard screen: every completed round, every court, every
+ * player, that round's score -- not just the current round. Reachable
+ * via ?kq_view=scoreboard from any phase (see the dispatcher above) --
+ * pure read, changes nothing, no interaction with spp_kq_events.phase/
+ * current_round. Uses spp_kq_get_full_scoreboard() (inc/spp-kq-
+ * history.php), the exact same read this event's own eventual archival
+ * write (spp_kq_archive_event_history(), same file) will use once it
+ * ends -- so what a player sees live mid-event and what later gets
+ * archived/emailed are guaranteed to agree.
+ */
+function spp_kq_render_full_scoreboard_screen( int $occurrence_id ) : string {
+    $scoreboard = spp_kq_get_full_scoreboard( $occurrence_id );
+
+    ob_start();
+    ?>
+    <p class="kq-round-label">Full Scoreboard</p>
+    <?php if ( empty( $scoreboard ) ) : ?>
+        <p class="kq-hint">No completed rounds yet.</p>
+    <?php else : ?>
+        <?php foreach ( $scoreboard as $round_number => $courts ) : ?>
+            <h3 class="kq-picker-section-heading">Round <?php echo esc_html( $round_number ); ?></h3>
+            <div class="kq-court-grid">
+                <?php foreach ( $courts as $court_name => $court ) : ?>
+                    <div class="kq-court-card">
+                        <div class="kq-court-name"><?php echo esc_html( $court_name ); ?></div>
+                        <div class="kq-team kq-team-red">
+                            Red: <?php echo esc_html( implode( ', ', array_column( $court['red'], 'name' ) ) ); ?>
+                            &mdash; <?php echo esc_html( $court['red_score'] ); ?>
+                        </div>
+                        <div class="kq-team kq-team-black">
+                            Black: <?php echo esc_html( implode( ', ', array_column( $court['black'], 'name' ) ) ); ?>
+                            &mdash; <?php echo esc_html( $court['black_score'] ); ?>
+                        </div>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+        <?php endforeach; ?>
+    <?php endif; ?>
+    <?php
+    return ob_get_clean();
+}
+
+/**
+ * "View Full Scoreboard" / "&laquo; Back" toggle link -- rendered once
+ * in the main dispatcher, same placement pattern as
+ * spp_kq_render_full_reset() (present regardless of which phase-driven
+ * screen is showing). Only offered once at least one completed round
+ * exists (spp_kq_has_any_recorded_score()) -- nothing to show before
+ * that. Always shown once already viewing the scoreboard, so there's
+ * always a way back.
+ */
+function spp_kq_render_scoreboard_link( int $occurrence_id, bool $viewing_scoreboard ) : string {
+    if ( ! $viewing_scoreboard && ! spp_kq_has_any_recorded_score( $occurrence_id ) ) {
+        return '';
+    }
+    $url = $viewing_scoreboard
+        ? remove_query_arg( 'kq_view' )
+        : add_query_arg( 'kq_view', 'scoreboard' );
+    $label = $viewing_scoreboard ? '&laquo; Back' : 'View Full Scoreboard';
+    return '<p class="kq-hint"><a href="' . esc_url( $url ) . '">' . $label . '</a></p>';
 }
 
 /**

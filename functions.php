@@ -98,7 +98,8 @@ require_once get_stylesheet_directory() . '/inc/spp-kq-schema.php'; // Ace/Queen
 require_once get_stylesheet_directory() . '/inc/spp-kq-movement.php'; // pure movement algorithm, no dependency on spp-kq-schema.php itself, but grouped with the rest of this feature
 require_once get_stylesheet_directory() . '/inc/spp-kq-live.php'; // calls functions from both files above
 require_once get_stylesheet_directory() . '/inc/spp-kq-club-rating.php'; // Stage 4: feeds completed/cancelled KQ occurrences into the shared spp_crt_process_event_ratings() (inc/spp-update-club-ratings.php) -- must load after spp-update-club-ratings.php (line 69) and spp-kq-live.php/spp-kq-schema.php above; called from spp-kq-screens.php's post-action dispatcher below
-require_once get_stylesheet_directory() . '/inc/spp-kq-screens.php'; // [spp_kq_live] shortcode + AJAX draw handler -- calls functions from all four files above
+require_once get_stylesheet_directory() . '/inc/spp-kq-history.php'; // Permanent spp_kq_history archive + live Full Scoreboard read + recap email -- must load after spp-kq-club-rating.php above (reuses SPP_KQ_CLUB_RATING_LAUNCH_DATE/spp_kq_category_source()) and before spp-kq-screens.php below (calls this file's spp_kq_finalize_event_history_and_recap()/spp_kq_render_full_scoreboard_screen() -- the latter actually defined in spp-kq-screens.php itself); also defines spp_report_kq_history(), registered in inc/spp-reports.php's registry
+require_once get_stylesheet_directory() . '/inc/spp-kq-screens.php'; // [spp_kq_live] shortcode + AJAX draw handler -- calls functions from all five files above
 
 add_filter('template_include', function($template) {
     if (is_singular('tribe_events')) {

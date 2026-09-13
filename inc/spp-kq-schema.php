@@ -1,8 +1,37 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Live Event Schema
-   Version: 1.2.0
-   Date: 2026-09-11
+   Version: 1.3.0
+   Date: 2026-09-13
+
+   Changes from 1.2.0 (new table, additive -- no ALTER of the three
+   existing tables):
+   - Added spp_kq_history: permanent, one-row-per-player-per-round-per-
+     court archive, denormalized (event_date/source copied in alongside
+     the round/court/score data rather than requiring a join back
+     through gl_events_v later). Distinct from spp_kq_scores/
+     spp_kq_assignments on purpose -- those two are LIVE, in-progress-
+     event state that Full Reset and Cancel Event legitimately delete
+     from; spp_kq_history is written exactly once per occurrence, only
+     at a successful 'end_event' transition, only for occurrences dated
+     on/after SPP_KQ_CLUB_RATING_LAUNCH_DATE (inc/spp-kq-club-rating.php)
+     -- the same permanent, literal pre-launch cutoff Club Ratings
+     already uses, reused rather than duplicated, so the 4 rolling
+     Practice/Test Sandbox occurrences (spp-kq-screens.php's event
+     picker) can never pollute a real player's permanent history, same
+     guarantee Club Ratings already has. See inc/spp-kq-history.php for
+     the write path and inc/spp-reports.php's kq_history entry for how
+     this is read back.
+   - UNIQUE KEY (occurrence_id, round_number, user_id) is the real
+     integrity rule -- a player can only be in one court/color per round
+     per occurrence, same shape as spp_kq_assignments' own unique key.
+     court_name/team_color/red_score/black_score are stored per-row
+     rather than normalized into a separate scores table: every
+     described consumer (the kq_history report, the recap email) wants
+     "rows about one player," and this table is written once, read
+     often, never updated in place -- denormalizing here trades a small
+     amount of redundant storage (red_score/black_score duplicated onto
+     both players' rows for the same court) for zero joins on every read.
 
    Changes from 1.1.0 (this one IS a live ALTER -- spp_kq_events
    already exists and holds real rows by this point):
@@ -41,13 +70,15 @@
      stays inside "ordinary UPDATE row-locking, no exotic primitives").
 
    PURPOSE:
-   Creates the three tables backing the live in-event round/court/
-   score runner for Ace and Queen of the Courts occurrences (GL
-   Events categories 2 and 3, `gl_event_categories.id` 2/3).
-   Registration, waitlist, and convenor roster management are already
-   fully handled by gl-events' own tables and [gl_registration_admin]
-   -- this feature, and these three tables, only track what happens
-   LIVE, in-event, on top of an already-registered occurrence.
+   Creates the four tables backing Ace and Queen of the Courts (GL
+   Events categories 2 and 3, `gl_event_categories.id` 2/3): three for
+   the live in-event round/court/score runner, plus one (spp_kq_history,
+   added 1.3.0) for permanent post-event archival. Registration,
+   waitlist, and convenor roster management are already fully handled
+   by gl-events' own tables and [gl_registration_admin] -- this
+   feature's own tables only track what happens LIVE, in-event
+   (spp_kq_events/assignments/scores), and what survives permanently
+   after (spp_kq_history), on top of an already-registered occurrence.
 
    - spp_kq_events: one row per occurrence, tracking which round is
      current and the event's phase (not_started / organizing /
@@ -79,6 +110,15 @@
      reported"; a round is ready to advance once every active
      court's row has both scores non-NULL.
 
+   - spp_kq_history (1.3.0): one row per player per round per court,
+     written ONCE per occurrence at a successful 'end_event' transition
+     (inc/spp-kq-history.php), never updated afterward. Deliberately a
+     separate table from spp_kq_assignments/spp_kq_scores above, not
+     just "stop deleting those" -- Full Reset and Cancel Event both
+     legitimately need to keep deleting live in-progress state, and
+     permanent history must survive that. See inc/spp-kq-history.php
+     for the write path's pre-launch guard.
+
    Modeled directly on GL_Schema's own dbDelta pattern
    (wp-content/plugins/gl-events/includes/class-gl-schema.php) -- the
    closest existing precedent in this codebase for standing up a
@@ -95,7 +135,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'SPP_KQ_DB_VERSION', '1.2.0' );
+define( 'SPP_KQ_DB_VERSION', '1.3.0' );
 
 /**
  * Create (or, on a later run, no-op/upgrade) the three spp_kq_*
@@ -162,6 +202,25 @@ function spp_kq_create_tables() {
         PRIMARY KEY (occurrence_id, round_number, court_name)
     ) {$charset};" );
 
+    // ── History (permanent archive, see this file's 1.3.0 changelog) ───────
+    dbDelta( "CREATE TABLE {$p}spp_kq_history (
+        id             BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        occurrence_id  INT UNSIGNED NOT NULL,
+        round_number   SMALLINT UNSIGNED NOT NULL,
+        court_name     VARCHAR(20) NOT NULL,
+        team_color     ENUM('red','black') NOT NULL,
+        user_id        BIGINT UNSIGNED NOT NULL,
+        red_score      SMALLINT UNSIGNED NOT NULL,
+        black_score    SMALLINT UNSIGNED NOT NULL,
+        event_date     DATE NOT NULL,
+        source         ENUM('ace','queen') NOT NULL,
+        archived_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        UNIQUE KEY uq_player_round (occurrence_id, round_number, user_id),
+        KEY idx_user (user_id),
+        KEY idx_event_date (event_date)
+    ) {$charset};" );
+
     update_option( 'spp_kq_db_version', SPP_KQ_DB_VERSION );
 }
 add_action( 'after_setup_theme', 'spp_kq_create_tables' );
@@ -181,4 +240,8 @@ function spp_kq_assignments_table() {
 function spp_kq_scores_table() {
     global $wpdb;
     return $wpdb->prefix . 'spp_kq_scores';
+}
+function spp_kq_history_table() {
+    global $wpdb;
+    return $wpdb->prefix . 'spp_kq_history';
 }

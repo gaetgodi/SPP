@@ -1,8 +1,24 @@
 <?php
 /* =========================================================
    Report Registry
-   Version: 1.8.0
+   Version: 1.9.0
    Date: 2026-09-13
+
+   Changes from 1.8.0:
+   - Added kq_history: reads the new spp_kq_history table (inc/spp-kq-
+     schema.php 1.3.0, inc/spp-kq-history.php owns the write path).
+     Deliberately open to all logged-in members via just this
+     shortcode's own blanket floor -- no per-report gate added -- since
+     KQ has no ranking and this is a plain post-event score log, nothing
+     in the same sensitivity class as results/membership_tags. The
+     function itself lives in inc/spp-kq-history.php, not this file
+     (co-located with the rest of that feature), same as every other
+     report's definition function still lives wherever makes sense for
+     it -- only the registry array entry lives here. See that function's
+     own docblock for how "organized by event, then by round" is
+     reproduced within spp_render_report_table()'s flat-table-only
+     rendering model (same compound-sort trick membership/master_list
+     already use).
 
    Changes from 1.7.0:
    - SECURITY FIX -- PII exposure: preferred_new and preferred_permanent
@@ -257,6 +273,7 @@ $GLOBALS['spp_report_registry'] = array(
     'preferred_new'        => 'spp_report_preferred_new',
     'preferred_permanent'  => 'spp_report_preferred_permanent',
     'membership_tags'      => 'spp_report_membership_tags',
+    'kq_history'           => 'spp_report_kq_history',
 );
 
 /**
