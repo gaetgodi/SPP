@@ -78,7 +78,7 @@ defined( 'ABSPATH' ) || exit;
 
 function spp_membership_tags_refresh_ui() {
     spp_refresh_membership_tags();
-    echo do_shortcode( '[wpda_app app_id="3"]' );
+   // echo do_shortcode( '[wpda_app app_id="3"]' );
 }
 
 add_shortcode( 'spp_membership_tags_refresh_ui', function( $atts ) {
