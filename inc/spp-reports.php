@@ -551,14 +551,32 @@ function spp_report_times() {
 
     $columns = array(
         array( 'key' => 'T_ID',   'label' => 'T ID',   'sortable' => true ),
-        array( 'key' => 'T_desc', 'label' => 'T Desc', 'sortable' => true ),
-        array( 'key' => 'Active', 'label' => 'Active', 'sortable' => true ),
+        array(
+            'key'           => 'T_desc',
+            'label'         => 'T Desc',
+            'sortable'      => false,
+            'editable'      => true,
+            'edit_type'     => 'text',
+            'edit_nullable' => true,
+        ),
+        array(
+            'key'           => 'Active',
+            'label'         => 'Active',
+            'sortable'      => true,
+            'editable'      => true,
+            'edit_type'     => 'integer',
+            'edit_nullable' => false,
+        ),
+        
     );
 
     return array(
         'columns'      => $columns,
         'rows'         => $rows,
         'default_sort' => 'T_ID',
+        'edit'         => array(
+            'table'      => 'Times',
+            'key_column' => 'T_ID',
     );
 }
 
