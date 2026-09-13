@@ -256,11 +256,10 @@ function spp_report_ladder_ratings() {
         array( 'key' => 'Ladder',       'label' => 'Ladder',        'sortable' => true ),
         array( 'key' => 'first_name', 'label' => 'First Name',  'sortable' => true ),
         array( 'key' => 'last_name',  'label' => 'Last Name',   'sortable' => true ),
-
     );
 
-    return array( 'columns' => $columns, 'rows' => $rows, 'default_sort' => 'ClubRating');
-
+    return array( 'columns' => $columns, 'rows' => $rows );
+}
 
 /**
  * Membership report: all tracked columns for every member, unfiltered
