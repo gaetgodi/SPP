@@ -1,8 +1,27 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Permanent History, Live Scoreboard, Recap Email
-   Version: 1.2.0
+   Version: 1.3.0
    Date: 2026-09-13
+
+   Changes from 1.2.0:
+   - [spp_kq_event_detail]'s free-text <input type="date"> replaced with
+     a <select> populated only from dates that genuinely have
+     spp_kq_history rows for the currently-selected category (new
+     spp_kq_get_history_dates_for_source()) -- picking a category then a
+     date from the list it produced can no longer land on "No event
+     found" the way a free-text date could. Category select reloads the
+     page on change (onchange="this.form.submit()", same plain-GET-
+     resubmit convention as this theme's own report table "Rows per
+     page" control, inc/spp-report-table.php) so the date list refreshes
+     to match. Zero-dates-for-this-category renders a single disabled
+     "No events found" option rather than an empty/broken select.
+     Server-side re-validation is unchanged and still authoritative --
+     spp_kq_get_history_scoreboard() is still the real source of truth,
+     re-queried regardless of whether the submitted date ever appeared
+     in the dropdown, so a crafted request bypassing it entirely still
+     resolves correctly (falls through to the same "No event found"
+     notice) rather than being trusted.
 
    Changes from 1.1.0:
    - Added the Event Detail view ([spp_kq_event_detail]): look up one
@@ -271,6 +290,27 @@ function spp_kq_render_scoreboard_markup( array $scoreboard, string $empty_messa
 // =============================================================
 
 /**
+ * Distinct spp_kq_history event_date values for one category, within one
+ * year -- powers the Event Detail view's date dropdown
+ * (spp_kq_event_detail_shortcode() below), so it only ever lists dates
+ * that genuinely have data for the selected category, most recent first.
+ *
+ * @param string $source 'ace' or 'queen'.
+ * @param string $year   'YYYY'.
+ * @return array List of 'Y-m-d' strings, most recent first.
+ */
+function spp_kq_get_history_dates_for_source( string $source, string $year ) : array {
+    global $wpdb;
+    $table = spp_kq_history_table();
+    return $wpdb->get_col( $wpdb->prepare(
+        "SELECT DISTINCT event_date FROM {$table}
+         WHERE source = %s AND YEAR( event_date ) = %d
+         ORDER BY event_date DESC",
+        $source, $year
+    ) );
+}
+
+/**
  * Event Detail: look up one past Ace/Queen of the Courts event by
  * category + date and show its full round-by-round scoreboard, same
  * layout as the live Full Scoreboard screen (spp_kq_render_
@@ -290,15 +330,27 @@ function spp_kq_render_scoreboard_markup( array $scoreboard, string $empty_messa
  * lookup with no mutation, so GET (not a nonce-gated POST) is the right
  * tool here, same convention this theme already uses for read-only
  * navigation (e.g. spp-report-table.php's own sort/pagination links).
+ * Both fields are <select> dropdowns, not free-text/date-picker inputs:
+ * the date list (spp_kq_get_history_dates_for_source() above) only ever
+ * contains dates that genuinely have spp_kq_history rows for the
+ * selected category, so a "not found" result is unreachable through
+ * normal dropdown use -- only a crafted request can still reach it (see
+ * the server-side re-validation below, which never trusts the dropdown's
+ * own list). The category select reloads the page on change
+ * (onchange="this.form.submit()", same plain-GET-resubmit convention
+ * this theme's own report table controls already use for their "Rows
+ * per page" selector, inc/spp-report-table.php) so the date list
+ * refreshes to match whichever category is now selected -- no new JS/
+ * AJAX machinery for this.
  *
  * DATE RANGE: constrained to the current year only (current_time('Y'),
  * WP's own timezone-aware "today" -- same helper
  * spp_kq_transition_start_round1()'s day-of check already uses,
- * inc/spp-kq-live.php) -- both the <input type="date"> min/max
- * attributes AND a server-side re-check (never trust the client) reject
- * anything outside it, with a plain notice rather than silently
- * misbehaving. No support for browsing prior years yet -- not needed
- * until this archive actually spans more than one.
+ * inc/spp-kq-live.php) -- both the date dropdown's own contents AND a
+ * server-side re-check (never trust the client) reject anything
+ * outside it, with a plain notice rather than silently misbehaving. No
+ * support for browsing prior years yet -- not needed until this archive
+ * actually spans more than one.
  */
 function spp_kq_event_detail_shortcode() : string {
     if ( ! is_user_logged_in() ) {
@@ -309,18 +361,38 @@ function spp_kq_event_detail_shortcode() : string {
     $source       = isset( $_GET['kq_source'] ) ? sanitize_key( wp_unslash( $_GET['kq_source'] ) ) : '';
     $event_date   = isset( $_GET['kq_event_date'] ) ? sanitize_text_field( wp_unslash( $_GET['kq_event_date'] ) ) : '';
 
+    $source_valid = in_array( $source, array( 'ace', 'queen' ), true );
+
+    // Date dropdown's own contents -- only ever dates that genuinely
+    // have spp_kq_history rows for the selected category, so a "not
+    // found" result is unreachable via normal dropdown use (picking a
+    // category, then a date from the list it produced, then View).
+    // Category-select-triggers-reload is a plain GET resubmit
+    // (onchange="this.form.submit()" below) -- same convention this
+    // theme's own report table controls already use for their "Rows per
+    // page" selector (inc/spp-report-table.php) -- not new JS/AJAX
+    // machinery invented for this.
+    $available_dates = $source_valid ? spp_kq_get_history_dates_for_source( $source, $current_year ) : array();
+
     $submitted  = ( $source !== '' && $event_date !== '' );
     $notice     = '';
     $scoreboard = array();
 
     if ( $submitted ) {
-        if ( ! in_array( $source, array( 'ace', 'queen' ), true ) ) {
+        if ( ! $source_valid ) {
             $notice = 'Please choose Ace or Queen.';
         } elseif ( ! preg_match( '/^\d{4}-\d{2}-\d{2}$/', $event_date ) ) {
             $notice = 'Please choose a valid date.';
         } elseif ( substr( $event_date, 0, 4 ) !== $current_year ) {
             $notice = "Please choose a date in {$current_year} -- earlier years aren't supported yet.";
         } else {
+            // Server-side truth, not the dropdown's own option list --
+            // re-queried here regardless of whether $event_date actually
+            // appeared in $available_dates, so a crafted/tampered
+            // kq_event_date (one the dropdown never offered) still
+            // resolves through the real query and correctly falls
+            // through to the "No event found" notice below rather than
+            // being trusted just because it looked like a plausible date.
             $scoreboard = spp_kq_get_history_scoreboard( $source, $event_date );
         }
     }
@@ -335,7 +407,7 @@ function spp_kq_event_detail_shortcode() : string {
         <form method="get" class="kq-inline-form">
             <label>
                 Event
-                <select name="kq_source">
+                <select name="kq_source" onchange="this.form.submit()">
                     <option value="">&mdash; Select &mdash;</option>
                     <option value="ace" <?php selected( $source, 'ace' ); ?>>Ace of the Courts</option>
                     <option value="queen" <?php selected( $source, 'queen' ); ?>>Queen of the Courts</option>
@@ -343,9 +415,20 @@ function spp_kq_event_detail_shortcode() : string {
             </label>
             <label>
                 Date
-                <input type="date" name="kq_event_date" value="<?php echo esc_attr( $event_date ); ?>"
-                       min="<?php echo esc_attr( $current_year ); ?>-01-01"
-                       max="<?php echo esc_attr( $current_year ); ?>-12-31">
+                <select name="kq_event_date" <?php disabled( ! $source_valid ); ?>>
+                    <?php if ( ! $source_valid ) : ?>
+                        <option value="">&mdash; Choose an event first &mdash;</option>
+                    <?php elseif ( empty( $available_dates ) ) : ?>
+                        <option value="" disabled selected>No events found</option>
+                    <?php else : ?>
+                        <option value="">&mdash; Select &mdash;</option>
+                        <?php foreach ( $available_dates as $d ) : ?>
+                            <option value="<?php echo esc_attr( $d ); ?>" <?php selected( $event_date, $d ); ?>>
+                                <?php echo esc_html( date_i18n( 'F j, Y', strtotime( $d ) ) ); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                </select>
             </label>
             <button type="submit" class="kq-btn kq-btn-primary">View</button>
         </form>
