@@ -1,8 +1,36 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Permanent History, Live Scoreboard, Recap Email
-   Version: 1.1.0
+   Version: 1.2.0
    Date: 2026-09-13
+
+   Changes from 1.1.0:
+   - Added the Event Detail view ([spp_kq_event_detail]): look up one
+     past event by category (ace/queen) + date and see its full
+     round-by-round scoreboard, sourced from spp_kq_history (permanent)
+     rather than spp_kq_scores/spp_kq_assignments (live, in-progress
+     only) -- for looking at exactly one archived event in the familiar
+     round/court/pairing layout, distinct from the kq_history flat
+     report (inc/spp-reports.php), which is a browsable log across every
+     archived event, not meant for looking at one in detail.
+   - New spp_kq_get_history_scoreboard( $source, $event_date ): same
+     grouped shape as spp_kq_get_full_scoreboard() above, built from
+     spp_kq_history instead of the live tables.
+   - Extracted spp_kq_render_scoreboard_markup() out of
+     spp_kq_render_full_scoreboard_screen() (inc/spp-kq-screens.php) --
+     same markup, unchanged, now a standalone function taking a
+     scoreboard array in and an $empty_message, so both the live Full
+     Scoreboard screen and this new Event Detail view render identical
+     layout from two different data sources without duplicating markup.
+     spp_kq_render_full_scoreboard_screen() itself is now just fetch +
+     hand off to this shared renderer -- behavior confirmed unchanged via
+     direct before/after byte comparison (see this version's own testing).
+   - Access: is_user_logged_in() only, matching kq_history's own open
+     visibility -- no admin/editor gate, deliberately not
+     spp_kq_can_facilitate() (that gate's own docblock, inc/spp-kq-
+     live.php, scopes it to the live-event-facilitation entry points;
+     this is a separate, historical/informational concern, same
+     sensitivity as the flat report it complements).
 
    Changes from 1.0.0:
    - BUG FIX: spp_kq_finalize_event_history_and_recap() is now called
@@ -133,6 +161,213 @@ function spp_kq_get_full_scoreboard( int $occurrence_id ) : array {
     }
     return $out;
 }
+
+/**
+ * Same grouped shape as spp_kq_get_full_scoreboard() above, sourced from
+ * the PERMANENT spp_kq_history archive instead of the live spp_kq_scores/
+ * spp_kq_assignments tables -- for looking at exactly one past,
+ * already-finished event by category+date (the Event Detail view,
+ * [spp_kq_event_detail] below), not an in-progress one. Names are looked
+ * up fresh via membership (never frozen into the archived rows), same
+ * convention as spp_report_kq_history() and spp_kq_get_full_scoreboard()
+ * itself.
+ *
+ * @param string $source     'ace' or 'queen' (spp_kq_history.source).
+ * @param string $event_date 'Y-m-d'.
+ * @return array Empty array if no matching event exists for this
+ *                source+date -- callers treat that as "not found" the
+ *                same way spp_kq_get_full_scoreboard() treats "no rounds
+ *                recorded yet" (both are simply an empty array, no
+ *                distinct error signal needed) -- see
+ *                spp_kq_render_scoreboard_markup()'s own $empty_message
+ *                parameter for how each caller words that case.
+ */
+function spp_kq_get_history_scoreboard( string $source, string $event_date ) : array {
+    global $wpdb;
+    $table = spp_kq_history_table();
+
+    $rows = $wpdb->get_results( $wpdb->prepare(
+        "SELECT h.round_number, h.court_name, h.team_color, h.user_id, h.red_score, h.black_score,
+                m.first_name, m.last_name
+         FROM {$table} h
+         LEFT JOIN membership m ON m.user_id = h.user_id
+         WHERE h.source = %s AND h.event_date = %s
+         ORDER BY h.round_number ASC, h.court_name ASC, h.team_color ASC",
+        $source, $event_date
+    ), ARRAY_A );
+
+    $out = array();
+    foreach ( $rows as $r ) {
+        $round = (int) $r['round_number'];
+        $court = $r['court_name'];
+        if ( ! isset( $out[ $round ][ $court ] ) ) {
+            $out[ $round ][ $court ] = array(
+                'red'         => array(),
+                'black'       => array(),
+                'red_score'   => (int) $r['red_score'],
+                'black_score' => (int) $r['black_score'],
+            );
+        }
+        $out[ $round ][ $court ][ $r['team_color'] ][] = array(
+            'user_id' => (int) $r['user_id'],
+            'name'    => spp_kq_player_name( $r['first_name'], $r['last_name'], (int) $r['user_id'] ),
+        );
+    }
+    return $out;
+}
+
+/**
+ * Pure scoreboard markup -- round-by-round court cards, no data-fetching
+ * of its own. Shared by the live Full Scoreboard screen
+ * (spp_kq_render_full_scoreboard_screen(), inc/spp-kq-screens.php, fed by
+ * spp_kq_get_full_scoreboard() above) and the historical Event Detail
+ * view (spp_kq_event_detail_shortcode() below, fed by
+ * spp_kq_get_history_scoreboard() above) -- same input shape, same
+ * markup out, regardless of which table the caller actually read from.
+ * Extracted from spp_kq_render_full_scoreboard_screen()'s own original
+ * body (see that function's docblock) -- markup itself is unchanged from
+ * before this existed.
+ *
+ * @param array  $scoreboard    Grouped [round => [court => [...]]] shape,
+ *                               same as both functions above return.
+ * @param string $empty_message Shown instead of any round/court markup
+ *                               when $scoreboard is empty -- callers word
+ *                               this to fit their own context (a live
+ *                               event with no rounds yet vs. a historical
+ *                               lookup that found no matching event).
+ */
+function spp_kq_render_scoreboard_markup( array $scoreboard, string $empty_message = 'No completed rounds yet.' ) : string {
+    ob_start();
+    ?>
+    <?php if ( empty( $scoreboard ) ) : ?>
+        <p class="kq-hint"><?php echo esc_html( $empty_message ); ?></p>
+    <?php else : ?>
+        <?php foreach ( $scoreboard as $round_number => $courts ) : ?>
+            <h3 class="kq-picker-section-heading">Round <?php echo esc_html( $round_number ); ?></h3>
+            <div class="kq-court-grid">
+                <?php foreach ( $courts as $court_name => $court ) : ?>
+                    <div class="kq-court-card">
+                        <div class="kq-court-name"><?php echo esc_html( $court_name ); ?></div>
+                        <div class="kq-team kq-team-red">
+                            Red: <?php echo esc_html( implode( ', ', array_column( $court['red'], 'name' ) ) ); ?>
+                            &mdash; <?php echo esc_html( $court['red_score'] ); ?>
+                        </div>
+                        <div class="kq-team kq-team-black">
+                            Black: <?php echo esc_html( implode( ', ', array_column( $court['black'], 'name' ) ) ); ?>
+                            &mdash; <?php echo esc_html( $court['black_score'] ); ?>
+                        </div>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+        <?php endforeach; ?>
+    <?php endif; ?>
+    <?php
+    return ob_get_clean();
+}
+
+// =============================================================
+// [spp_kq_event_detail] -- historical Event Detail view (category + date
+// lookup against the permanent spp_kq_history archive)
+// =============================================================
+
+/**
+ * Event Detail: look up one past Ace/Queen of the Courts event by
+ * category + date and show its full round-by-round scoreboard, same
+ * layout as the live Full Scoreboard screen (spp_kq_render_
+ * scoreboard_markup(), shared with it) -- but reading spp_kq_history
+ * (permanent) rather than spp_kq_scores/spp_kq_assignments (live,
+ * in-progress-only). Distinct from the kq_history flat report
+ * (inc/spp-reports.php): that one is a browsable, ever-growing log
+ * across every archived event; this is for looking at exactly one event
+ * at a time, in the familiar round/court/pairing shape.
+ *
+ * ACCESS: is_user_logged_in() only -- no admin/editor gate, matching
+ * kq_history's own open visibility (this is historical/informational,
+ * the same sensitivity level as that flat report; nothing here exposes
+ * anything kq_history doesn't already show any logged-in member).
+ *
+ * INPUT: a plain GET form (kq_source, kq_event_date) -- a pure read/
+ * lookup with no mutation, so GET (not a nonce-gated POST) is the right
+ * tool here, same convention this theme already uses for read-only
+ * navigation (e.g. spp-report-table.php's own sort/pagination links).
+ *
+ * DATE RANGE: constrained to the current year only (current_time('Y'),
+ * WP's own timezone-aware "today" -- same helper
+ * spp_kq_transition_start_round1()'s day-of check already uses,
+ * inc/spp-kq-live.php) -- both the <input type="date"> min/max
+ * attributes AND a server-side re-check (never trust the client) reject
+ * anything outside it, with a plain notice rather than silently
+ * misbehaving. No support for browsing prior years yet -- not needed
+ * until this archive actually spans more than one.
+ */
+function spp_kq_event_detail_shortcode() : string {
+    if ( ! is_user_logged_in() ) {
+        return '<p>Please log in to view this.</p>';
+    }
+
+    $current_year = current_time( 'Y' );
+    $source       = isset( $_GET['kq_source'] ) ? sanitize_key( wp_unslash( $_GET['kq_source'] ) ) : '';
+    $event_date   = isset( $_GET['kq_event_date'] ) ? sanitize_text_field( wp_unslash( $_GET['kq_event_date'] ) ) : '';
+
+    $submitted  = ( $source !== '' && $event_date !== '' );
+    $notice     = '';
+    $scoreboard = array();
+
+    if ( $submitted ) {
+        if ( ! in_array( $source, array( 'ace', 'queen' ), true ) ) {
+            $notice = 'Please choose Ace or Queen.';
+        } elseif ( ! preg_match( '/^\d{4}-\d{2}-\d{2}$/', $event_date ) ) {
+            $notice = 'Please choose a valid date.';
+        } elseif ( substr( $event_date, 0, 4 ) !== $current_year ) {
+            $notice = "Please choose a date in {$current_year} -- earlier years aren't supported yet.";
+        } else {
+            $scoreboard = spp_kq_get_history_scoreboard( $source, $event_date );
+        }
+    }
+
+    ob_start();
+    echo spp_kq_styles();
+    ?>
+    <div class="kq-wrap">
+        <h2 class="kq-heading">Ace / Queen of the Courts &mdash; Event Detail</h2>
+        <p class="kq-hint">Look up a past Ace or Queen of the Courts event's full scoreboard.</p>
+
+        <form method="get" class="kq-inline-form">
+            <label>
+                Event
+                <select name="kq_source">
+                    <option value="">&mdash; Select &mdash;</option>
+                    <option value="ace" <?php selected( $source, 'ace' ); ?>>Ace of the Courts</option>
+                    <option value="queen" <?php selected( $source, 'queen' ); ?>>Queen of the Courts</option>
+                </select>
+            </label>
+            <label>
+                Date
+                <input type="date" name="kq_event_date" value="<?php echo esc_attr( $event_date ); ?>"
+                       min="<?php echo esc_attr( $current_year ); ?>-01-01"
+                       max="<?php echo esc_attr( $current_year ); ?>-12-31">
+            </label>
+            <button type="submit" class="kq-btn kq-btn-primary">View</button>
+        </form>
+
+        <?php if ( $notice !== '' ) : ?>
+            <div class="kq-notice kq-notice-err"><?php echo esc_html( $notice ); ?></div>
+        <?php elseif ( $submitted ) : ?>
+            <?php if ( empty( $scoreboard ) ) : ?>
+                <p class="kq-hint">No event found for that date/category.</p>
+            <?php else : ?>
+                <p class="kq-round-label">
+                    <?php echo esc_html( $source === 'ace' ? 'Ace of the Courts' : 'Queen of the Courts' ); ?>
+                    &mdash; <?php echo esc_html( date_i18n( 'F j, Y', strtotime( $event_date ) ) ); ?>
+                </p>
+                <?php echo spp_kq_render_scoreboard_markup( $scoreboard ); ?>
+            <?php endif; ?>
+        <?php endif; ?>
+    </div>
+    <?php
+    return ob_get_clean();
+}
+add_shortcode( 'spp_kq_event_detail', 'spp_kq_event_detail_shortcode' );
 
 /**
  * Per-player round-by-round detail extracted from

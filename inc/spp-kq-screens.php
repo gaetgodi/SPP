@@ -1,8 +1,19 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Screens
-   Version: 1.4.0
+   Version: 1.5.0
    Date: 2026-09-13
+
+   Changes from 1.4.0:
+   - spp_kq_render_full_scoreboard_screen()'s round/court markup moved
+     into a new shared function, spp_kq_render_scoreboard_markup()
+     (inc/spp-kq-history.php) -- this function is now just fetch (via
+     spp_kq_get_full_scoreboard()) and hand off to that renderer.
+     Confirmed byte-identical output for the live screen before/after.
+     Done to let the new historical Event Detail view
+     ([spp_kq_event_detail], same file) reuse the exact same layout
+     against archived data (spp_kq_get_history_scoreboard()) instead of
+     duplicating this markup.
 
    Changes from 1.3.0:
    - UX FIX (Full Reset investigated, confirmed working correctly at the
@@ -1300,35 +1311,20 @@ function spp_kq_live_shortcode() : string {
  * write (spp_kq_archive_event_history(), same file) will use once it
  * ends -- so what a player sees live mid-event and what later gets
  * archived/emailed are guaranteed to agree.
+ *
+ * The actual round/court markup is spp_kq_render_scoreboard_markup()
+ * (inc/spp-kq-history.php) -- factored out so the historical Event
+ * Detail view ([spp_kq_event_detail], same file) can reuse the identical
+ * layout against spp_kq_get_history_scoreboard() (the archive) instead
+ * of duplicating this markup for a second data source. This function is
+ * now just: fetch the live scoreboard, hand it to that shared renderer.
  */
 function spp_kq_render_full_scoreboard_screen( int $occurrence_id ) : string {
     $scoreboard = spp_kq_get_full_scoreboard( $occurrence_id );
-
     ob_start();
     ?>
     <p class="kq-round-label">Full Scoreboard</p>
-    <?php if ( empty( $scoreboard ) ) : ?>
-        <p class="kq-hint">No completed rounds yet.</p>
-    <?php else : ?>
-        <?php foreach ( $scoreboard as $round_number => $courts ) : ?>
-            <h3 class="kq-picker-section-heading">Round <?php echo esc_html( $round_number ); ?></h3>
-            <div class="kq-court-grid">
-                <?php foreach ( $courts as $court_name => $court ) : ?>
-                    <div class="kq-court-card">
-                        <div class="kq-court-name"><?php echo esc_html( $court_name ); ?></div>
-                        <div class="kq-team kq-team-red">
-                            Red: <?php echo esc_html( implode( ', ', array_column( $court['red'], 'name' ) ) ); ?>
-                            &mdash; <?php echo esc_html( $court['red_score'] ); ?>
-                        </div>
-                        <div class="kq-team kq-team-black">
-                            Black: <?php echo esc_html( implode( ', ', array_column( $court['black'], 'name' ) ) ); ?>
-                            &mdash; <?php echo esc_html( $court['black_score'] ); ?>
-                        </div>
-                    </div>
-                <?php endforeach; ?>
-            </div>
-        <?php endforeach; ?>
-    <?php endif; ?>
+    <?php echo spp_kq_render_scoreboard_markup( $scoreboard, 'No completed rounds yet.' ); ?>
     <?php
     return ob_get_clean();
 }
