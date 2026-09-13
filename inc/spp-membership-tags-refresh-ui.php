@@ -112,7 +112,7 @@ add_shortcode( 'spp_membership_tags_refresh_ui', function( $atts ) {
             </form>
         </div>
         <?php
-        echo do_shortcode( '[wpda_app app_id="3"]' );
+      //  echo do_shortcode( '[wpda_app app_id="3"]' );
     }
 
     return ob_get_clean();
