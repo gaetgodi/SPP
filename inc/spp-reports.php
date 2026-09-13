@@ -259,7 +259,7 @@ function spp_report_ladder_ratings() {
 
     );
 
-    return array( 'columns' => $columns, 'rows' => $rows, 'default_sort' => 'ClubRating', );
+    return array( 'columns' => $columns, 'rows' => $rows, 'default_sort' => 'ClubRating');
 
 
 /**
