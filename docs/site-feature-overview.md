@@ -1,6 +1,6 @@
 # Stouffville Pickleball Players — Site Feature Overview
 
-*pickleballstouffville.ca — a member-run WordPress site serving roughly 150 players. Live since 2016.*
+*pickleballstouffville.ca — a member-run WordPress site serving roughly 450 players. Live since 2016.*
 
 This document describes what the site can **do** today, organized by feature area. It's a capability overview, not a technical spec.
 
