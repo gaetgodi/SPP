@@ -242,7 +242,7 @@ function spp_report_ladder_ratings() {
     global $wpdb;
 
     $rows = $wpdb->get_results(
-        "SELECT Rank, ClubRating, RatingGames, DUPR, first_name, last_name
+        "SELECT Rank, ClubRating, RatingGames, DUPR, Ladder, first_name, last_name
          FROM membership
          WHERE ClubRating > 0",
         ARRAY_A
@@ -253,6 +253,7 @@ function spp_report_ladder_ratings() {
         array( 'key' => 'ClubRating', 'label' => 'SPP Rating', 'sortable' => true ),
         array( 'key' => 'RatingGames', 'label' => 'Games', 'sortable' => true ),
         array( 'key' => 'DUPR',       'label' => 'DUPR',        'sortable' => true ),
+        array( 'key' => 'Ladder',       'label' => 'Ladder',        'sortable' => true ),
         array( 'key' => 'first_name', 'label' => 'First Name',  'sortable' => true ),
         array( 'key' => 'last_name',  'label' => 'Last Name',   'sortable' => true ),
     );
