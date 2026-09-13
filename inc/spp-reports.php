@@ -244,7 +244,7 @@ function spp_report_ladder_ratings() {
     $rows = $wpdb->get_results(
         "SELECT Rank, ClubRating, RatingGames, DUPR, first_name, last_name
          FROM membership
-         WHERE Ladder = 'Yes'",
+         WHERE ClubRating > 0",
         ARRAY_A
     );
 
