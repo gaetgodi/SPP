@@ -1,8 +1,23 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Screens
-   Version: 1.2.0
+   Version: 1.3.0
    Date: 2026-09-13
+
+   Changes from 1.2.0:
+   - Replaced the Start screen's "fix your roster" link -- previously
+     gl-registration-admin/?gl_reg_occ_id=X, the generic GL Events
+     plugin tool gated to administrator/editor/convenor
+     (GL_Roles::can_view_registrants()) -- with a link to a new
+     ?kq_view=roster screen (spp_kq_render_roster_screen(),
+     inc/spp-kq-roster.php), gated only by this shortcode's own
+     spp_kq_can_facilitate() (any logged-in member), matching KQ's own
+     access model instead of borrowing a stricter one. Two new
+     spp_kq_handle_post_actions() cases, 'roster_add'/'roster_remove',
+     same plain nonce-POST-and-rerender convention as every other
+     action here. gl-registration-admin.php and every other gl-events
+     plugin file are untouched -- this is a standalone replacement for
+     KQ's use case only, not a fix to the shared tool.
 
    Changes from 1.1.0:
    - BUG FIX: 'cancel_event' in spp_kq_handle_post_actions() below now
@@ -545,7 +560,7 @@ function spp_kq_render_start_screen( int $occurrence_id, string $event_date ) : 
         <p class="kq-warn">
             Cannot start: <?php echo esc_html( $count ); ?> confirmed registrant(s) &mdash; need a multiple of 4,
             between 4 and 16. Adjust the roster via
-            <a href="<?php echo esc_url( add_query_arg( 'gl_reg_occ_id', $occurrence_id, home_url( '/gl-registration-admin/' ) ) ); ?>">Registration Admin</a> first.
+            <a href="<?php echo esc_url( add_query_arg( 'kq_view', 'roster' ) ); ?>">Roster Adjust</a> first.
         </p>
     <?php elseif ( ! $can_start_today ) : ?>
         <p class="kq-warn">
@@ -1115,6 +1130,25 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date ) : 
             }
             spp_kq_full_reset( $occurrence_id );
             return '';
+
+        case 'roster_add':
+        case 'roster_remove':
+            // KQ-specific replacement for gl-registration-admin (see
+            // inc/spp-kq-roster.php's own header) -- gated only by this
+            // shortcode's existing spp_kq_can_facilitate() check at the
+            // top of spp_kq_live_shortcode(), same as every other action
+            // here; no admin/editor/convenor role check. Re-verifies
+            // phase itself (never trusts the client) -- the roster is
+            // only ever adjustable before Round 1's draw locks it in.
+            $roster_state = spp_kq_get_event_state( $occurrence_id );
+            if ( ! $roster_state || $roster_state['phase'] !== 'not_started' ) {
+                return 'The roster can only be adjusted before Round 1 starts.';
+            }
+            $roster_user_id = isset( $_POST['spp_kq_roster_user_id'] ) ? absint( $_POST['spp_kq_roster_user_id'] ) : 0;
+            $roster_result  = ( $action === 'roster_add' )
+                ? spp_kq_roster_add( $occurrence_id, $roster_user_id )
+                : spp_kq_roster_remove( $occurrence_id, $roster_user_id );
+            return $roster_result['success'] ? '' : ( $roster_result['error'] ?? '' );
     }
 
     return '';
@@ -1149,13 +1183,15 @@ function spp_kq_live_shortcode() : string {
     $phase = $state['phase'];
     $round = (int) $state['current_round'];
 
-    // Full Scoreboard is its own ?kq_view=scoreboard flag, layered on top
-    // of the phase-driven switch below rather than a new phase of its
-    // own -- purely additive, read-only, no interaction with
-    // spp_kq_events.phase/current_round at all. See
-    // spp_kq_render_full_scoreboard_screen()/spp_kq_render_scoreboard_link()
-    // below and spp_kq_get_full_scoreboard() (inc/spp-kq-history.php).
-    $viewing_scoreboard = isset( $_GET['kq_view'] ) && sanitize_key( wp_unslash( $_GET['kq_view'] ) ) === 'scoreboard';
+    // Full Scoreboard (?kq_view=scoreboard) and Roster Adjust
+    // (?kq_view=roster) are both flags layered on top of the phase-
+    // driven switch below rather than phases of their own -- purely
+    // additive, no interaction with spp_kq_events.phase/current_round
+    // at all (Roster Adjust re-verifies phase==='not_started' itself,
+    // inside spp_kq_render_roster_screen() -- see inc/spp-kq-roster.php).
+    $kq_view = isset( $_GET['kq_view'] ) ? sanitize_key( wp_unslash( $_GET['kq_view'] ) ) : '';
+    $viewing_scoreboard = ( $kq_view === 'scoreboard' );
+    $viewing_roster      = ( $kq_view === 'roster' );
 
     ob_start();
     echo spp_kq_styles();
@@ -1165,6 +1201,8 @@ function spp_kq_live_shortcode() : string {
 
     if ( $viewing_scoreboard ) {
         echo spp_kq_render_full_scoreboard_screen( $occurrence_id );
+    } elseif ( $viewing_roster ) {
+        echo spp_kq_render_roster_screen( $occurrence_id );
     } else {
         switch ( $phase ) {
             case 'not_started':

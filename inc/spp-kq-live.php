@@ -1,8 +1,17 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Live Event Runner
-   Version: 1.0.0
-   Date: 2026-09-11
+   Version: 1.0.1
+   Date: 2026-09-13
+
+   Changes from 1.0.0:
+   - Text-only: spp_kq_transition_start_round1()'s own headcount error
+     now says "Roster Adjust" instead of "Registration Admin" -- that
+     tool has been replaced for KQ's use by inc/spp-kq-roster.php (a
+     KQ-specific, spp_kq_can_facilitate()-gated roster tool, not the
+     generic admin/editor/convenor-gated gl-events one). No behavior
+     change here; the actual link lives in
+     spp_kq_render_start_screen() (inc/spp-kq-screens.php).
 
    PURPOSE:
    The live, in-event round/court/score runner for Ace and Queen of
@@ -273,7 +282,7 @@ function spp_kq_transition_start_round1( int $occurrence_id ) : array {
     if ( $confirmed_count < 4 || $confirmed_count > 16 || $confirmed_count % 4 !== 0 ) {
         return array(
             'won'   => false,
-            'error' => "Cannot start: {$confirmed_count} confirmed registrant(s) -- need a multiple of 4, between 4 and 16. Adjust the roster via Registration Admin first.",
+            'error' => "Cannot start: {$confirmed_count} confirmed registrant(s) -- need a multiple of 4, between 4 and 16. Adjust the roster via Roster Adjust first.",
         );
     }
 
