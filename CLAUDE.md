@@ -84,6 +84,65 @@ Ranking/override data is also surfaced through WPDA (WP Data Access) admin table
 "Modify Overrides", app_id 7 / project 30) — some columns exist specifically so they show up
 correctly in that UI, not just in code.
 
+## Ace/Queen of the Courts (KQ)
+
+A second, separate event type (GL Events categories 2/3) with its own live round/court/score runner,
+independent of the ladder scheduling pipeline above — reuses GL Events' own registration tables but
+none of the ladder's `Master`/`Groups`/`Schedules` machinery. Built across several files, all
+`inc/spp-kq-*.php`, each with its own version-history block (read those before changing behavior, same
+convention as everywhere else):
+
+- **Schema** (`spp-kq-schema.php`) — four tables: `spp_kq_events` (phase/current_round per
+  occurrence), `spp_kq_assignments` (player→court/color per round), `spp_kq_scores` (score per
+  court/round) are **live, in-progress-only** state that Full Reset/Cancel Event legitimately delete
+  from. `spp_kq_history` is different on purpose: a **permanent** round-by-round archive, one row per
+  player per round per court, written **once** per occurrence via
+  `spp_kq_finalize_event_history_and_recap()` (`spp-kq-history.php`), triggered from both the
+  `end_event` and `cancel_event` transitions (a cancelled event's already-played rounds still count).
+  Gated by `SPP_KQ_CLUB_RATING_LAUNCH_DATE` (`spp-kq-club-rating.php`, currently 2026-09-17, a
+  permanent literal cutoff — never change to a dynamic "before today" check) — reused, not
+  duplicated, so pre-launch/sandbox test occurrences can never write a permanent history row.
+- **Movement algorithm** (`spp-kq-movement.php`) — pure, dependency-free PHP; winner moves up a
+  court, loser moves down, re-split to avoid repeat partnerships. Not touched by anything below.
+- **Live runner** (`spp-kq-live.php` mechanics, `spp-kq-screens.php` for `[spp_kq_live]` + its
+  screens). **Access is deliberately wide open**: `spp_kq_can_facilitate()` is just
+  `is_user_logged_in()` — any logged-in member can facilitate (start the draw, enter scores, reset),
+  not just admins/editors/convenors. `spp_is_admin()` gates only Full Reset. A successful Full Reset
+  now shows a green success notice (`SPP_KQ_NOTICE_OK_PREFIX` marker on the returned string, read by
+  `spp_kq_render_occurrence_header()`) — previously a fully successful reset on an event with nothing
+  visible to clear rendered identically to a silent failure.
+- **Live Full Scoreboard** — `?kq_view=scoreboard` on `[spp_kq_live]`, shows every completed
+  round/court/player/score so far (not just the current round), via `spp_kq_get_full_scoreboard()`.
+  Its round/court card markup is the shared, standalone `spp_kq_render_scoreboard_markup()`
+  (`spp-kq-history.php`), reused by the historical Event Detail view below rather than duplicated.
+- **Roster tool** (`spp-kq-roster.php`) — `?kq_view=roster` on `[spp_kq_live]`, replaces
+  `gl-registration-admin` for KQ's pre-Round-1 "fix the headcount" flow. That generic GL Events tool
+  is gated to administrator/editor/convenor; this KQ-specific one is gated only by
+  `spp_kq_can_facilitate()`, matching KQ's own open access model. Add/remove writes straight to
+  `gl_registrations` (same direct-write pattern as `spp-schedule-adjust.php`'s Last-Minute
+  Add/Dropout), bypassing GL Events' own cutoff/waitlist-downgrade logic. Only usable while
+  `phase === 'not_started'` (re-checked server-side).
+- **Recap email** — fires automatically at the same `end_event`/`cancel_event` trigger point as the
+  history archive, one HTML email per player, plain round-by-round score log (no ranking — KQ has
+  none; Glicko Club Ratings are a separate, already-published concern this email never mentions). A
+  `spp_kq_recap_email_dry_run` filter (default `false`) intercepts sends for testing — set it `true`
+  to get the intended send list back instead of real `wp_mail()` calls.
+- **Reading the archive** — two views, both open to any logged-in member (no admin/editor gate,
+  informational/historical data only):
+  - `kq_history` in the `spp-reports.php` registry — a flat, ever-growing log of every archived row,
+    newest event first.
+  - `[spp_kq_event_detail]` — pick a category (Ace/Queen) then a date (both `<select>`s auto-submit
+    on change, no button) to see one archived event's scoreboard, same layout as the live Full
+    Scoreboard. The date dropdown only ever lists dates that genuinely have data for the selected
+    category, current year only, so a "not found" result isn't reachable through normal use.
+- Demo/test data (occurrence_id `999901`/`999902`) used to preview these views has been cleaned up —
+  `spp_kq_history` is genuinely empty again; nothing to remove in a future session.
+
+**Shared-renderer fix, not KQ-specific**: `spp_render_report_table()` (`spp-report-table.php`) now
+always renders column headers, even when a report has zero rows (previously the whole `<table>` was
+skipped in favor of a bare "No results." message) — this affects **every** report in the registry,
+discovered via `kq_history` only because it was the first report ever actually empty at rest.
+
 ## Roles & access control
 
 - `spp_is_admin_or_editor()` (functions.php) checks **actual WP roles** (`administrator`, `editor`),
