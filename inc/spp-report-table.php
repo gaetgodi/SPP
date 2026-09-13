@@ -1,8 +1,29 @@
 <?php
 /* =========================================================
    Shared Report Table Renderer
-   Version: 1.6.1
-   Date: 2026-09-11
+   Version: 1.7.0
+   Date: 2026-09-13
+
+   Changes from 1.6.1:
+   - BUG FIX: a report with zero rows previously skipped the entire
+     <table> (column headers included) in favor of a bare "No results."
+     div -- confirmed, via direct testing with an arbitrary column set
+     forced through this function with an empty $rows array, that this
+     was this shared renderer's own behavior, affecting every report in
+     the registry, not specific to any one report (kq_history was just
+     the first report ever actually empty at rest, which is what
+     surfaced it). FIXED: the <table>/<thead> now render unconditionally;
+     when $total_rows === 0, the <tbody> gets a single
+     <tr><td colspan="N">No results.</td></tr> instead of the row loop,
+     N computed from the actual visible-column count (same
+     default_visible filter the header row and each data row already
+     use) rather than hardcoded, so it stays correct for any report's
+     column count, including one narrowed by a columns= filter. Header
+     rendering (labels, sortable links, current-sort arrow) is entirely
+     unchanged -- it was already computed before this conditional in
+     both the old and new code, just previously never reached when rows
+     were empty. Populated-report rendering is byte-for-byte unchanged;
+     only the previously-unreachable-for-real-data zero-row path differs.
 
    Changes from 1.6.0:
    - Stored defaults for --spp-report-radius and --spp-report-margin
@@ -722,39 +743,53 @@ function spp_render_report_table( array $columns, array $rows, array $args = arr
             </form>
         </div>
 
-        <?php if ( $total_rows === 0 ) : ?>
-            <div class="spp-report-empty">No results.</div>
-        <?php else : ?>
-            <div class="spp-report-table-scroll">
-                <table class="spp-report-table-grid">
-                    <thead>
+        <?php
+        // Visible columns (same default_visible filter used by both the
+        // header row below and each data row) -- counted once here so the
+        // zero-rows colspan below always spans the real column count, not
+        // a hardcoded number that would silently drift out of sync with a
+        // report's own column list (or a columns= filter's effective one).
+        $visible_column_count = 0;
+        foreach ( $columns as $col ) {
+            if ( isset( $col['default_visible'] ) && ! $col['default_visible'] ) continue;
+            $visible_column_count++;
+        }
+        ?>
+        <div class="spp-report-table-scroll">
+            <table class="spp-report-table-grid">
+                <thead>
+                    <tr>
+                        <?php foreach ( $columns as $col ) :
+                            if ( isset( $col['default_visible'] ) && ! $col['default_visible'] ) continue;
+                            $key      = $col['key'];
+                            $label    = $col['label'] ?? $key;
+                            $sortable = $col['sortable'] ?? false;
+                            ?>
+                            <th>
+                                <?php if ( $sortable ) : ?>
+                                    <a href="<?php echo $sort_link( $key ); ?>">
+                                        <?php echo esc_html( $label ); ?><?php
+                                        if ( $sort === $key ) {
+                                            // HTML entities, not \x escapes -- \x only expands inside
+                                            // double-quoted PHP strings, and a literal-backslash bug
+                                            // here would be easy to miss visually in a code review.
+                                            echo $dir === 'asc' ? ' &#9650;' : ' &#9660;';
+                                        }
+                                        ?>
+                                    </a>
+                                <?php else : ?>
+                                    <?php echo esc_html( $label ); ?>
+                                <?php endif; ?>
+                            </th>
+                        <?php endforeach; ?>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php if ( $total_rows === 0 ) : ?>
                         <tr>
-                            <?php foreach ( $columns as $col ) :
-                                if ( isset( $col['default_visible'] ) && ! $col['default_visible'] ) continue;
-                                $key      = $col['key'];
-                                $label    = $col['label'] ?? $key;
-                                $sortable = $col['sortable'] ?? false;
-                                ?>
-                                <th>
-                                    <?php if ( $sortable ) : ?>
-                                        <a href="<?php echo $sort_link( $key ); ?>">
-                                            <?php echo esc_html( $label ); ?><?php
-                                            if ( $sort === $key ) {
-                                                // HTML entities, not \x escapes -- \x only expands inside
-                                                // double-quoted PHP strings, and a literal-backslash bug
-                                                // here would be easy to miss visually in a code review.
-                                                echo $dir === 'asc' ? ' &#9650;' : ' &#9660;';
-                                            }
-                                            ?>
-                                        </a>
-                                    <?php else : ?>
-                                        <?php echo esc_html( $label ); ?>
-                                    <?php endif; ?>
-                                </th>
-                            <?php endforeach; ?>
+                            <td colspan="<?php echo (int) $visible_column_count; ?>" class="spp-report-empty">No results.</td>
                         </tr>
-                    </thead>
-                    <tbody>
+                    <?php else : ?>
                         <?php foreach ( $page_rows as $row ) :
                             $row_edit_key = $can_edit ? (string) ( $row[ $edit_key_column ] ?? '' ) : '';
                             ?>
@@ -812,14 +847,15 @@ function spp_render_report_table( array $columns, array $rows, array $args = arr
                                 <?php endforeach; ?>
                             </tr>
                         <?php endforeach; ?>
-                    </tbody>
-                </table>
-            </div>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
 
-            <?php if ( $per_page !== null && $total_pages > 1 ) : ?>
-                <div class="spp-report-pagination">
-                    <?php if ( $paged > 1 ) : ?>
-                        <a href="<?php echo $page_link( $paged - 1 ); ?>">&laquo; Prev</a>
+        <?php if ( $per_page !== null && $total_pages > 1 ) : ?>
+            <div class="spp-report-pagination">
+                <?php if ( $paged > 1 ) : ?>
+                    <a href="<?php echo $page_link( $paged - 1 ); ?>">&laquo; Prev</a>
                     <?php endif; ?>
                     <?php
                     $window = 2;
@@ -841,7 +877,6 @@ function spp_render_report_table( array $columns, array $rows, array $args = arr
                     <?php endif; ?>
                 </div>
             <?php endif; ?>
-        <?php endif; ?>
         </div>
     </div>
 
