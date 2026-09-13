@@ -1,8 +1,19 @@
 <?php
 /* =========================================================
    Report Generator — Admin Screen
-   Version: 2.7.2
-   Date: 2026-09-11
+   Version: 2.7.3
+   Date: 2026-09-13
+
+   Changes from 2.7.2:
+   - Live preview's own default_sort resolution (bare-string-or-Rank-or-
+     first-column heuristic, then a hardcoded 'default_dir' => 'asc')
+     replaced with a call to spp_report_resolve_default_sort()
+     (inc/spp-reports.php 1.6.0) -- the same logic, now shared with the
+     [spp_report] shortcode handler, plus support for a definition's
+     'default_sort' being ['column' => ..., 'direction' => 'desc'] so
+     the admin preview reflects a report's actual default direction
+     (e.g. ladder_ratings' new ClubRating DESC) instead of always
+     previewing ascending regardless of what the real shortcode does.
 
    Changes from 2.7.1:
    - BUG FIX: --spp-report-table-bg's control was <input type="color">
@@ -1457,18 +1468,15 @@ function spp_render_report_generator_page() {
             return $col;
         }, $preview_columns );
     }
-    $preview_keys           = array_column( $preview_columns, 'key' );
-    $definition_default_sort = $definition['default_sort'] ?? null;
-    $preview_default_sort  = ( $definition_default_sort !== null && in_array( $definition_default_sort, $preview_keys, true ) )
-        ? $definition_default_sort
-        : ( in_array( 'Rank', $preview_keys, true ) ? 'Rank' : ( $preview_keys[0] ?? '' ) );
+    $preview_keys   = array_column( $preview_columns, 'key' );
+    $preview_sorted = spp_report_resolve_default_sort( $definition['default_sort'] ?? null, $preview_keys );
 
     echo '<div id="spp-rg-live-preview">';
     spp_render_report_table( $preview_columns, $rows, array(
         'id'               => 'preview',
         'edit_report'      => $selected_report,
-        'default_sort'     => $preview_default_sort,
-        'default_dir'      => 'asc',
+        'default_sort'     => $preview_sorted['column'],
+        'default_dir'      => $preview_sorted['direction'],
         'per_page_options' => spp_report_per_page_choices(),
         'default_per_page' => $per_page,
         'edit'             => $definition['edit'] ?? array(),

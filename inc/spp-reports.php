@@ -1,8 +1,39 @@
 <?php
 /* =========================================================
    Report Registry
-   Version: 1.5.0
-   Date: 2026-09-10
+   Version: 1.6.0
+   Date: 2026-09-13
+
+   Changes from 1.5.0:
+   - BUG FIX: ladder_ratings' recently-added 'default_sort' => 'ClubRating'
+     was in fact being read and applied on every load -- the shortcode
+     handler's default_sort resolution (below) correctly picked
+     'ClubRating' out of the definition and passed it through to
+     spp_render_report_table(). The actual defect was direction, not
+     column: the handler (and the Report Generator admin preview's
+     identical block, inc/spp-report-generator-admin.php) both hardcoded
+     'default_dir' => 'asc' unconditionally -- a report definition had no
+     way to ask for a descending default, so ClubRating always rendered
+     lowest-first on load, the opposite of a ratings leaderboard's
+     expected highest-first order (which read, in practice, as "the sort
+     isn't applying"). No hardcoded ORDER BY or report-variant setting
+     was involved -- spp_report_ladder_ratings()'s own query has no
+     ORDER BY, and spp_report_variants (inc/spp-report-variants.php)
+     stores only columns/no_sort/per_page/css, nothing sort-related, so
+     it couldn't have been overriding this even when a variant is in
+     play. Column casing matched too (ClubRating column key vs. the
+     query's own ClubRating alias) -- no aliasing bug there either.
+     FIXED: 'default_sort' can now optionally be
+     ['column' => ..., 'direction' => 'asc'|'desc'] instead of a bare
+     column-name string -- see the new spp_report_resolve_default_sort()
+     helper below, now the single place both the shortcode handler and
+     the admin preview resolve a definition's default_sort against the
+     effective column list. A bare string (every other report definition
+     today: 'Rank', 'last_name') keeps resolving to 'asc', unchanged --
+     fully backward compatible, verified against master_list/membership/
+     results, none of which specify a direction. ladder_ratings is the
+     first (and so far only) report to use the array form, set to
+     ['column' => 'ClubRating', 'direction' => 'DESC'].
 
    Changes from 1.4.0:
    - SECURITY FIX (found via full audit of the editable-column
@@ -258,7 +289,11 @@ function spp_report_ladder_ratings() {
         array( 'key' => 'last_name',  'label' => 'Last Name',   'sortable' => true ),
     );
 
-    return array( 'columns' => $columns, 'rows' => $rows , 'default_sort' => 'ClubRating',);
+    return array(
+        'columns'      => $columns,
+        'rows'         => $rows,
+        'default_sort' => array( 'column' => 'ClubRating', 'direction' => 'DESC' ),
+    );
 }
 
 /**
@@ -408,6 +443,48 @@ function spp_report_filter_columns( array $full_columns, array $requested_keys )
     return $effective;
 }
 
+/**
+ * Resolve a report definition's 'default_sort' value against the
+ * effective column list actually being rendered (post columns=
+ * filtering), and return the column key + direction spp_render_report_table()
+ * should be told to use.
+ *
+ * A definition's 'default_sort' may be either:
+ *   - a bare column-name string (e.g. 'Rank') -- backward compatible with
+ *     every report definition that predates direction support; always
+ *     resolves to 'asc', exactly as before this function existed.
+ *   - ['column' => 'ClubRating', 'direction' => 'DESC'] -- direction is
+ *     case-insensitive and defaults to 'asc' if omitted from the array.
+ *
+ * Falls back to the original Rank-if-present-else-first-column
+ * heuristic (direction 'asc') when the definition doesn't set
+ * 'default_sort' at all, or its column didn't survive a columns=
+ * filter -- unchanged from the behavior before direction support existed.
+ *
+ * @param mixed $definition_default_sort The definition's 'default_sort' value (string, array, or absent/null).
+ * @param array $effective_keys          Column keys actually being rendered, in order.
+ * @return array ['column' => string, 'direction' => 'asc'|'desc']
+ */
+function spp_report_resolve_default_sort( $definition_default_sort, array $effective_keys ) {
+    $column    = null;
+    $direction = 'asc';
+
+    if ( is_array( $definition_default_sort ) ) {
+        $column    = $definition_default_sort['column'] ?? null;
+        $direction = ( strtolower( (string) ( $definition_default_sort['direction'] ?? 'asc' ) ) === 'desc' ) ? 'desc' : 'asc';
+    } elseif ( is_string( $definition_default_sort ) && $definition_default_sort !== '' ) {
+        $column = $definition_default_sort;
+    }
+
+    if ( $column === null || ! in_array( $column, $effective_keys, true ) ) {
+        // Fall back to the pre-existing heuristic, direction always 'asc'.
+        $column    = in_array( 'Rank', $effective_keys, true ) ? 'Rank' : ( $effective_keys[0] ?? '' );
+        $direction = 'asc';
+    }
+
+    return array( 'column' => $column, 'direction' => $direction );
+}
+
 add_shortcode( 'spp_report', function( $atts ) {
     // Site-wide policy, not a per-report judgment call: every report
     // and every variant requires a logged-in visitor, no exceptions,
@@ -484,19 +561,17 @@ add_shortcode( 'spp_report', function( $atts ) {
     // A definition's own 'default_sort' wins if it survived into the
     // effective column list (it always will unless a columns= filter
     // dropped it); otherwise fall back to the original Rank-if-present
-    // heuristic, unchanged from before this key existed.
-    $effective_keys       = array_column( $effective_columns, 'key' );
-    $definition_default   = $definition['default_sort'] ?? null;
-    $default_sort         = ( $definition_default !== null && in_array( $definition_default, $effective_keys, true ) )
-        ? $definition_default
-        : ( in_array( 'Rank', $effective_keys, true ) ? 'Rank' : ( $effective_keys[0] ?? '' ) );
+    // heuristic, unchanged from before this key existed. Direction comes
+    // along with it -- see spp_report_resolve_default_sort().
+    $effective_keys = array_column( $effective_columns, 'key' );
+    $sort_resolved  = spp_report_resolve_default_sort( $definition['default_sort'] ?? null, $effective_keys );
 
     ob_start();
     spp_render_report_table( $effective_columns, $definition['rows'], array(
         'id'               => $name,
         'edit_report'      => $name,
-        'default_sort'     => $default_sort,
-        'default_dir'      => 'asc',
+        'default_sort'     => $sort_resolved['column'],
+        'default_dir'      => $sort_resolved['direction'],
         'per_page_options' => spp_report_per_page_choices(),
         'default_per_page' => $per_page,
         'edit'             => $definition['edit'] ?? array(),
