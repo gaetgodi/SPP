@@ -258,7 +258,7 @@ function spp_report_ladder_ratings() {
         array( 'key' => 'last_name',  'label' => 'Last Name',   'sortable' => true ),
     );
 
-    return array( 'columns' => $columns, 'rows' => $rows );
+    return array( 'columns' => $columns, 'rows' => $rows , 'default_sort' => 'ClubRating',);
 }
 
 /**
