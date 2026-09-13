@@ -577,6 +577,7 @@ function spp_report_times() {
         'edit'         => array(
             'table'      => 'Times',
             'key_column' => 'T_ID',
+    )
     );
 }
 
