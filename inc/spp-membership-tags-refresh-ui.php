@@ -1,10 +1,26 @@
 <?php
 /* =========================================================
    Membership Tags Refresh UI
-   Version: 1.1.0
-   Date: 2026-09-07
+   Version: 1.2.0
+   Date: 2026-09-14
    Based on: Code Manager snippet "Membership tags table refresh"
    (CM208)
+
+   Changes from 1.1.0:
+   - Added a one-line post-refresh status message
+     (spp_membership_tags_refresh_status_message()), shown right before
+     the result table: "No refresh needed" when spp_refresh_membership_
+     tags()'s new summary return value shows nothing happened, "Refresh
+     complete -- N synced" when it did, or that same line with the
+     failure count folded in when any row failed -- distinct from, not a
+     replacement for, that function's existing per-row ⚠ warnings (which
+     still print exactly as before, just now also summarized in one
+     place so the count isn't missed if someone doesn't scroll past the
+     table). Also noticed and left as-is: this file's two do_shortcode()
+     calls now point at [spp_report table="membership_tags-variant-1"],
+     not [wpda_app app_id="3"] as previously documented here -- an
+     out-of-band edit from outside this migration, not something this
+     change touched.
 
    Changes from 1.0.0:
    - SECURITY FIX (Tier 1 access-control audit): the 2026-09-06
@@ -76,8 +92,41 @@
 
 defined( 'ABSPATH' ) || exit;
 
+/**
+ * One-line post-refresh status message, from spp_refresh_membership_tags()'s
+ * own ['deleted','synced','failed'] summary -- distinct from (not a
+ * replacement for) that function's existing per-row ⚠ failure warnings,
+ * which still print inline exactly as before. Styled with this
+ * codebase's existing general-purpose box-ok/box-warn color convention
+ * (green #28a745/#eaf7ed, amber #ffc107/#fff8e1 -- see
+ * inc/spp-schedule-adjust.php's own .box-ok/.box-warn CSS for the same
+ * values) via plain inline style="", matching this file's own existing
+ * convention (the confirm-box below has never used a CSS class either).
+ */
+function spp_membership_tags_refresh_status_message( array $summary ) : string {
+    $synced = $summary['synced'] ?? 0;
+    $failed = $summary['failed'] ?? 0;
+
+    if ( $synced === 0 && $failed === 0 ) {
+        $text  = 'No refresh needed &mdash; membership tags are already up to date.';
+        $style = 'background:#eaf7ed;border:1px solid #28a745;color:#155724;'; // box-ok
+    } elseif ( $failed > 0 ) {
+        $text  = sprintf(
+            'Refresh complete &mdash; %d member(s) synced, %d failed (see error(s) below).',
+            $synced, $failed
+        );
+        $style = 'background:#fff8e1;border:1px solid #ffc107;color:#7a4a00;'; // box-warn
+    } else {
+        $text  = sprintf( 'Refresh complete &mdash; %d member(s) synced.', $synced );
+        $style = 'background:#eaf7ed;border:1px solid #28a745;color:#155724;'; // box-ok
+    }
+
+    return "<div style='{$style}border-radius:6px;padding:12px 16px;margin:16px 0;font-family:Arial,sans-serif;'>{$text}</div>";
+}
+
 function spp_membership_tags_refresh_ui() {
-    spp_refresh_membership_tags();
+    $summary = spp_refresh_membership_tags();
+    echo spp_membership_tags_refresh_status_message( $summary );
    echo do_shortcode( '[spp_report table="membership_tags-variant-1"]' );
 }
 
