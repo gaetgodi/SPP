@@ -10,17 +10,64 @@
  * OR when a new post has been published since the last time the modal was seen.
  * Uses a cookie (spp_blog_seen) storing date|latest_post_id.
  *
- * Version: 1.1.0
- * Date: 2026-05-27
+ * Version: 1.2.0
+ * Date: 2026-09-14
+ *
+ * Changes from 1.1.0:
+ * - Global on/off window, gated by a new spp_blog_reminder_enabled_until
+ *   option (a Unix timestamp: "the reminder is active until this time" --
+ *   absent/0 or in the past means off). Defaults to off (option is never
+ *   pre-populated; a fresh install/site has no active window until the
+ *   first real publish). spp_blog_reminder_activate_window() hooks
+ *   transition_post_status for post_type 'post', $new_status==='publish'
+ *   AND $old_status!=='publish' (a genuine go-live, not a re-save of an
+ *   already-published post -- same "only the real transition, not every
+ *   edit" discipline this file's own moderator-notify hook uses in
+ *   inc/blog-roles.php) -- sets the option to now + 2 days every time.
+ *   The shortcode checks this window FIRST, before the existing post
+ *   query/cookie logic runs at all: outside the window the modal never
+ *   renders, regardless of whether there is technically an unseen post.
+ *   Inside the window, every existing behavior (3-most-recent-posts
+ *   query, once-per-day-or-new-post cookie tracking) is unchanged.
+ *   No new admin UI for a manual override -- there is no existing
+ *   blog-admin settings screen this would obviously belong on (checked
+ *   before building this); an administrator can flip it manually via
+ *   `wp option update spp_blog_reminder_enabled_until <unix-timestamp>`
+ *   (or `0` to force it off) in the meantime.
  *
  * Changes from 1.0.0:
  * - Cookie now stores date|latest_post_id so modal re-shows when a new
  *   post is published, even if already seen today.
  */
 
+/**
+ * The global on/off gate (see this file's own 1.2.0 changelog). Absent,
+ * 0, or in the past all mean "off." Checked first in the shortcode below,
+ * before any of the existing post-query/cookie logic runs.
+ */
+function spp_blog_reminder_window_active() : bool {
+    $enabled_until = (int) get_option( 'spp_blog_reminder_enabled_until', 0 );
+    return $enabled_until > time();
+}
+
+/**
+ * Opens (or extends) the reminder window to 2 days from right now.
+ * Hooked to transition_post_status below -- fires only on a genuine
+ * publish (a post that was NOT already 'publish' just became it), so
+ * re-saving an already-published post never resets the window.
+ */
+function spp_blog_reminder_activate_window( string $new_status, string $old_status, WP_Post $post ) : void {
+    if ( $new_status !== 'publish' || $old_status === 'publish' ) return;
+    if ( $post->post_type !== 'post' ) return;
+
+    update_option( 'spp_blog_reminder_enabled_until', time() + 2 * DAY_IN_SECONDS );
+}
+add_action( 'transition_post_status', 'spp_blog_reminder_activate_window', 10, 3 );
+
 add_shortcode( 'spp_blog_reminder', 'spp_blog_reminder_shortcode' );
 function spp_blog_reminder_shortcode() {
     if ( ! is_user_logged_in() ) return '';
+    if ( ! spp_blog_reminder_window_active() ) return '';
 
     // Get 3 most recent published non-expired posts
     $today_date = date( 'Y-m-d' );
