@@ -1,9 +1,29 @@
 <?php
 /* =========================================================
    GL Player Schedule View
-   Version: 1.7.0
-   Date: 2026-08-16
+   Version: 1.8.0
+   Date: 2026-09-14
    Based on: Player Schedule View 1.5
+
+   Changes from 1.7.0 (CSS-only -- desktop court-card cropping fix at
+   4+ courts in one time slot; see .spp-groups-grid/.spp-group-card/
+   .spp-col-name's own comments for the full root-cause writeup):
+   - .spp-group-card's flex-basis raised from 260px to 380px (a real
+     verified minimum, not a starting point flex-grow happened to
+     inflate past) and given an explicit min-width floor -- up to 3
+     courts per time slot still fits one row exactly as before; a 4th+
+     now wraps to its own row instead of all 4 cramming onto one row
+     at ~300px each.
+   - .spp-col-name no longer ellipsis-truncates (overflow:hidden/
+     text-overflow:ellipsis/white-space:nowrap) -- wraps to a second
+     line instead, so a name is never cropped regardless of exact
+     pixel math as the roster changes week to week. white-space is
+     set explicitly (not just omitted) to override an unrelated,
+     same-class-name collision from css/spp-registrant-list.css (a
+     disabled/superseded feature whose CSS is still enqueued site-
+     wide) -- found live while testing this fix, flagged separately,
+     not touched here.
+   - Mobile (<=600px) single-column behavior unchanged/unaffected.
 
    Changes from 1.6.5:
    - Dropped the schedules_w dependency entirely. Registrant
@@ -314,7 +334,51 @@ foreach ($time_slots as $slot) {
     opacity: 0.85;
 }
 
-/* ── Groups grid ──────────────────────────────────────── */
+/* ── Groups grid ──────────────────────────────────────────
+   Root cause of the 4+-courts cropping bug: with flex-wrap +
+   flex:1 1 260px (the old rule), the browser packs as many
+   260px-BASIS cards onto a row as geometrically fit, THEN grows
+   them to fill the row -- so how much each card actually ends up
+   getting depends entirely on how many happened to fit at that
+   260px starting point, not on what's actually comfortable. 3
+   cards in this page's real content-width row grow to ~400px each
+   (plenty of room, which is why up to 3 always looked fine); 4
+   cards fit in that same row at ~300px each -- just enough to
+   satisfy the wrap algorithm, not enough for a full name + phone +
+   travel badge, so .spp-col-name's overflow:hidden/text-overflow:
+   ellipsis kicks in and crops names.
+
+   FIX: raise the floor from 260px to 380px -- a real minimum,
+   verified live against this page's own longest real names
+   ("Joanne M. McCracken", "Shelley T. Tackaberry") rather than an
+   arbitrary starting point that only happens to look fine once
+   flex-grow inflates it. min-width (not just flex-basis) makes it a
+   hard floor: flex-basis alone is still just a "preferred" size the
+   line-breaking algorithm uses to decide how many cards join a row,
+   and gives no guarantee against flex-shrink compressing a card
+   below it if a row's total basis ever comes out fractionally over
+   the container width; min-width can't be shrunk past regardless.
+   At this page's real content width (measured ~1240px, NOT the
+   ~600px a screenshot can misleadingly suggest before Divi's own
+   layout fully settles), 3 cards at 380px + gaps fit on one row as
+   before -- unaffected, no regression -- while a 4th now pushes the
+   whole row over that width and wraps to its own row instead of
+   cramming in, getting the full row's width via the same
+   flex-grow:1 every card already had.
+
+   NOT CSS Grid: tried repeat(auto-fit, minmax(380px, 1fr)) first --
+   functionally correct in isolation, but on THIS page's real DOM
+   (a Divi Code module inside a flex-direction:column column/row
+   structure) it triggered an unrelated Divi layout bug: a grid
+   child's own intrinsic (shrink-to-fit) width contribution to an
+   ancestor with flex-grow:0 computes far narrower than a flex
+   child's does for the exact same content, collapsing the whole
+   module from ~1240px down to ~600px -- confirmed by swapping
+   display:grid back to flex on the live page and watching the
+   ancestor's measured width jump from 601px to 1240px with no other
+   change. Flexbox has no such interaction here, so it stays flex,
+   just with a real minimum width instead of a starting point that
+   gets grown away from. */
 .spp-groups-grid {
     display: flex;
     flex-wrap: wrap;
@@ -323,7 +387,8 @@ foreach ($time_slots as $slot) {
 
 /* ── Group card ───────────────────────────────────────── */
 .spp-group-card {
-    flex: 1 1 260px;
+    flex: 1 1 380px;
+    min-width: 380px;
     border: 1px solid #d0d0d0;
     border-radius: 8px;
     overflow: hidden;
@@ -393,11 +458,41 @@ foreach ($time_slots as $slot) {
     color: #333 !important;
 }
 .spp-col-name {
+    /* Wrap instead of ellipsis-truncate (was overflow:hidden +
+       text-overflow:ellipsis + white-space:nowrap): the 380px card
+       minimum above (see .spp-groups-grid's own comment) comfortably
+       covers this roster's real names in the common case, but a
+       long name + a wide travel badge on the SAME row can still
+       come up a few pixels short even at that width -- that's a
+       per-row content combination, not something a single fixed
+       card-width budget can guarantee against for every possible
+       name/travel-code length as the roster changes week to week.
+       Wrapping to a second line (row height grows, align-items:
+       center on .spp-player-row keeps it looking intentional against
+       the still-single-line rank/phone/travel columns) means a name
+       is simply never cropped, full stop, regardless of exact
+       pixel math -- the actual bug being fixed here, guaranteed
+       rather than budgeted for.
+       white-space is set explicitly to `normal` (not just omitted)
+       for a real reason found while testing this fix live: an
+       entirely unrelated stylesheet, css/spp-registrant-list.css
+       (a disabled/superseded feature -- see functions.php's own
+       "Superseded by gl-events plugin" comment on that PHP file --
+       whose CSS is still enqueued site-wide regardless), happens to
+       define its own `.spp-col-name { white-space: nowrap; }` under
+       the exact same class name. Simply removing nowrap from THIS
+       rule left that collision free to keep applying unopposed
+       (per-property cascade: with no competing declaration from this
+       rule, the other stylesheet's nowrap just wins by default) --
+       confirmed via document.styleSheets that this is genuinely a
+       different file, not a duplicate rule in this one. Explicitly
+       overriding it here is the targeted fix for this page; the
+       orphaned stylesheet itself is a separate, pre-existing issue
+       flagged in this fix's own report, not touched here. */
     flex: 1 1 auto;
     min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: break-word;
+    white-space: normal;
     color: #000000 !important;
 }
 .spp-col-phone {
@@ -437,6 +532,7 @@ foreach ($time_slots as $slot) {
     }
     .spp-group-card {
         flex: 1 1 100%;
+        min-width: 0;
     }
     .spp-time-header {
         font-size: 1.1em;
