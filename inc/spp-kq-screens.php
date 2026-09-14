@@ -1,8 +1,36 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Screens
-   Version: 1.8.0
+   Version: 1.9.0
    Date: 2026-09-14
+
+   Changes from 1.8.0:
+   - Start-Round-1's own timing gate ($can_start_now in
+     spp_kq_render_start_screen(), formerly $can_start_today; re-checked
+     server-side in spp_kq_handle_post_actions()'s 'start_round1' case)
+     replaced from an exact current_time('Y-m-d') === $event_date match
+     to the SAME threshold the 30-minutes-before-start screens-access
+     gate already uses -- reuses spp_kq_get_occurrence_start_timestamp()
+     directly, no second implementation of the math. Real incident: the
+     exact-date rule wrongly blocked starting a real PAST occurrence
+     (a sandbox event, or any event whose day had already passed) even
+     though it's obviously long past its start time and should be
+     freely startable -- a facilitator checked in a full sandbox
+     roster and was blocked here. "now >= start - 30 minutes" already
+     produces the right answer for all three real cases (within 30
+     minutes of a future start, later today past that threshold, or
+     any time after a past event's start) with no "is this a sandbox
+     event" special-casing needed. spp_is_admin() exemption unchanged.
+     Both functions now take an added $event_time parameter (source:
+     eff_event_time, same caller-passes-it-down convention $event_date
+     already used, so the two checks can never diverge) -- this is
+     still a SEPARATE check from the 30-minutes-before-start screens-
+     access gate (spp_kq_event_screens_open(), added in 1.8.0), not
+     merged into it; that gate is completely unaffected by this change.
+     Block message updated to match that gate's own wording/tone
+     ("This event doesn't open until [time] on [date].") instead of
+     the old "This event can only be started on its actual event
+     date." -- one consistent message style across both gates.
 
    Changes from 1.7.0:
    - New 30-minutes-before-start access gate on [spp_kq_live] itself
@@ -211,15 +239,20 @@ function spp_kq_get_occurrence_summary( int $occurrence_id ) : ?array {
 
 // =============================================================
 // 30-minutes-before-start access gate (1.2.0). Separate, earlier/
-// broader rule from the existing Start-Round-1 date-only gate
-// ($can_start_today in spp_kq_render_start_screen(), re-checked
-// server-side in spp_kq_handle_post_actions()'s 'start_round1' case)
-// -- that one is unchanged and still applies on top of this one, once
-// a facilitator is past this gate. This one blocks EVERYTHING
-// reachable for an occurrence (check-in, roster-adjust, live play,
-// POST actions included -- checked in spp_kq_live_shortcode() before
+// broader rule from the Start-Round-1 gate ($can_start_now in
+// spp_kq_render_start_screen(), re-checked server-side in
+// spp_kq_handle_post_actions()'s 'start_round1' case) -- that one is
+// still its own separate check, applying on top of this one once a
+// facilitator is past this gate; this one blocks EVERYTHING reachable
+// for an occurrence (check-in, roster-adjust, live play, POST actions
+// included -- checked in spp_kq_live_shortcode() before
 // spp_kq_handle_post_actions() runs at all, not just before the
-// phase-screen switch), not just Start Round 1 itself.
+// phase-screen switch), not just Start Round 1 itself. As of 1.3.0
+// the Start-Round-1 gate reuses the exact same threshold function
+// (spp_kq_get_occurrence_start_timestamp(), below) this gate does --
+// see that version's own changelog for why (it used to be a
+// current_time('Y-m-d') === $event_date exact match, which wrongly
+// blocked starting a real PAST occurrence).
 //
 // TIMEZONE: this site's WP timezone is confirmed correctly set to a
 // real IANA zone (timezone_string = 'America/Toronto', not a static
@@ -231,9 +264,7 @@ function spp_kq_get_occurrence_summary( int $occurrence_id ) : ?array {
 // directly comparable with no further conversion. Confirmed, not
 // assumed: this is the identical convention spp_kq_render_picker_row()/
 // spp_kq_render_occurrence_header() already use to display
-// eff_event_time correctly (date_i18n(strtotime($eff_event_time))),
-// and spp_kq_render_start_screen()'s own current_time('Y-m-d') ===
-// $event_date check already relies on for the existing gate.
+// eff_event_time correctly (date_i18n(strtotime($eff_event_time))).
 // =============================================================
 
 /**
@@ -790,13 +821,6 @@ function spp_kq_render_occurrence_header( array $occurrence, string $notice = ''
 }
 
 /**
- * Screen 2: Start screen (not_started)
- *
- * @param string $event_date The occurrence's real event date ('Y-m-d'),
- *   from spp_kq_get_occurrence_summary() -- passed in by the caller rather
- *   than re-queried here.
- */
-/**
  * Screen 2: Start / Check-in. Every confirmed registrant (gl_registrations),
  * each toggleable checked-in/not -- see inc/spp-kq-checkin.php's own
  * header for the full flow. The "Cannot start" validation below is
@@ -807,24 +831,40 @@ function spp_kq_render_occurrence_header( array $occurrence, string $notice = ''
  * Remove button uses) BEFORE calling spp_kq_transition_start_round1(),
  * so that function's own confirmed-count check (unchanged) already
  * evaluates the post-reconciliation reality.
+ *
+ * @param string      $event_date The occurrence's real event date
+ *   ('Y-m-d'), from spp_kq_get_occurrence_summary() -- passed in by the
+ *   caller rather than re-queried here.
+ * @param string|null $event_time The occurrence's real eff_event_time
+ *   ('H:i:s' or null), same source/caller convention as $event_date.
  */
-function spp_kq_render_start_screen( int $occurrence_id, string $event_date ) : string {
+function spp_kq_render_start_screen( int $occurrence_id, string $event_date, ?string $event_time ) : string {
     $confirmed        = spp_kq_get_confirmed_registrants_named( $occurrence_id );
     $checked_in_ids    = spp_kq_get_checked_in_user_ids( $occurrence_id );
     $confirmed_count   = count( $confirmed );
     $checked_in_count  = count( $checked_in_ids );
     $valid             = ( $checked_in_count >= 4 && $checked_in_count <= 16 && $checked_in_count % 4 === 0 );
 
-    // Day-of restriction: this feature has no access gate beyond
-    // is_user_logged_in() (see spp_kq_can_facilitate()), so this is the one
-    // guard against an event being started on the wrong day by mistake --
-    // block rather than invent a workaround, same convention as the
-    // non-multiple-of-4 headcount case above. Administrators are exempt,
-    // for testing (spp_is_admin() -- same helper this codebase already uses
-    // for administrator-only exceptions elsewhere). Ordinary members,
-    // editors included, stay restricted to the actual event day.
-    $is_event_day    = ( current_time( 'Y-m-d' ) === $event_date );
-    $can_start_today = $is_event_day || spp_is_admin();
+    // Start-Round-1 timing gate (1.3.0): same threshold as the
+    // screens-access gate (spp_kq_event_screens_open(), checked earlier
+    // in spp_kq_live_shortcode() before this screen is even reached) --
+    // reuses spp_kq_get_occurrence_start_timestamp() directly rather
+    // than a second implementation of the same math. Previously this
+    // was an exact current_time('Y-m-d') === $event_date match, which
+    // wrongly blocked starting a real PAST occurrence (a sandbox event,
+    // or any event whose day has already passed) even though it's
+    // obviously long past its start time and should be freely
+    // startable -- confirmed as a real incident, not a hypothetical:
+    // a facilitator checked in a full sandbox roster and was blocked
+    // here by the stale exact-date rule. "now >= start - 30 minutes"
+    // already produces the right answer for all three real cases
+    // (within 30 minutes of a future start, later today past that
+    // threshold, or any time after a past event's start) with no
+    // separate "is this a sandbox event" special-casing needed --
+    // current_time() is always past a past event's own threshold.
+    // Administrators exempt, unchanged (spp_is_admin()).
+    $start_ts        = spp_kq_get_occurrence_start_timestamp( $event_date, $event_time );
+    $can_start_now   = spp_is_admin() || ( $start_ts !== null && current_time( 'timestamp' ) >= ( $start_ts - 30 * MINUTE_IN_SECONDS ) );
 
     ob_start();
     ?>
@@ -861,9 +901,19 @@ function spp_kq_render_start_screen( int $occurrence_id, string $event_date ) : 
             between 4 and 16. Adjust the roster via
             <a href="<?php echo esc_url( add_query_arg( 'kq_view', 'roster' ) ); ?>">Roster Adjust</a> first.
         </p>
-    <?php elseif ( ! $can_start_today ) : ?>
+    <?php elseif ( ! $can_start_now ) : ?>
+        <?php
+        // Same wording/tone as spp_kq_render_too_early_notice() (the
+        // screens-access gate) -- one consistent message style across
+        // both gates rather than two different ones. $start_ts is never
+        // null here: a null start_ts means spp_is_admin() is the only
+        // way $can_start_now could be true, and an admin never reaches
+        // this branch in the first place.
+        $opens_at = $start_ts - 30 * MINUTE_IN_SECONDS;
+        $when     = date_i18n( 'g:ia', $opens_at ) . ' on ' . date_i18n( 'l, F j', $opens_at );
+        ?>
         <p class="kq-warn">
-            This event is scheduled for <?php echo esc_html( date_i18n( 'l, F j', strtotime( $event_date ) ) ); ?> &mdash; come back on the day to start it.
+            This event doesn't open until <?php echo esc_html( $when ); ?>.
         </p>
     <?php else : ?>
         <form method="post">
@@ -1359,12 +1409,15 @@ function spp_kq_render_cancelled_screen( int $occurrence_id, int $round ) : stri
 // =============================================================
 
 /**
- * @param string $event_date The occurrence's real event date ('Y-m-d'),
- *   passed by the caller -- same value spp_kq_render_start_screen() uses,
- *   so the button's own day-of gate and this server-side check can never
- *   diverge.
+ * @param string      $event_date The occurrence's real event date
+ *   ('Y-m-d'), passed by the caller -- same value
+ *   spp_kq_render_start_screen() uses, so the button's own timing gate
+ *   and this server-side check can never diverge.
+ * @param string|null $event_time The occurrence's real eff_event_time
+ *   ('H:i:s' or null), same source/caller convention as $event_date --
+ *   used by the 'start_round1' case's own timing re-check.
  */
-function spp_kq_handle_post_actions( int $occurrence_id, string $event_date ) : string {
+function spp_kq_handle_post_actions( int $occurrence_id, string $event_date, ?string $event_time = null ) : string {
     if ( ! isset( $_POST['spp_kq_action'], $_POST['spp_kq_nonce'] ) ) {
         return '';
     }
@@ -1377,12 +1430,22 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date ) : 
 
     switch ( $action ) {
         case 'start_round1':
-            // Same day-of gate the Start screen's button enforces (see that
-            // function's docblock) -- re-checked here so a crafted or stale
-            // POST can't bypass it. Must match what the UI offers, same
-            // discipline as every other access check in this codebase.
-            if ( current_time( 'Y-m-d' ) !== $event_date && ! spp_is_admin() ) {
-                return 'This event can only be started on its actual event date.';
+            // Same timing gate the Start screen's button enforces (see
+            // that function's docblock -- 1.3.0, reuses
+            // spp_kq_get_occurrence_start_timestamp() directly, no
+            // second implementation of the same math) -- re-checked
+            // here so a crafted or stale POST can't bypass it. Must
+            // match what the UI offers, same discipline as every other
+            // access check in this codebase.
+            $start_ts = spp_kq_get_occurrence_start_timestamp( $event_date, $event_time );
+            $can_start_now = spp_is_admin() || ( $start_ts !== null && current_time( 'timestamp' ) >= ( $start_ts - 30 * MINUTE_IN_SECONDS ) );
+            if ( ! $can_start_now ) {
+                if ( $start_ts === null ) {
+                    return "This event's scheduled time isn't set yet -- please check back closer to the event, or contact an administrator.";
+                }
+                $opens_at = $start_ts - 30 * MINUTE_IN_SECONDS;
+                $when     = date_i18n( 'g:ia', $opens_at ) . ' on ' . date_i18n( 'l, F j', $opens_at );
+                return "This event doesn't open until {$when}.";
             }
             // 1.1.0: reconcile check-in reality BEFORE the transition's own
             // count check runs -- anyone confirmed but not checked in is
@@ -1585,15 +1648,16 @@ function spp_kq_live_shortcode() : string {
     // this blocks EVERYTHING for this occurrence, not just the phase
     // screens below. Administrators exempt, matching the existing
     // Start-Round-1 admin exemption (spp_is_admin()) exactly. Separate
-    // from, and layered in front of, the existing Start-Round-1
-    // date-only gate ($can_start_today in
-    // spp_kq_render_start_screen()) -- that one is untouched and still
-    // applies on its own once a facilitator is past this one.
+    // from, and layered in front of, the Start-Round-1 gate
+    // ($can_start_now in spp_kq_render_start_screen()) -- still its own
+    // separate check, applying on its own once a facilitator is past
+    // this one (as of 1.3.0 it reuses this same threshold function,
+    // not merged into this gate -- see that version's changelog).
     if ( ! spp_is_admin() && ! spp_kq_event_screens_open( $occurrence['event_date'], $occurrence['eff_event_time'] ) ) {
         return spp_kq_render_too_early_notice( $occurrence['event_date'], $occurrence['eff_event_time'] );
     }
 
-    $notice = spp_kq_handle_post_actions( $occurrence_id, $occurrence['event_date'] );
+    $notice = spp_kq_handle_post_actions( $occurrence_id, $occurrence['event_date'], $occurrence['eff_event_time'] );
 
     spp_kq_ensure_event_row( $occurrence_id );
     $state = spp_kq_get_event_state( $occurrence_id );
@@ -1623,7 +1687,7 @@ function spp_kq_live_shortcode() : string {
     } else {
         switch ( $phase ) {
             case 'not_started':
-                echo spp_kq_render_start_screen( $occurrence_id, $occurrence['event_date'] );
+                echo spp_kq_render_start_screen( $occurrence_id, $occurrence['event_date'], $occurrence['eff_event_time'] );
                 break;
 
             case 'organizing':
