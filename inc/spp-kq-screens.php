@@ -1,8 +1,27 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Screens
-   Version: 1.7.0
+   Version: 1.8.0
    Date: 2026-09-14
+
+   Changes from 1.7.0:
+   - New 30-minutes-before-start access gate on [spp_kq_live] itself
+     (spp_kq_event_screens_open()/spp_kq_render_too_early_notice(),
+     wired into spp_kq_live_shortcode() before
+     spp_kq_handle_post_actions() runs) -- previously the shortcode
+     gated only on spp_kq_can_facilitate() (is_user_logged_in()), so a
+     facilitator could open check-in/roster-adjust/anything for an
+     event days or weeks out (the event picker itself lists the next 8
+     upcoming occurrences regardless of date). This is a NEW, separate,
+     earlier/broader rule -- the existing Start-Round-1 date-only gate
+     ($can_start_today in spp_kq_render_start_screen(), re-checked in
+     this file's own 'start_round1' POST case) is completely unchanged
+     and still applies on top of this one. Administrator-exempt,
+     matching that existing gate's own spp_is_admin() exemption
+     exactly. See this file's own "30-minutes-before-start access gate"
+     section header for the full writeup, including the timezone
+     reasoning (confirmed against this site's real WP timezone_string,
+     not assumed).
 
    Changes from 1.6.0 (Check-in + mid-event roster swap + court
    cancellation -- see the conversation this was built from for the
@@ -188,6 +207,90 @@ function spp_kq_get_occurrence_summary( int $occurrence_id ) : ?array {
         $occurrence_id
     ), ARRAY_A );
     return $row ?: null;
+}
+
+// =============================================================
+// 30-minutes-before-start access gate (1.2.0). Separate, earlier/
+// broader rule from the existing Start-Round-1 date-only gate
+// ($can_start_today in spp_kq_render_start_screen(), re-checked
+// server-side in spp_kq_handle_post_actions()'s 'start_round1' case)
+// -- that one is unchanged and still applies on top of this one, once
+// a facilitator is past this gate. This one blocks EVERYTHING
+// reachable for an occurrence (check-in, roster-adjust, live play,
+// POST actions included -- checked in spp_kq_live_shortcode() before
+// spp_kq_handle_post_actions() runs at all, not just before the
+// phase-screen switch), not just Start Round 1 itself.
+//
+// TIMEZONE: this site's WP timezone is confirmed correctly set to a
+// real IANA zone (timezone_string = 'America/Toronto', not a static
+// gmt_offset), so current_time() is DST-aware. strtotime() on a plain
+// 'event_date event_time' string is interpreted under PHP's own
+// default timezone, which WordPress sets to UTC -- current_time()'s
+// values live in that exact same "local wall-clock time, readable as
+// if it were UTC" domain (a long-documented WP quirk), so the two are
+// directly comparable with no further conversion. Confirmed, not
+// assumed: this is the identical convention spp_kq_render_picker_row()/
+// spp_kq_render_occurrence_header() already use to display
+// eff_event_time correctly (date_i18n(strtotime($eff_event_time))),
+// and spp_kq_render_start_screen()'s own current_time('Y-m-d') ===
+// $event_date check already relies on for the existing gate.
+// =============================================================
+
+/**
+ * Real scheduled start datetime for an occurrence, as a timestamp in
+ * the current_time()-compatible domain described above. Returns null
+ * if $event_time is missing -- gl-events' own schema allows
+ * eff_event_time to be NULL for a truly standalone occurrence with no
+ * series and no time of its own (event_occurrences.event_time is
+ * nullable; only event_series.event_time is NOT NULL) -- confirmed
+ * via direct query that zero real KQ (category 2/3) occurrences hit
+ * this today, but callers must not treat null as "open" regardless --
+ * see spp_kq_event_screens_open()'s own fail-closed default.
+ */
+function spp_kq_get_occurrence_start_timestamp( string $event_date, ?string $event_time ) : ?int {
+    if ( ! $event_date || ! $event_time ) {
+        return null;
+    }
+    $ts = strtotime( $event_date . ' ' . $event_time );
+    return ( $ts !== false ) ? $ts : null;
+}
+
+/**
+ * Whether [spp_kq_live]'s screens are open for this occurrence right
+ * now -- actual scheduled start time minus a 30-minute early-access
+ * window, current server clock. Administrator exemption is checked by
+ * the caller (spp_kq_live_shortcode()), not here -- same "gate belongs
+ * to the caller" pattern the existing Start-Round-1 checks already
+ * use, so spp_is_admin() is asserted in exactly one place per gate.
+ *
+ * FAILS CLOSED: an occurrence whose start time can't be determined at
+ * all (see spp_kq_get_occurrence_start_timestamp()) is NOT open --
+ * there is nothing real to gate against otherwise, and silently
+ * allowing access on missing data would defeat the point of this gate.
+ */
+function spp_kq_event_screens_open( string $event_date, ?string $event_time ) : bool {
+    $start_ts = spp_kq_get_occurrence_start_timestamp( $event_date, $event_time );
+    if ( $start_ts === null ) {
+        return false;
+    }
+    return current_time( 'timestamp' ) >= ( $start_ts - 30 * MINUTE_IN_SECONDS );
+}
+
+/**
+ * "Not open yet" notice for a too-early access attempt -- states the
+ * actual computed opening time (start minus 30 minutes) so a
+ * facilitator knows exactly when to come back, rather than a generic
+ * "try again later." Own small wrapper (not the full kq-wrap styles)
+ * since nothing else on this response needs them.
+ */
+function spp_kq_render_too_early_notice( string $event_date, ?string $event_time ) : string {
+    $start_ts = spp_kq_get_occurrence_start_timestamp( $event_date, $event_time );
+    if ( $start_ts === null ) {
+        return '<div class="kq-wrap"><p class="kq-hint">This event\'s scheduled time isn\'t set yet -- please check back closer to the event, or contact an administrator.</p></div>';
+    }
+    $opens_at  = $start_ts - 30 * MINUTE_IN_SECONDS;
+    $when      = date_i18n( 'g:ia', $opens_at ) . ' on ' . date_i18n( 'l, F j', $opens_at );
+    return '<div class="kq-wrap"><p class="kq-hint">This event doesn\'t open until ' . esc_html( $when ) . '.</p></div>';
 }
 
 function spp_kq_count_unclaimed( int $occurrence_id, int $round_number ) : int {
@@ -1472,6 +1575,22 @@ function spp_kq_live_shortcode() : string {
     $occurrence = spp_kq_get_occurrence_summary( $occurrence_id );
     if ( ! $occurrence ) {
         return '<p>Occurrence not found.</p>';
+    }
+
+    // 30-minutes-before-start gate (1.2.0) -- see this file's own
+    // "30-minutes-before-start access gate" section header, above
+    // spp_kq_get_occurrence_summary(), for the full writeup. Checked
+    // BEFORE spp_kq_handle_post_actions() so a crafted early POST
+    // (check-in, roster-adjust, anything) can't bypass it either --
+    // this blocks EVERYTHING for this occurrence, not just the phase
+    // screens below. Administrators exempt, matching the existing
+    // Start-Round-1 admin exemption (spp_is_admin()) exactly. Separate
+    // from, and layered in front of, the existing Start-Round-1
+    // date-only gate ($can_start_today in
+    // spp_kq_render_start_screen()) -- that one is untouched and still
+    // applies on its own once a facilitator is past this one.
+    if ( ! spp_is_admin() && ! spp_kq_event_screens_open( $occurrence['event_date'], $occurrence['eff_event_time'] ) ) {
+        return spp_kq_render_too_early_notice( $occurrence['event_date'], $occurrence['eff_event_time'] );
     }
 
     $notice = spp_kq_handle_post_actions( $occurrence_id, $occurrence['event_date'] );
