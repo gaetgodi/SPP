@@ -123,148 +123,94 @@ add_action('profile_update', function($user_id, $old_user_data) {
     }
 }, 10, 2);
 
+/* =========================================================
+   [spp_events] -- TEC dependency removed 2026-09-14.
+
+   Previously wrapped TEC's own [tribe_events view="list" ...]
+   shortcode, with a fallback that inferred the category from a TEC
+   taxonomy archive query var / tribe_is_event_category() when no
+   'category' attribute was passed. TEC is fully uninstalled --
+   tribe_is_event_category() doesn't exist at all (confirmed via
+   function_exists()), so that fallback branch was one PHP fatal
+   ("Call to undefined function") away from taking down any page that
+   embedded this shortcode with no explicit category -- it just never
+   fired because every live embed happens to always pass one (see
+   below). The happy path (category passed) wasn't fatal, but was
+   silently broken anyway: do_shortcode() on 'tribe_events' (an
+   unregistered tag, TEC's own shortcode gone with the plugin) just
+   returns the bracket text unprocessed -- so all 6 real embeds
+   (Ladder/Clinics/Queen of the Courts/Socials/Community/Ace of the
+   Courts pages, confirmed via direct DB query) were rendering
+   literal "[tribe_events view="list" category="..."]" text to real
+   visitors instead of an event list.
+
+   FIX: resolve the category slug against gl_event_categories (GL
+   Events' own category table -- confirmed a clean, unambiguous 1:1
+   slug match for every one of those 6 real embeds: ladder, ace,
+   queen, socials, clinics, volunteers) and delegate to GL Events' own
+   [gl_event_list] shortcode -- the real, currently-working equivalent
+   (same pattern already used to retire [spp_event_registrations] in
+   favor of [gl_event_registrations]). show_filter="false" keeps the
+   single-category-only presentation these pages were built for,
+   rather than introducing a new cross-category filter bar
+   [gl_event_list] would otherwise show. No page content changes
+   needed -- every existing [spp_events category="..."] embed keeps
+   working exactly as embedded, now backed by a real data source.
+   An unrecognized/missing category slug falls back to an unfiltered
+   list, the same shape the original TEC-era fallback had.
+
+   REACHABILITY NOTE (same standard used to retire
+   [spp_event_registrations]): none of these 6 pages are linked from
+   any of this site's 7 registered nav menus, nor from any href found
+   in other published content -- so this fix is precautionary/
+   defensive as much as corrective; flagged for Gaetan's own
+   judgment on whether those pages should be actively linked
+   somewhere, left as-is, or retired.
+   ========================================================= */
 add_shortcode('spp_events', function($atts) {
     $atts = shortcode_atts(['category' => ''], $atts);
     $cat_slug = $atts['category'];
 
-    // Fall back to query detection if no category passed
-    if (!$cat_slug) {
-        global $wp_query;
-        if (!empty($wp_query->query['tribe_events_cat'])) {
-            $cat_slug = $wp_query->query['tribe_events_cat'];
-        } elseif (tribe_is_event_category()) {
-            $obj = get_queried_object();
-            if ($obj && isset($obj->slug)) {
-                $cat_slug = $obj->slug;
-            }
+    if ($cat_slug) {
+        global $wpdb;
+        $cat_id = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT id FROM {$wpdb->prefix}gl_event_categories WHERE slug = %s",
+            sanitize_title($cat_slug)
+        ));
+        if ($cat_id) {
+            return do_shortcode('[gl_event_list category="' . $cat_id . '" show_filter="false"]');
         }
     }
 
-    if ($cat_slug) {
-        return do_shortcode('[tribe_events view="list" category="' . esc_attr($cat_slug) . '"]');
-    }
-    return do_shortcode('[tribe_events view="list"]');
+    // No category resolved -- unfiltered list, same fallback shape the
+    // original TEC-era version had for a bare [spp_events].
+    return do_shortcode('[gl_event_list show_filter="false"]');
 });
 
 /* =========================================================
-   [spp_event_registrations]
-   Shows all upcoming events with registration counts.
-   v1.1: Wrapped table in overflow-x:auto for mobile scrolling
+   [spp_event_registrations] -- RETIRED 2026-09-14, dead code removed.
+
+   Base table was {$wpdb->prefix}tec_occurrences (The Events Calendar's
+   own custom table) -- confirmed via SHOW TABLES that it does not
+   exist anywhere in this database (same root cause as
+   inc/spp-rank-history.php's own tec_occurrences bug, fixed the same
+   day -- see that file's own changelog for the full writeup). A
+   missing base FROM table is a hard MySQL error, so this shortcode
+   has been rendering nothing but a broken query for as long as
+   tec_occurrences has been gone -- unrelated to, and unchanged since,
+   April 2026 (git blame), so almost certainly since whenever TEC was
+   actually uninstalled from this site, long before this removal.
+
+   NOT retired blind: confirmed via direct query that only one page
+   ever embedded it -- "Events status" (page ID 20009419, slug
+   events-status), published but with ZERO nav menu items pointing at
+   it (checked wp_postmeta for _menu_item_object_id) -- effectively
+   unreachable through normal site navigation. The real, currently
+   linked "Event Status" page members actually use is a DIFFERENT
+   page ("GL Event Status", ID 20010189, in the nav menu twice) running
+   [gl_event_registrations] -- the GL Events plugin's own shortcode,
+   not this theme's -- which is unaffected by any of this and already
+   does the same job correctly. The orphaned events-status page itself
+   was left alone (a content/page decision, not a code one) -- worth a
+   look if you want it unpublished or deleted.
    ========================================================= */
-add_shortcode('spp_event_registrations', function() {
-    global $wpdb;
-    $p = $wpdb->prefix;
-
-    $rows = $wpdb->get_results("
-        SELECT
-            o.occurrence_id,
-            o.post_id,
-            o.start_date,
-            p.post_title,
-            MIN(t.name) AS category,
-            pm_max.meta_value AS max_registrations,
-            pm_limit.meta_value AS limit_registrations,
-            COUNT(DISTINCT CASE WHEN latest.status = 'confirmed'    THEN latest.user_id END) AS confirmed,
-            COUNT(DISTINCT CASE WHEN latest.status = 'waiting'      THEN latest.user_id END) AS waiting,
-            COUNT(DISTINCT CASE WHEN latest.status = 'pending'      THEN latest.user_id END) AS pending,
-            COUNT(DISTINCT CASE WHEN latest.status = 'unregistered' THEN latest.user_id END) AS unregistered
-        FROM {$p}tec_occurrences o
-        JOIN {$p}posts p ON o.post_id = p.ID
-        JOIN {$p}term_relationships tr ON o.post_id = tr.object_id
-        JOIN {$p}term_taxonomy tt ON tr.term_taxonomy_id = tt.term_taxonomy_id AND tt.taxonomy = 'tribe_events_cat'
-        JOIN {$p}terms t ON tt.term_id = t.term_id
-        LEFT JOIN {$p}postmeta pm_max   ON o.post_id = pm_max.post_id   AND pm_max.meta_key   = '_RTECmaxRegistrations'
-        LEFT JOIN {$p}postmeta pm_limit ON o.post_id = pm_limit.post_id AND pm_limit.meta_key = '_RTEClimitRegistrations'
-        LEFT JOIN (
-            SELECT event_id, user_id, status
-            FROM {$p}rtec_entries e1
-            WHERE id = (
-                SELECT MAX(id) FROM {$p}rtec_entries e2
-                WHERE e2.event_id = e1.event_id
-                AND e2.user_id = e1.user_id
-            )
-        ) latest ON (o.post_id = latest.event_id OR o.occurrence_id + 30000000 = latest.event_id)
-        WHERE o.start_date >= CURDATE()
-AND o.start_date <= DATE_ADD(NOW(), INTERVAL 5 WEEK)
-AND p.post_status = 'publish'
-AND p.ID NOT IN (
-    SELECT post_id FROM {$p}postmeta
-    WHERE meta_key = '_RTECcanceled' AND meta_value = '1'
-)
-        GROUP BY o.occurrence_id
-        ORDER BY o.start_date ASC
-    ");
-
-    // Build unique category list
-    $categories = [];
-    foreach ($rows as $row) {
-        $categories[$row->category] = $row->category;
-    }
-    ksort($categories);
-
-    $out = '<div class="spp-event-registrations">';
-
-    // Dropdown
-    $out .= '<div style="margin-bottom:1rem;">';
-    $out .= '<label for="spp-cat-filter" style="font-weight:600; margin-right:0.5rem;">Category:</label>';
-    $out .= '<select id="spp-cat-filter" onchange="sppFilterEvents(this.value)">';
-    $out .= '<option value="">All</option>';
-    foreach ($categories as $cat) {
-        $out .= '<option value="' . esc_attr($cat) . '">' . esc_html($cat) . '</option>';
-    }
-    $out .= '</select>';
-    $out .= '</div>';
-
-    // Scrollable wrapper for mobile
-    $out .= '<div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">';
-    $out .= '<table class="spp-dashboard-table" id="spp-events-table">';
-    $out .= '<thead><tr>';
-    $out .= '<th>Date</th><th>Event</th>';
-    $out .= '<th>Confirmed</th><th>Max</th><th>Queue</th><th>?</th><th>Dropped</th>';
-    $out .= '</tr></thead><tbody>';
-
-    if (empty($rows)) {
-        $out .= '<tr><td colspan="7" style="text-align:center;font-style:italic;">No upcoming events found.</td></tr>';
-    } else {
-        foreach ($rows as $row) {
-            $date         = date('M j, Y g:i a', strtotime($row->start_date));
-            $limit        = ($row->limit_registrations == '1');
-            $capacity     = $limit ? (int)$row->max_registrations : 'n/a';
-            $confirmed    = (int)$row->confirmed;
-            $waiting      = (int)$row->waiting;
-            $pending      = (int)$row->pending;
-            $unregistered = (int)$row->unregistered;
-            $full         = $limit && $confirmed >= (int)$row->max_registrations;
-            $row_class    = $full ? 'spp-event-full' : '';
-
-            $out .= '<tr class="' . $row_class . '" data-category="' . esc_attr($row->category) . '">';
-            $out .= '<td>' . esc_html($date) . '</td>';
-            $out .= '<td>' . esc_html($row->post_title) . '</td>';
-            $out .= '<td>' . $confirmed . '</td>';
-            $out .= '<td>' . $capacity . '</td>';
-            $out .= '<td>' . $waiting . '</td>';
-            $out .= '<td>' . $pending . '</td>';
-            $out .= '<td>' . $unregistered . '</td>';
-            $out .= '</tr>';
-        }
-    }
-
-    $out .= '</tbody></table>';
-    $out .= '</div>'; // close overflow wrapper
-    $out .= '</div>'; // close spp-event-registrations
-
-    $out .= '<script>
-    function sppFilterEvents(cat) {
-        var rows = document.querySelectorAll("#spp-events-table tbody tr");
-        rows.forEach(function(row) {
-            if (!cat || row.getAttribute("data-category") === cat) {
-                row.style.display = "";
-            } else {
-                row.style.display = "none";
-            }
-        });
-    }
-    </script>';
-
-    return $out;
-});

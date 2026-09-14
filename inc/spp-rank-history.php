@@ -1,6 +1,46 @@
 <?php
 /* =========================================================
    Rank History
+   Version: 1.1.0
+   Date: 2026-09-14
+
+   Changes from 1.0.0 (dead tec_occurrences dependency removed --
+   full investigation and root-cause writeup in the conversation this
+   was built from):
+   - CORRECTION to 1.0.0's own "TEC DEPENDENCY" note below: the claim
+     that tec_occurrences "was confirmed to still exist" was wrong --
+     it does not exist in this database (`SHOW TABLES` confirms no
+     tec_* table of any kind), and that claim was apparently never
+     actually checked against the live DB before being written. A
+     LEFT JOIN against a nonexistent table is a hard MySQL error
+     ("Table ... doesn't exist"), not a graceful NULL -- $wpdb's own
+     error handling swallows it (logs to $wpdb->last_error, returns
+     an empty result), so both queries below always returned zero
+     rows, for every user, every time, with WP_DEBUG off (this site's
+     actual setting) leaving zero trace anywhere. "No historical
+     results found." was this file's own empty-events fallback firing
+     unconditionally, never actually reflecting whether real history
+     existed. Confirmed longstanding, not a fresh regression: the
+     unrelated, unmigrated [spp_event_registrations]
+     (inc/shortcodes.php, untouched since April 2026) has the exact
+     same tec_occurrences dependency and has been equally broken the
+     whole time -- see that file's own note.
+   - Both queries' `LEFT JOIN {$wpdb->prefix}tec_occurrences o ON
+     r.event_id = o.occurrence_id + 30000000` removed outright, along
+     with the COALESCE(o.start_date, edl.event_date) it fed --
+     event_date_lookup ALONE is now the sole date source. Confirmed
+     directly against real data (not assumed): event_date_lookup
+     already has correct entries for BOTH eras present in Results_all
+     -- the small-ID current GL-era event_ids (e.g. 155-164, dated
+     2026) AND the large-ID (30000000+) legacy TEC-era ones (dated
+     2025) -- so removing tec_occurrences loses no real date
+     resolution at all; it was already redundant. The "last 8 events"
+     windowing itself (order by resolved DATE, not raw event_id, so a
+     small-ID recent GL event is never hidden behind a large-ID older
+     TEC one) is UNCHANGED and still correct -- only the broken join
+     that fed it is gone. Verified end-to-end with two real members'
+     real history (see this version's own testing).
+
    Version: 1.0.0
    Date: 2026-09-05
    Based on: Code Manager snippet "Show rank change" (CM272),
@@ -13,26 +53,18 @@
    anyone. Entirely read-only -- confirmed by direct inspection, no
    INSERT/UPDATE/DELETE anywhere in this file.
 
-   TEC DEPENDENCY -- investigated before migrating, per explicit
-   instruction not to assume:
-   This file LEFT JOINs {$wpdb->prefix}tec_occurrences (via
+   TEC DEPENDENCY (1.0.0 note -- SUPERSEDED, kept for history; see
+   this file's own 1.1.0 changelog above for the correction):
+   This file used to LEFT JOIN {$wpdb->prefix}tec_occurrences (via
    r.event_id = o.occurrence_id + 30000000, the TEC-era +30000000
    ID-offset hack used elsewhere in this codebase) purely to read
    historical event dates for old TEC-era Results_all rows, blended
    via COALESCE with a small custom event_date_lookup table (50
-   rows -- a hand-built GL-era date backfill). This is reconciling
-   real HISTORICAL DATA, not depending on TEC being active:
-     - The Events Calendar plugin is fully uninstalled on this site
-       (confirmed via `wp plugin list` -- not present at all, only
-       gl-events is active).
-     - tec_occurrences is a plain leftover DATA TABLE, confirmed to
-       still exist with its historical rows intact.
-     - Zero calls to any TEC plugin PHP function anywhere in this
-       file -- only raw SQL against a static table.
-   Conclusion: case (b) from the migration brief -- this already
-   degrades gracefully with TEC gone, and needs to stay exactly as
-   it is so old TEC-era rank history keeps rendering correctly.
-   Nothing here is dead code to remove.
+   rows -- a hand-built GL-era date backfill). 1.0.0 claimed this
+   table was "confirmed to still exist with its historical rows
+   intact" -- that claim was wrong; it does not exist on this
+   database, and the join has been removed (1.1.0). event_date_lookup
+   alone is now the date source for every event era.
 
    BUG-PATTERN CHECK (per explicit instruction): searched for the
    wildcard-collision and dead-branch-overwrite patterns found
@@ -41,19 +73,21 @@
    performs zero mutation of any kind, so that whole class of bug
    cannot occur in this snippet.
 
-   CALLED FROM (as of this migration):
+   CALLED FROM (as of the original migration):
      Via [cmruncode name='Show rank change'] (CM272, now a
      transition shim around this function): the page "Rank history
      over last 8 events" (menu-reachable via Main). Not touched by
      this migration -- keeps working via the shim.
 
-   Changes from CM272: wrapped in a real function, spp_rank_history(),
-   instead of a bare top-level script. Dropped the dead
-   "if (session_status() !== PHP_SESSION_ACTIVE) session_start()"
-   guard -- same no-op pattern removed from every other migrated
-   snippet, $_SESSION never read anywhere in this file. No other
-   behavior change: identical queries, identical gap-detection and
-   narrative logic, identical output.
+   Changes from CM272 (original 1.0.0 migration): wrapped in a real
+   function, spp_rank_history(), instead of a bare top-level script.
+   Dropped the dead "if (session_status() !== PHP_SESSION_ACTIVE)
+   session_start()" guard -- same no-op pattern removed from every
+   other migrated snippet, $_SESSION never read anywhere in this
+   file. No other behavior change at that time: identical queries,
+   identical gap-detection and narrative logic, identical output (the
+   tec_occurrences join itself was already broken then, unnoticed --
+   see 1.1.0 above).
    ========================================================= */
 
 defined( 'ABSPATH' ) || exit;
@@ -61,7 +95,6 @@ defined( 'ABSPATH' ) || exit;
 function spp_rank_history() {
     global $wpdb;
 
-    $prefix       = $wpdb->prefix;
     $current_user = wp_get_current_user();
     $is_admin     = spp_is_ladder_admin();
 
@@ -118,17 +151,16 @@ function spp_rank_history() {
 
     /* ---------------------------------------------------------
        2. Get last 8 events from Results_all, ordered by DATE
-       (COALESCE tec_occurrences / event_date_lookup) so that
-       recent GL-era events with small IDs are not hidden behind
-       older TEC events with large IDs.
+       (event_date_lookup -- covers both the current GL-era event_ids
+       and the legacy TEC-era ones, see this file's own 1.1.0
+       changelog) so that recent GL-era events with small IDs are not
+       hidden behind older TEC events with large IDs.
        --------------------------------------------------------- */
     $last_8_events = $wpdb->get_col( "
         SELECT ra.event_id
         FROM (
-            SELECT DISTINCT r.event_id,
-                COALESCE(o.start_date, edl.event_date) AS sort_date
+            SELECT DISTINCT r.event_id, edl.event_date AS sort_date
             FROM Results_all r
-            LEFT JOIN {$prefix}tec_occurrences o ON r.event_id = o.occurrence_id + 30000000
             LEFT JOIN event_date_lookup edl ON edl.event_id = r.event_id
         ) ra
         ORDER BY ra.sort_date DESC
@@ -154,16 +186,12 @@ function spp_rank_history() {
             r.RankOverride,
             r.Score,
             r.group_id,
-            DATE_FORMAT(
-                COALESCE(o.start_date, edl.event_date),
-                '%%b %%d, %%Y'
-            ) AS event_date
+            DATE_FORMAT(edl.event_date, '%%b %%d, %%Y') AS event_date
         FROM Results_all r
-        LEFT JOIN {$prefix}tec_occurrences o ON r.event_id = o.occurrence_id + 30000000
         LEFT JOIN event_date_lookup edl ON edl.event_id = r.event_id
         WHERE r.user_id = %d
         AND r.event_id IN ($event_placeholders)
-        ORDER BY COALESCE(o.start_date, edl.event_date) ASC
+        ORDER BY edl.event_date ASC
     ", array_merge( [ $selected_user_id ], $last_8_events ) ), ARRAY_A );
 
     if ( empty( $player_results ) ) {

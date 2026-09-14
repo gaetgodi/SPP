@@ -103,12 +103,12 @@ require_once get_stylesheet_directory() . '/inc/spp-kq-roster.php'; // KQ-specif
 require_once get_stylesheet_directory() . '/inc/spp-kq-checkin.php'; // Pre-Round-1 check-in (spp_kq_checkins) -- must load before spp-kq-screens.php below, which calls spp_kq_get_checked_in_user_ids()/spp_kq_set_checked_in(); calls spp_kq_player_name() from spp-kq-screens.php but only at render time, never at load time, so load order between those two is safe either way
 require_once get_stylesheet_directory() . '/inc/spp-kq-screens.php'; // [spp_kq_live] shortcode + AJAX draw handler -- calls functions from all six files above
 
-add_filter('template_include', function($template) {
-    if (is_singular('tribe_events')) {
-        error_log('TEC single event template: ' . $template);
-    }
-    return $template;
-}, 100);
+// TEC single-event template debug logging removed 2026-09-14: gated on
+// is_singular('tribe_events'), which can never be true -- TEC is fully
+// uninstalled (post_type_exists('tribe_events') === false) and zero
+// posts of that post_type exist in wp_posts. Dead code, safe to remove
+// outright (see inc/shortcodes.php's [spp_events] fix, same day, for
+// the fuller TEC-removal writeup).
 
 // Restrict category archive pages to published posts only
 add_action('pre_get_posts', function($query) {
@@ -252,23 +252,13 @@ add_action('template_redirect', function() {
 });
 
 /* =========================================================
-   JS ERROR LOGGING
-   Logs frontend JS errors for TEC single event pages.
+   JS ERROR LOGGING (TEC single event pages) -- REMOVED 2026-09-14.
+   Entirely gated on is_singular('tribe_events'), which can never be
+   true: TEC is fully uninstalled (post_type_exists('tribe_events')
+   === false) and zero posts of that post_type exist in wp_posts.
+   Dead code, safe to remove outright -- see inc/shortcodes.php's
+   [spp_events] fix, same day, for the fuller TEC-removal writeup.
    ========================================================= */
-add_action('wp_footer', function() {
-    if (!is_singular('tribe_events')) return;
-    ?>
-    <script>
-    window.onerror = function(message, source, line, col, error) {
-        fetch('/js-error-log.php', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({message: message, source: source, line: line})
-        });
-    };
-    </script>
-    <?php
-});
 
 /* =========================================================
    LOGIN RESTRICTION — EXPIRED MEMBERSHIP
