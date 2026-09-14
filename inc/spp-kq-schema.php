@@ -1,8 +1,35 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Live Event Schema
-   Version: 1.3.0
-   Date: 2026-09-13
+   Version: 1.4.0
+   Date: 2026-09-14
+
+   Changes from 1.3.0 (Check-in + mid-event roster swap + court
+   cancellation -- see the conversation this was built from for the
+   full spec):
+   - Added spp_kq_checkins: one row per (occurrence_id, user_id) means
+     "checked in" -- row ABSENCE is the "not yet arrived" state, no
+     boolean column needed. Deliberately separate from gl_registrations
+     (which still means "confirmed to attend"): a player can be
+     confirmed but not yet checked in, and Roster Adjust's own add/
+     remove already fully owns the confirmed-registrant list -- this
+     table only ever answers "has this confirmed registrant actually
+     shown up," pre-Round-1 only. Cleared (all rows for the occurrence
+     deleted) by Full Reset and by Reset Event's full-clear-to-
+     not_started branch (inc/spp-kq-live.php), same as
+     spp_kq_assignments/spp_kq_scores -- starting over means re-doing
+     check-in too.
+   - spp_kq_scores gains `cancelled` (live ALTER -- same dbDelta
+     ADD COLUMN case already relied on elsewhere in this codebase, a
+     much simpler migration than the 1.1.0->1.2.0 ENUM value-list
+     change this file's own changelog already validated). A cancelled
+     court's red_score/black_score are simply never written (stay
+     NULL forever) -- `cancelled` is what lets every reader
+     (spp_kq_get_round_progress(), spp_kq_get_full_scoreboard(), the
+     movement caller) distinguish "cancelled, never will report" from
+     "just hasn't reported yet," which a permanently-NULL score alone
+     can't do on its own. See inc/spp-kq-live.php's own changelog for
+     how spp_kq_transition_advance_round() uses this.
 
    Changes from 1.2.0 (new table, additive -- no ALTER of the three
    existing tables):
@@ -135,7 +162,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'SPP_KQ_DB_VERSION', '1.3.0' );
+define( 'SPP_KQ_DB_VERSION', '1.4.0' );
 
 /**
  * Create (or, on a later run, no-op/upgrade) the three spp_kq_*
@@ -191,12 +218,19 @@ function spp_kq_create_tables() {
     ) {$charset};" );
 
     // ── Scores ────────────────────────────────────────────────────────────
+    // cancelled (1.4.0): 1 = this court's game was cancelled for this
+    // round (headcount couldn't be filled, injury with no replacement,
+    // etc.) -- red_score/black_score stay NULL forever for a cancelled
+    // row, never counted as "awaiting" or "reported" anywhere. See this
+    // file's own 1.4.0 changelog and inc/spp-kq-live.php's
+    // spp_kq_cancel_court()/spp_kq_transition_advance_round().
     dbDelta( "CREATE TABLE {$p}spp_kq_scores (
         occurrence_id  INT UNSIGNED NOT NULL,
         round_number   SMALLINT UNSIGNED NOT NULL,
         court_name     VARCHAR(20) NOT NULL,
         red_score      SMALLINT UNSIGNED DEFAULT NULL,
         black_score    SMALLINT UNSIGNED DEFAULT NULL,
+        cancelled      TINYINT UNSIGNED NOT NULL DEFAULT 0,
         updated_by     BIGINT UNSIGNED DEFAULT NULL,
         updated_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         PRIMARY KEY (occurrence_id, round_number, court_name)
@@ -219,6 +253,19 @@ function spp_kq_create_tables() {
         UNIQUE KEY uq_player_round (occurrence_id, round_number, user_id),
         KEY idx_user (user_id),
         KEY idx_event_date (event_date)
+    ) {$charset};" );
+
+    // ── Check-ins (1.4.0) ────────────────────────────────────────────────
+    // Row EXISTENCE means "checked in" -- no boolean column, see this
+    // file's own 1.4.0 changelog. Pre-Round-1 only; irrelevant once
+    // Round 1 starts (the roster is locked into spp_kq_assignments by
+    // then, same boundary spp-kq-roster.php's own add/remove already
+    // uses).
+    dbDelta( "CREATE TABLE {$p}spp_kq_checkins (
+        occurrence_id  INT UNSIGNED NOT NULL,
+        user_id        BIGINT UNSIGNED NOT NULL,
+        checked_in_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (occurrence_id, user_id)
     ) {$charset};" );
 
     update_option( 'spp_kq_db_version', SPP_KQ_DB_VERSION );
@@ -244,4 +291,8 @@ function spp_kq_scores_table() {
 function spp_kq_history_table() {
     global $wpdb;
     return $wpdb->prefix . 'spp_kq_history';
+}
+function spp_kq_checkins_table() {
+    global $wpdb;
+    return $wpdb->prefix . 'spp_kq_checkins';
 }

@@ -1,8 +1,14 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Club Rating Integration
-   Version: 1.0.0
-   Date: 2026-09-12
+   Version: 1.1.0
+   Date: 2026-09-14
+
+   Changes from 1.0.0:
+   - spp_kq_build_club_rating_games()'s score query now also checks
+     cancelled = 0 explicitly (schema 1.4.0) -- belt-and-suspenders,
+     not a behavior change; see this file's own inline comment at that
+     query.
 
    PURPOSE:
    Feeds a completed (or cancelled-with-kept-data) Ace/Queen occurrence
@@ -106,10 +112,14 @@ function spp_kq_build_club_rating_games( int $occurrence_id ) : array {
     $scores_table      = spp_kq_scores_table();
     $assignments_table = spp_kq_assignments_table();
 
+    // cancelled = 0 (schema 1.4.0): belt-and-suspenders, same as
+    // spp_kq_get_full_scoreboard()'s own explicit check -- a cancelled
+    // court's scores are never written, so the NULL-score predicate
+    // alone already excluded it.
     $score_rows = $wpdb->get_results( $wpdb->prepare(
         "SELECT round_number, court_name, red_score, black_score
          FROM {$scores_table}
-         WHERE occurrence_id = %d AND red_score IS NOT NULL AND black_score IS NOT NULL",
+         WHERE occurrence_id = %d AND red_score IS NOT NULL AND black_score IS NOT NULL AND cancelled = 0",
         $occurrence_id
     ), ARRAY_A );
 

@@ -1,8 +1,22 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Permanent History, Live Scoreboard, Recap Email
-   Version: 1.4.0
-   Date: 2026-09-13
+   Version: 1.5.0
+   Date: 2026-09-14
+
+   Changes from 1.4.0:
+   - spp_kq_get_full_scoreboard()'s WHERE now also checks
+     s.cancelled = 0 explicitly (schema 1.4.0), alongside the existing
+     "both scores NOT NULL" predicate. Belt-and-suspenders, not a
+     behavior change: a cancelled court's scores are never written in
+     the first place (inc/spp-kq-live.php's spp_kq_cancel_court()
+     touches only spp_kq_scores.cancelled, never red_score/
+     black_score), so the NULL-score predicate alone already excluded
+     it -- this just makes the exclusion explicit rather than
+     incidental, since this function is the single shared read every
+     downstream consumer (history archival, recap email, Club Ratings
+     via inc/spp-kq-club-rating.php) relies on to keep a cancelled
+     court out of everything.
 
    Changes from 1.3.0:
    - [spp_kq_event_detail]'s Date <select> now auto-submits on change
@@ -169,6 +183,7 @@ function spp_kq_get_full_scoreboard( int $occurrence_id ) : array {
          LEFT JOIN membership m ON m.user_id = a.user_id
          WHERE s.occurrence_id = %d
            AND s.red_score IS NOT NULL AND s.black_score IS NOT NULL
+           AND s.cancelled = 0
            AND a.user_id IS NOT NULL
          ORDER BY s.round_number ASC, s.court_name ASC, a.team_color ASC",
         $occurrence_id

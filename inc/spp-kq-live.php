@@ -1,8 +1,62 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Live Event Runner
-   Version: 1.0.1
-   Date: 2026-09-13
+   Version: 1.1.0
+   Date: 2026-09-14
+
+   Changes from 1.0.1 (mid-event roster swap + court cancellation --
+   see the conversation this was built from for the full spec, and
+   this file's own function docblocks below for each piece):
+   - spp_kq_swap_player()/spp_kq_fill_open_slot(): a 1-for-1 substitute
+     for the CURRENT round only, targeting a real spp_kq_assignments
+     row (occupied or an open placeholder) -- never re-runs
+     spp_kq_compute_next_round() or touches any other round. Both
+     available in 'organizing' (between rounds, before Start Play) AND
+     'in_play' (mid-round), the exact same mechanic either way -- see
+     this file's own "between rounds" finding: round 2+'s assignments
+     are already written synchronously the instant the prior round's
+     last score lands (spp_kq_transition_advance_round() below), so
+     there is no separate "decided but not yet drawn" state to
+     intercept; a between-round swap edits the same already-written
+     row a mid-round swap does, just before Start Play instead of
+     before that court's score.
+   - spp_kq_cancel_court(): flips spp_kq_scores.cancelled for one
+     court/round (schema 1.4.0). No assignment rows touched -- the
+     court's nominal players stay on record, simply never scored.
+   - spp_kq_transition_advance_round() now excludes any court
+     cancelled THIS round from the movement computation entirely
+     (filtered out of $courts/$assignments/$scores/$history before
+     spp_kq_compute_next_round() -- that pure algorithm itself is
+     UNCHANGED, unaware cancellation exists at all). The surviving
+     courts' win/loss destinations naturally contract around the gap
+     (max(i-1,0)/min(i+1,n-1) on the REDUCED list), no special-casing
+     needed. The cancelled court's own slot is then re-created as a
+     fresh set of 4 EMPTY placeholders for the new round (same
+     spp_kq_create_assignment_placeholders() round 1's own draw
+     already uses) rather than dropped from the event -- confirmed
+     behavior: a cancelled court's players do not auto-resume, a
+     facilitator must re-staff all 4 slots via spp_kq_fill_open_slot()
+     (inc/spp-kq-roster.php's live-swap screen) before that court can
+     proceed, same as any other understaffed court.
+   - New spp_kq_get_understaffed_courts()/spp_kq_court_is_fully_staffed():
+     any ACTIVE (non-cancelled) court without exactly 4 real
+     (non-NULL user_id) assignment rows for a round. Checked by
+     spp_kq_transition_start_play() (blocks Start Play) and
+     spp_kq_submit_court_score() (blocks that court's score) --
+     belt-and-suspenders, since spp_kq_swap_player()/
+     spp_kq_fill_open_slot() never themselves leave a court short, but
+     a freshly re-created (post-cancellation) court's 4 placeholders
+     start empty and must clear this check before proceeding.
+   - spp_kq_get_round_progress() now excludes cancelled courts from
+     both `total` and `reported` -- "N of M courts reported" never
+     counts a cancelled court either way, matching this file's own
+     "not counted anywhere" rule for cancellation.
+   - spp_kq_full_reset() and spp_kq_transition_reset_event()'s
+     'organizing'-branch (full clear back to not_started) both now
+     also call spp_kq_clear_checkins() (inc/spp-kq-checkin.php) --
+     starting over means re-doing check-in too, same "wipe everything
+     this occurrence has accumulated" scope those two already have for
+     spp_kq_assignments/spp_kq_scores.
 
    Changes from 1.0.0:
    - Text-only: spp_kq_transition_start_round1()'s own headcount error
@@ -311,9 +365,30 @@ function spp_kq_transition_start_round1( int $occurrence_id ) : array {
  * Start Play: organizing -> in_play, same round number. $expected_round
  * is the round the caller believes is current -- guards against
  * starting play on a round that has already moved on.
+ *
+ * UNDERSTAFFED GUARD (1.1.0): refuses to start if any active
+ * (non-cancelled) court doesn't have exactly 4 real players assigned --
+ * the only way this happens today is a court re-created empty after a
+ * cancellation (spp_kq_transition_advance_round()) that hasn't been
+ * re-staffed yet via spp_kq_fill_open_slot(). A fully-staffed-or-
+ * cancelled round is otherwise the norm (spp_kq_swap_player()/
+ * spp_kq_fill_open_slot() never themselves leave a court short), so
+ * this check should rarely actually block anything -- it exists so a
+ * facilitator can never accidentally start play with a court short a
+ * player instead of using Roster Adjust or Cancel Court to resolve it
+ * first.
  */
 function spp_kq_transition_start_play( int $occurrence_id, int $expected_round ) : array {
     global $wpdb;
+
+    $understaffed = spp_kq_get_understaffed_courts( $occurrence_id, $expected_round );
+    if ( ! empty( $understaffed ) ) {
+        return array(
+            'won'   => false,
+            'error' => 'Cannot start play: ' . implode( ', ', $understaffed ) . " still need players -- fix via Roster Adjust or cancel the court first.",
+        );
+    }
+
     $events_table = spp_kq_events_table();
 
     $affected = $wpdb->query( $wpdb->prepare(
@@ -337,17 +412,44 @@ function spp_kq_transition_start_play( int $occurrence_id, int $expected_round )
  * spp_kq_transition_end_event() below, a distinct transition OUT of
  * 'organizing' (same state this one always lands in), not something
  * this function decides on its own.
+ *
+ * CANCELLED COURTS (1.1.0): any court cancelled THIS round
+ * (spp_kq_get_cancelled_courts()) is filtered out of $courts/
+ * $assignments/$scores/$history before spp_kq_compute_next_round() ever
+ * sees them -- that pure algorithm (inc/spp-kq-movement.php) is
+ * completely unaware cancellation exists; it just computes movement for
+ * whichever courts it's given, and win/loss destinations naturally
+ * contract around the resulting gap (max(i-1,0)/min(i+1,n-1) evaluated
+ * against the REDUCED list). The cancelled court's own slot is then
+ * re-created as a fresh set of 4 EMPTY placeholders (same
+ * spp_kq_create_assignment_placeholders() round 1's own draw already
+ * uses) for the new round rather than dropped from the event --
+ * confirmed behavior: it does not auto-resume with the players who were
+ * on it; a facilitator must re-staff it via spp_kq_fill_open_slot()
+ * before it can proceed (see spp_kq_get_understaffed_courts(), which
+ * both spp_kq_transition_start_play() and spp_kq_submit_court_score()
+ * check).
  */
 function spp_kq_transition_advance_round( int $occurrence_id, int $expected_round ) : array {
     global $wpdb;
 
-    $courts      = spp_kq_determine_courts_order( $occurrence_id );
+    $full_courts = spp_kq_determine_courts_order( $occurrence_id );
+    $cancelled   = spp_kq_get_cancelled_courts( $occurrence_id, $expected_round );
+
+    $movement_courts = array_values( array_diff( $full_courts, $cancelled ) );
+
     $assignments = spp_kq_get_round_assignments( $occurrence_id, $expected_round );
     $scores      = spp_kq_get_round_scores( $occurrence_id, $expected_round );
     $history     = spp_kq_get_history_through_round( $occurrence_id, $expected_round );
 
+    if ( ! empty( $cancelled ) ) {
+        $assignments = array_values( array_filter( $assignments, fn( $a ) => ! in_array( $a['court_name'], $cancelled, true ) ) );
+        $scores      = array_values( array_filter( $scores,      fn( $s ) => ! in_array( $s['court_name'], $cancelled, true ) ) );
+        $history     = array_values( array_filter( $history,     fn( $h ) => ! in_array( $h['court_name'], $cancelled, true ) ) );
+    }
+
     try {
-        $next_assignments = spp_kq_compute_next_round( $courts, $assignments, $scores, $history );
+        $next_assignments = spp_kq_compute_next_round( $movement_courts, $assignments, $scores, $history );
     } catch ( SPP_KQ_Movement_Error $e ) {
         return array( 'won' => false, 'error' => $e->getMessage() );
     }
@@ -379,7 +481,15 @@ function spp_kq_transition_advance_round( int $occurrence_id, int $expected_roun
         $values
     ) );
 
-    spp_kq_create_score_placeholders( $occurrence_id, $next_round_number, $courts );
+    // Re-create any cancelled court's slot as fresh, empty placeholders
+    // (NULL user_id, same shape round 1's own draw starts from) rather
+    // than dropping it from the event -- see this function's own
+    // docblock.
+    if ( ! empty( $cancelled ) ) {
+        spp_kq_create_assignment_placeholders( $occurrence_id, $next_round_number, $cancelled );
+    }
+
+    spp_kq_create_score_placeholders( $occurrence_id, $next_round_number, $full_courts );
 
     return array( 'won' => true, 'error' => null, 'round' => $next_round_number );
 }
@@ -554,6 +664,8 @@ function spp_kq_transition_reset_event( int $occurrence_id, int $expected_round,
         // round 1's own placeholder rows, nothing from any other round.
         $wpdb->delete( spp_kq_assignments_table(), array( 'occurrence_id' => $occurrence_id ) );
         $wpdb->delete( $scores_table, array( 'occurrence_id' => $occurrence_id ) );
+        // 1.1.0: starting over means re-doing check-in too.
+        spp_kq_clear_checkins( $occurrence_id );
         return array( 'won' => true, 'error' => null );
     }
 
@@ -578,6 +690,8 @@ function spp_kq_full_reset( int $occurrence_id ) : void {
     $wpdb->delete( spp_kq_events_table(), array( 'occurrence_id' => $occurrence_id ) );
     $wpdb->delete( spp_kq_assignments_table(), array( 'occurrence_id' => $occurrence_id ) );
     $wpdb->delete( spp_kq_scores_table(), array( 'occurrence_id' => $occurrence_id ) );
+    // 1.1.0: starting over means re-doing check-in too.
+    spp_kq_clear_checkins( $occurrence_id );
 }
 
 // =============================================================
@@ -693,11 +807,16 @@ function spp_kq_draw_card( int $occurrence_id, int $user_id ) : array {
 function spp_kq_get_round_progress( int $occurrence_id, int $round_number ) : array {
     global $wpdb;
     $table = spp_kq_scores_table();
+    // cancelled = 0: a cancelled court is excluded from BOTH total and
+    // reported -- "N of M courts reported" never counts it either way,
+    // same "not required, not counted anywhere" rule as every other
+    // cancellation-aware read in this feature (see this file's own
+    // 1.1.0 changelog).
     $row = $wpdb->get_row( $wpdb->prepare(
         "SELECT
             COUNT(*) AS total,
             SUM( CASE WHEN red_score IS NOT NULL AND black_score IS NOT NULL THEN 1 ELSE 0 END ) AS reported
-         FROM {$table} WHERE occurrence_id = %d AND round_number = %d",
+         FROM {$table} WHERE occurrence_id = %d AND round_number = %d AND cancelled = 0",
         $occurrence_id, $round_number
     ), ARRAY_A );
     return array( 'reported' => (int) ( $row['reported'] ?? 0 ), 'total' => (int) ( $row['total'] ?? 0 ) );
@@ -742,12 +861,25 @@ function spp_kq_submit_court_score( int $occurrence_id, int $round_number, strin
     global $wpdb;
     $scores_table = spp_kq_scores_table();
 
-    $court_is_real = (bool) $wpdb->get_var( $wpdb->prepare(
-        "SELECT COUNT(*) FROM {$scores_table} WHERE occurrence_id = %d AND round_number = %d AND court_name = %s",
+    $court_row = $wpdb->get_row( $wpdb->prepare(
+        "SELECT cancelled FROM {$scores_table} WHERE occurrence_id = %d AND round_number = %d AND court_name = %s",
         $occurrence_id, $round_number, $court_name
-    ) );
-    if ( ! $court_is_real ) {
+    ), ARRAY_A );
+    if ( ! $court_row ) {
         return array( 'success' => false, 'error' => 'Not a valid court for this round -- refresh to see the current state.' );
+    }
+    if ( (int) $court_row['cancelled'] === 1 ) {
+        return array( 'success' => false, 'error' => 'This court was cancelled for this round -- no score to enter.' );
+    }
+    // Belt-and-suspenders (see spp_kq_transition_start_play()'s own
+    // docblock): spp_kq_swap_player()/spp_kq_fill_open_slot() never
+    // themselves leave a court short, so this should never actually
+    // trigger in practice -- but a facilitator submitting a score
+    // straight off a just-generated round (bypassing the Start Play
+    // guard via a stale page) must not be able to record a game for a
+    // court that isn't really a clean 2v2 yet.
+    if ( ! spp_kq_court_is_fully_staffed( $occurrence_id, $round_number, $court_name ) ) {
+        return array( 'success' => false, 'error' => "This court doesn't have exactly 4 players assigned yet -- fix via Roster Adjust before entering a score." );
     }
 
     if ( $red_score < 0 || $red_score > 11 || $black_score < 0 || $black_score > 11 ) {
@@ -786,4 +918,264 @@ function spp_kq_submit_court_score( int $occurrence_id, int $round_number, strin
         'total'      => $progress['total'],
         'advanced'   => $advanced,
     );
+}
+
+// =============================================================
+// Mid-event roster swap + court cancellation (1.1.0). Both operate on
+// the CURRENT round only -- read via spp_kq_get_event_state(), never
+// trusted from the client -- and both are available in 'organizing'
+// (between rounds, before Start Play) and 'in_play' (mid-round, before
+// that specific court's score is submitted) alike, gated the same way.
+// Rendered by spp_kq_render_roster_screen()'s live-swap branch
+// (inc/spp-kq-roster.php), dispatched via the 'roster_swap'/
+// 'roster_fill_slot'/'cancel_court' cases in
+// spp_kq_handle_post_actions() (inc/spp-kq-screens.php).
+// =============================================================
+
+/**
+ * Court/team_color one user is assigned to in a given round, or null if
+ * they aren't assigned in that round at all.
+ */
+function spp_kq_get_assignment_slot( int $occurrence_id, int $round_number, int $user_id ) : ?array {
+    global $wpdb;
+    $table = spp_kq_assignments_table();
+    $row = $wpdb->get_row( $wpdb->prepare(
+        "SELECT court_name, team_color FROM {$table} WHERE occurrence_id = %d AND round_number = %d AND user_id = %d",
+        $occurrence_id, $round_number, $user_id
+    ), ARRAY_A );
+    return $row ?: null;
+}
+
+/**
+ * Whether one court has already reported a complete score for a round --
+ * the gate every mid-event roster action (swap, fill-open-slot, cancel)
+ * shares: once a court has reported, its game already happened for real
+ * and none of these should be able to touch it anymore.
+ */
+function spp_kq_court_has_reported( int $occurrence_id, int $round_number, string $court_name ) : bool {
+    global $wpdb;
+    $table = spp_kq_scores_table();
+    $row = $wpdb->get_row( $wpdb->prepare(
+        "SELECT red_score, black_score FROM {$table} WHERE occurrence_id = %d AND round_number = %d AND court_name = %s",
+        $occurrence_id, $round_number, $court_name
+    ), ARRAY_A );
+    return $row && $row['red_score'] !== null && $row['black_score'] !== null;
+}
+
+/**
+ * Whether one court has exactly 4 real (non-NULL user_id) players
+ * assigned for a round -- see spp_kq_transition_start_play()'s own
+ * docblock for why this is checked before play starts, and
+ * spp_kq_submit_court_score()'s for why it's checked again there.
+ */
+function spp_kq_court_is_fully_staffed( int $occurrence_id, int $round_number, string $court_name ) : bool {
+    global $wpdb;
+    $table = spp_kq_assignments_table();
+    $count = (int) $wpdb->get_var( $wpdb->prepare(
+        "SELECT COUNT(*) FROM {$table} WHERE occurrence_id = %d AND round_number = %d AND court_name = %s AND user_id IS NOT NULL",
+        $occurrence_id, $round_number, $court_name
+    ) );
+    return $count === 4;
+}
+
+/**
+ * Every ACTIVE (non-cancelled) court for a round that does NOT have
+ * exactly 4 real players -- today this can only be a court just
+ * re-created empty by spp_kq_transition_advance_round() after a
+ * cancellation (spp_kq_swap_player()/spp_kq_fill_open_slot() never
+ * themselves leave a court short), but this is computed generally
+ * rather than special-cased to that one path.
+ */
+function spp_kq_get_understaffed_courts( int $occurrence_id, int $round_number ) : array {
+    $cancelled = spp_kq_get_cancelled_courts( $occurrence_id, $round_number );
+    $active    = array_diff( spp_kq_determine_courts_order( $occurrence_id ), $cancelled );
+
+    $bad = array();
+    foreach ( $active as $court ) {
+        if ( ! spp_kq_court_is_fully_staffed( $occurrence_id, $round_number, $court ) ) {
+            $bad[] = $court;
+        }
+    }
+    return $bad;
+}
+
+/**
+ * Court names cancelled for one round (spp_kq_scores.cancelled = 1).
+ */
+function spp_kq_get_cancelled_courts( int $occurrence_id, int $round_number ) : array {
+    global $wpdb;
+    $table = spp_kq_scores_table();
+    return $wpdb->get_col( $wpdb->prepare(
+        "SELECT court_name FROM {$table} WHERE occurrence_id = %d AND round_number = %d AND cancelled = 1",
+        $occurrence_id, $round_number
+    ) );
+}
+
+/**
+ * Shared precondition for every mid-event roster action below: the
+ * event must be past Round 1's draw (organizing or in_play; round 1
+ * itself must have no unclaimed slots left -- the card draw, not this
+ * feature, owns getting a fresh round 1 to a clean 2v2 per court).
+ * Returns the current round number on success, or null with an error.
+ *
+ * @return array ['round'=>?int, 'error'=>?string]
+ */
+function spp_kq_live_roster_precondition( int $occurrence_id ) : array {
+    $state = spp_kq_get_event_state( $occurrence_id );
+    if ( ! $state || ! in_array( $state['phase'], array( 'organizing', 'in_play' ), true ) ) {
+        return array( 'round' => null, 'error' => "Swaps and cancellations are only available once Round 1's draw is complete and the event is underway." );
+    }
+    $round = (int) $state['current_round'];
+    if ( $round === 1 && spp_kq_count_unclaimed( $occurrence_id, 1 ) > 0 ) {
+        return array( 'round' => null, 'error' => "Round 1's draw isn't finished yet -- finish the draw before swapping players." );
+    }
+    return array( 'round' => $round, 'error' => null );
+}
+
+/**
+ * 1-for-1 swap: $old_user_id (must currently be assigned in the current
+ * round) is replaced by $new_user_id in the EXACT court/team_color slot
+ * they occupied -- no re-running of partner-rotation/history logic,
+ * spp_kq_compute_next_round() is never touched by this. Mirrors
+ * spp_kq_roster_add()/spp_kq_roster_remove() (inc/spp-kq-roster.php) for
+ * the gl_registrations side: $new_user_id is confirmed, $old_user_id is
+ * withdrawn, same as the pre-Round-1 Roster Adjust tool's own add/
+ * remove -- so a mid-event swap keeps the registrant list honest too.
+ *
+ * @return array ['success'=>bool, 'error'=>?string]
+ */
+function spp_kq_swap_player( int $occurrence_id, int $old_user_id, int $new_user_id ) : array {
+    $pre = spp_kq_live_roster_precondition( $occurrence_id );
+    if ( $pre['error'] ) {
+        return array( 'success' => false, 'error' => $pre['error'] );
+    }
+    $round = $pre['round'];
+
+    if ( $new_user_id <= 0 ) {
+        return array( 'success' => false, 'error' => 'Please select a replacement.' );
+    }
+    if ( $old_user_id === $new_user_id ) {
+        return array( 'success' => false, 'error' => 'The replacement must be a different player.' );
+    }
+
+    $slot = spp_kq_get_assignment_slot( $occurrence_id, $round, $old_user_id );
+    if ( ! $slot ) {
+        return array( 'success' => false, 'error' => 'That player is not currently assigned to a court this round.' );
+    }
+    if ( spp_kq_court_has_reported( $occurrence_id, $round, $slot['court_name'] ) ) {
+        return array( 'success' => false, 'error' => 'That court has already reported its score for this round -- swap is no longer available.' );
+    }
+    if ( spp_kq_get_assignment_slot( $occurrence_id, $round, $new_user_id ) ) {
+        return array( 'success' => false, 'error' => 'That player is already assigned to a court this round.' );
+    }
+
+    $add_result = spp_kq_roster_add( $occurrence_id, $new_user_id );
+    if ( ! $add_result['success'] ) {
+        return $add_result;
+    }
+    spp_kq_roster_remove( $occurrence_id, $old_user_id );
+
+    global $wpdb;
+    $wpdb->update( spp_kq_assignments_table(),
+        array( 'user_id' => $new_user_id ),
+        array( 'occurrence_id' => $occurrence_id, 'round_number' => $round, 'user_id' => $old_user_id )
+    );
+
+    return array( 'success' => true, 'error' => null, 'court_name' => $slot['court_name'], 'round' => $round );
+}
+
+/**
+ * Fill one specific EMPTY slot (court_name + team_color, user_id IS
+ * NULL) for the current round -- the re-staffing half of a cancelled
+ * court's revival (see spp_kq_transition_advance_round()'s own
+ * docblock). Distinct from spp_kq_swap_player() only in that there is
+ * no $old_user_id to look up or withdraw; otherwise identical
+ * validation (membership, not already assigned this round, court not
+ * yet reported).
+ *
+ * @return array ['success'=>bool, 'error'=>?string]
+ */
+function spp_kq_fill_open_slot( int $occurrence_id, string $court_name, string $team_color, int $new_user_id ) : array {
+    $pre = spp_kq_live_roster_precondition( $occurrence_id );
+    if ( $pre['error'] ) {
+        return array( 'success' => false, 'error' => $pre['error'] );
+    }
+    $round = $pre['round'];
+
+    if ( $new_user_id <= 0 ) {
+        return array( 'success' => false, 'error' => 'Please select a player.' );
+    }
+    if ( spp_kq_court_has_reported( $occurrence_id, $round, $court_name ) ) {
+        return array( 'success' => false, 'error' => 'That court has already reported its score for this round.' );
+    }
+    if ( spp_kq_get_assignment_slot( $occurrence_id, $round, $new_user_id ) ) {
+        return array( 'success' => false, 'error' => 'That player is already assigned to a court this round.' );
+    }
+
+    $add_result = spp_kq_roster_add( $occurrence_id, $new_user_id );
+    if ( ! $add_result['success'] ) {
+        return $add_result;
+    }
+
+    global $wpdb;
+    $table = spp_kq_assignments_table();
+    // No ORDER BY needed -- the (up to two) same-color placeholder slots
+    // on a court are interchangeable, so LIMIT 1 against user_id IS NULL
+    // claims whichever MySQL finds first, same "any open slot will do"
+    // posture as spp_kq_draw_card()'s own claim, just without that
+    // function's random-retry loop (no real concurrent contention here:
+    // this is a deliberate facilitator pick, not a player-facing race).
+    $affected = $wpdb->query( $wpdb->prepare(
+        "UPDATE {$table} SET user_id = %d
+         WHERE occurrence_id = %d AND round_number = %d AND court_name = %s AND team_color = %s AND user_id IS NULL
+         LIMIT 1",
+        $new_user_id, $occurrence_id, $round, $court_name, $team_color
+    ) );
+
+    if ( (int) $affected !== 1 ) {
+        return array( 'success' => false, 'error' => 'No open slot there anymore -- refresh and try again.' );
+    }
+
+    return array( 'success' => true, 'error' => null, 'court_name' => $court_name, 'round' => $round );
+}
+
+/**
+ * Mark one court cancelled for the current round -- no assignment rows
+ * touched (its nominal players stay on record, simply never scored; see
+ * spp_kq_get_round_progress()/spp_kq_submit_court_score() for how
+ * "cancelled" is then excluded everywhere downstream). Only available
+ * before that court has reported a score.
+ *
+ * @return array ['success'=>bool, 'error'=>?string]
+ */
+function spp_kq_cancel_court( int $occurrence_id, string $court_name ) : array {
+    $pre = spp_kq_live_roster_precondition( $occurrence_id );
+    if ( $pre['error'] ) {
+        return array( 'success' => false, 'error' => $pre['error'] );
+    }
+    $round = $pre['round'];
+
+    global $wpdb;
+    $scores_table = spp_kq_scores_table();
+    $row = $wpdb->get_row( $wpdb->prepare(
+        "SELECT red_score, black_score, cancelled FROM {$scores_table} WHERE occurrence_id = %d AND round_number = %d AND court_name = %s",
+        $occurrence_id, $round, $court_name
+    ), ARRAY_A );
+
+    if ( ! $row ) {
+        return array( 'success' => false, 'error' => 'Not a valid court for this round.' );
+    }
+    if ( (int) $row['cancelled'] === 1 ) {
+        return array( 'success' => false, 'error' => 'That court is already cancelled for this round.' );
+    }
+    if ( $row['red_score'] !== null && $row['black_score'] !== null ) {
+        return array( 'success' => false, 'error' => 'That court has already reported a score for this round -- nothing to cancel.' );
+    }
+
+    $wpdb->update( $scores_table,
+        array( 'cancelled' => 1 ),
+        array( 'occurrence_id' => $occurrence_id, 'round_number' => $round, 'court_name' => $court_name )
+    );
+
+    return array( 'success' => true, 'error' => null, 'court_name' => $court_name, 'round' => $round );
 }

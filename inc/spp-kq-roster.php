@@ -1,8 +1,30 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — KQ-Specific Roster Adjust
-   Version: 1.0.0
-   Date: 2026-09-13
+   Version: 1.1.0
+   Date: 2026-09-14
+
+   Changes from 1.0.0:
+   - spp_kq_render_roster_screen() (?kq_view=roster) now branches on
+     phase instead of only ever handling 'not_started': the pre-
+     Round-1 add/remove UI is unchanged and still the ONLY thing shown
+     while phase==='not_started', but 'organizing'/'in_play' (Round 1's
+     draw complete, event underway) now render a live swap/cancel
+     screen instead of the old "roster can only be adjusted before
+     Round 1 starts" dead end -- see spp_kq_render_live_swap_screen()
+     below. 'complete'/'cancelled' still show a plain "moved on"
+     message, worded per phase.
+   - New spp_kq_render_live_swap_screen(): per court in the CURRENT
+     round, shows each of its 4 slots (occupied -> a "Swap out" pick-a-
+     replacement form; empty, from a cancelled court re-created empty
+     by spp_kq_transition_advance_round() -- "Assign" pick-a-player
+     form) plus a "Cancel this court" action, unless that court has
+     already reported (locked) or is already cancelled (badge only).
+     Calls spp_kq_swap_player()/spp_kq_fill_open_slot()/
+     spp_kq_cancel_court() (inc/spp-kq-live.php) -- this file adds no
+     new mechanics of its own, only the screen and the
+     spp_kq_handle_post_actions() wiring ('roster_swap'/
+     'roster_fill_slot'/'cancel_court', inc/spp-kq-screens.php).
 
    PURPOSE:
    Replaces KQ's prior dependency on the generic GL Events
@@ -179,8 +201,13 @@ function spp_kq_render_roster_screen( int $occurrence_id ) : string {
     $state = spp_kq_get_event_state( $occurrence_id );
     $phase = $state['phase'] ?? 'not_started';
 
-    if ( $phase !== 'not_started' ) {
-        return $back_link . '<p class="kq-hint">The roster can only be adjusted before Round 1 starts -- this event has already moved on.</p>';
+    if ( in_array( $phase, array( 'organizing', 'in_play' ), true ) ) {
+        return $back_link . spp_kq_render_live_swap_screen( $occurrence_id );
+    }
+
+    if ( $phase === 'complete' || $phase === 'cancelled' ) {
+        $why = ( $phase === 'complete' ) ? 'this event has ended.' : 'this event was cancelled.';
+        return $back_link . '<p class="kq-hint">The roster can no longer be adjusted -- ' . esc_html( $why ) . '</p>';
     }
 
     global $wpdb;
@@ -274,6 +301,175 @@ function spp_kq_render_roster_screen( int $occurrence_id ) : string {
                 if (!term || opt.dataset.name.indexOf(term) !== -1) select.appendChild(opt.cloneNode(true));
             });
             if (select.options.length === 2) select.selectedIndex = 1;
+        });
+    })();
+    </script>
+    <?php
+    return ob_get_clean();
+}
+
+// =============================================================
+// Live swap / cancel screen (Round 1 draw complete, event underway --
+// 'organizing' or 'in_play'). See this file's own 1.1.0 changelog.
+// =============================================================
+
+/**
+ * Every court's 4 slots for the current round, in fixed hierarchy
+ * order, each either occupied (user_id + name) or empty (both null --
+ * only possible for a court spp_kq_transition_advance_round() just
+ * re-created after a cancellation, inc/spp-kq-live.php). Distinct from
+ * spp_kq_get_round_court_view() (inc/spp-kq-screens.php), which only
+ * ever shows real (non-NULL) players by name -- this needs the empty
+ * slots too, plus user_id, for the swap/assign forms below.
+ *
+ * @return array court_name => list of ['team_color'=>string,
+ *   'user_id'=>?int, 'name'=>?string], 4 entries per court.
+ */
+function spp_kq_get_round_slots_detailed( int $occurrence_id, int $round_number ) : array {
+    global $wpdb;
+    $table = spp_kq_assignments_table();
+
+    $rows = $wpdb->get_results( $wpdb->prepare(
+        "SELECT a.court_name, a.team_color, a.user_id, m.first_name, m.last_name
+         FROM {$table} a
+         LEFT JOIN membership m ON m.user_id = a.user_id
+         WHERE a.occurrence_id = %d AND a.round_number = %d
+         ORDER BY a.court_name, a.team_color, a.id",
+        $occurrence_id, $round_number
+    ), ARRAY_A );
+
+    $out = array();
+    foreach ( $rows as $r ) {
+        $out[ $r['court_name'] ][] = array(
+            'team_color' => $r['team_color'],
+            'user_id'    => $r['user_id'] !== null ? (int) $r['user_id'] : null,
+            'name'       => $r['user_id'] !== null ? spp_kq_player_name( $r['first_name'], $r['last_name'], (int) $r['user_id'] ) : null,
+        );
+    }
+    return $out;
+}
+
+/**
+ * Live swap/cancel screen: every court in the current round, each slot
+ * either "Swap out" (occupied) or "Assign" (empty, a re-staffed-after-
+ * cancellation court) plus a "Cancel this court" action -- unless that
+ * court has already reported (locked, shown as a badge only) or is
+ * already cancelled (badge only). One shared <template> of available
+ * members (anyone NOT already assigned this round) is cloned into
+ * whichever row's <select> the facilitator opens, via
+ * spp_kq_swap_player()/spp_kq_fill_open_slot()/spp_kq_cancel_court()
+ * (inc/spp-kq-live.php) doing the actual validation server-side --
+ * this function only renders, never trusts its own display state.
+ */
+function spp_kq_render_live_swap_screen( int $occurrence_id ) : string {
+    $state = spp_kq_get_event_state( $occurrence_id );
+    $round = (int) ( $state['current_round'] ?? 0 );
+
+    if ( $round === 1 && spp_kq_count_unclaimed( $occurrence_id, 1 ) > 0 ) {
+        return '<p class="kq-hint">Finish Round 1\'s draw before swapping players.</p>';
+    }
+
+    $courts_order = spp_kq_determine_courts_order( $occurrence_id );
+    $slots        = spp_kq_get_round_slots_detailed( $occurrence_id, $round );
+    $cancelled    = spp_kq_get_cancelled_courts( $occurrence_id, $round );
+
+    $assigned_ids = array();
+    foreach ( $slots as $court_slots ) {
+        foreach ( $court_slots as $s ) {
+            if ( $s['user_id'] !== null ) {
+                $assigned_ids[ $s['user_id'] ] = true;
+            }
+        }
+    }
+
+    global $wpdb;
+    $exclude_sql = empty( $assigned_ids )
+        ? ''
+        : 'AND user_id NOT IN (' . implode( ',', array_map( 'intval', array_keys( $assigned_ids ) ) ) . ')';
+    $available_members = $wpdb->get_results(
+        "SELECT user_id, first_name, last_name FROM membership WHERE user_email != '' {$exclude_sql} ORDER BY first_name ASC, last_name ASC",
+        ARRAY_A
+    );
+
+    ob_start();
+    ?>
+    <p class="kq-round-label">Round <?php echo esc_html( $round ); ?> &mdash; Swap / Cancel</p>
+    <p class="kq-hint">Swap a player out for a replacement, or cancel a court's game for this round -- both only before that court reports its score.</p>
+
+    <template id="kq-swap-options-template">
+        <option value="">&mdash; Select &mdash;</option>
+        <?php foreach ( $available_members as $m ) :
+            $full_name = trim( $m['first_name'] . ' ' . $m['last_name'] );
+        ?>
+            <option value="<?php echo esc_attr( $m['user_id'] ); ?>"><?php echo esc_html( $full_name ); ?></option>
+        <?php endforeach; ?>
+    </template>
+
+    <?php foreach ( $courts_order as $court ) :
+        $court_slots = $slots[ $court ] ?? array();
+        $is_cancelled = in_array( $court, $cancelled, true );
+        $has_reported = spp_kq_court_has_reported( $occurrence_id, $round, $court );
+    ?>
+        <div class="kq-court-card">
+            <div class="kq-court-name"><?php echo esc_html( $court ); ?></div>
+
+            <?php if ( $is_cancelled ) : ?>
+                <p class="kq-hint">Cancelled for this round.</p>
+            <?php elseif ( $has_reported ) : ?>
+                <p class="kq-hint">Already reported &mdash; locked.</p>
+            <?php else : ?>
+                <?php foreach ( $court_slots as $i => $slot ) :
+                    $row_id = 'kq-swap-' . sanitize_title( $court ) . '-' . $i;
+                ?>
+                    <div class="kq-swap-row">
+                        <span class="kq-team-<?php echo esc_attr( $slot['team_color'] ); ?>">
+                            <?php echo esc_html( ucfirst( $slot['team_color'] ) ); ?>:
+                            <?php echo $slot['name'] ? esc_html( $slot['name'] ) : '(empty)'; ?>
+                        </span>
+                        <button type="button" class="kq-btn kq-btn-secondary kq-btn-small kq-swap-toggle" data-target="<?php echo esc_attr( $row_id ); ?>">
+                            <?php echo $slot['user_id'] ? 'Swap out' : 'Assign'; ?>
+                        </button>
+                        <form method="post" class="kq-inline-form kq-swap-form" id="<?php echo esc_attr( $row_id ); ?>" hidden>
+                            <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
+                            <?php if ( $slot['user_id'] ) : ?>
+                                <input type="hidden" name="spp_kq_action" value="roster_swap">
+                                <input type="hidden" name="spp_kq_swap_old_user_id" value="<?php echo esc_attr( $slot['user_id'] ); ?>">
+                                <select class="kq-swap-select" name="spp_kq_swap_new_user_id" required></select>
+                            <?php else : ?>
+                                <input type="hidden" name="spp_kq_action" value="roster_fill_slot">
+                                <input type="hidden" name="spp_kq_fill_court_name" value="<?php echo esc_attr( $court ); ?>">
+                                <input type="hidden" name="spp_kq_fill_team_color" value="<?php echo esc_attr( $slot['team_color'] ); ?>">
+                                <select class="kq-swap-select" name="spp_kq_fill_new_user_id" required></select>
+                            <?php endif; ?>
+                            <button type="submit" class="kq-btn kq-btn-primary kq-btn-small">Confirm</button>
+                        </form>
+                    </div>
+                <?php endforeach; ?>
+
+                <form method="post" class="kq-inline-form" onsubmit="return confirm('Cancel this court\'s game for this round? No score will be recorded for it -- other courts are unaffected.');">
+                    <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
+                    <input type="hidden" name="spp_kq_action" value="cancel_court">
+                    <input type="hidden" name="spp_kq_cancel_court_name" value="<?php echo esc_attr( $court ); ?>">
+                    <button type="submit" class="kq-btn kq-btn-danger kq-btn-small">Cancel this court</button>
+                </form>
+            <?php endif; ?>
+        </div>
+    <?php endforeach; ?>
+
+    <script>
+    (function() {
+        document.querySelectorAll('.kq-swap-toggle').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                var form = document.getElementById(this.dataset.target);
+                if (!form) return;
+                var select = form.querySelector('.kq-swap-select');
+                if (select && !select.dataset.populated) {
+                    var tpl = document.getElementById('kq-swap-options-template');
+                    select.appendChild(tpl.content.cloneNode(true));
+                    select.dataset.populated = '1';
+                }
+                form.hidden = !form.hidden;
+            });
         });
     })();
     </script>

@@ -1,8 +1,44 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Screens
-   Version: 1.6.0
-   Date: 2026-09-13
+   Version: 1.7.0
+   Date: 2026-09-14
+
+   Changes from 1.6.0 (Check-in + mid-event roster swap + court
+   cancellation -- see the conversation this was built from for the
+   full spec; most of the actual mechanics live in
+   inc/spp-kq-live.php/inc/spp-kq-checkin.php/inc/spp-kq-roster.php, see
+   each of those files' own changelogs):
+   - spp_kq_render_start_screen() is now a check-in screen: lists every
+     confirmed registrant with a toggle check-in button
+     (spp_kq_get_confirmed_registrants_named()/
+     spp_kq_get_checked_in_user_ids(), inc/spp-kq-checkin.php), and its
+     "Cannot start" validation now runs against the CHECKED-IN count,
+     not the raw confirmed count.
+   - spp_kq_handle_post_actions(): 'start_round1' now reconciles
+     check-in reality (withdraws anyone confirmed-but-not-checked-in)
+     BEFORE calling spp_kq_transition_start_round1(), which is
+     otherwise unchanged. New 'checkin_mark'/'checkin_unmark' cases.
+     'start_play' now surfaces spp_kq_transition_start_play()'s own
+     error (new in that function -- the understaffed-court guard) to
+     the facilitator instead of discarding it. New 'roster_swap'/
+     'roster_fill_slot'/'cancel_court' cases, thin wrappers over
+     spp_kq_swap_player()/spp_kq_fill_open_slot()/spp_kq_cancel_court()
+     (inc/spp-kq-live.php).
+   - spp_kq_render_overview_screen()/spp_kq_render_in_play_screen(): a
+     cancelled court now shows a badge instead of team lists/score
+     inputs (the in-play screen's own JS wiring loop guards against a
+     card with no score inputs to wire up); an understaffed court (a
+     just-cancelled court's replacement slots re-created empty, see
+     inc/spp-kq-live.php's own changelog) shows a "needs players"
+     notice on the Overview screen and blocks the Start Play button
+     entirely, both pointing at Roster Adjust.
+   - spp_kq_styles(): new .kq-btn-small/.kq-roster-list/
+     .kq-checkin-list/.kq-swap-row/.kq-swap-form/.kq-swap-select rules
+     -- kq-btn-small and kq-roster-list existed in markup before this
+     pass with no rule of their own (harmless fallback to default
+     sizing/a bare list); given real definitions now that more screens
+     use them.
 
    Changes from 1.5.0:
    - CSS FIX (spp_kq_styles()): scoreboard cards (.kq-court-grid/
@@ -443,6 +479,21 @@ function spp_kq_styles() : string {
         .kq-cancel-summary ul { margin:0; padding-left:18px; font-size:14px; }
         .kq-full-reset-row { margin-top:28px; padding-top:14px; border-top:1px dashed #ccc; text-align:right; }
         .kq-full-reset-row .kq-btn { font-size:13px; padding:6px 14px; opacity:.85; }
+        /* 1.1.0: check-in list, roster list, and the live swap screen
+           (inc/spp-kq-checkin.php / inc/spp-kq-roster.php) all share
+           this small-button/list vocabulary -- kq-btn-small and
+           kq-roster-list existed in markup before this pass but had no
+           rule of their own (harmless -- they just fell back to a
+           normal-size button / a bare list); added here rather than
+           left undefined now that more screens rely on them. */
+        .kq-btn-small { padding:6px 12px; font-size:13px; }
+        .kq-roster-list, .kq-checkin-list { list-style:none; margin:0 0 16px; padding:0; display:flex; flex-direction:column; gap:6px; }
+        .kq-roster-list li, .kq-checkin-list li { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 10px; border:1px solid #eee; border-radius:6px; }
+        .kq-checkin-list .kq-btn { width:100%; text-align:left; }
+        .kq-swap-row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:6px 0; border-bottom:1px solid #f0f0f0; }
+        .kq-swap-row:last-of-type { border-bottom:none; }
+        .kq-swap-form { display:flex; align-items:center; gap:6px; margin-top:4px; flex-basis:100%; }
+        .kq-swap-select { padding:5px 8px; border:1px solid #ddd; border-radius:4px; max-width:220px; }
         /* Responsive scoreboard card width -- min-width media queries only
            (never max-width), so nothing here can ever affect a viewport
            narrower than 600px: the existing, already-correct phone
@@ -642,9 +693,24 @@ function spp_kq_render_occurrence_header( array $occurrence, string $notice = ''
  *   from spp_kq_get_occurrence_summary() -- passed in by the caller rather
  *   than re-queried here.
  */
+/**
+ * Screen 2: Start / Check-in. Every confirmed registrant (gl_registrations),
+ * each toggleable checked-in/not -- see inc/spp-kq-checkin.php's own
+ * header for the full flow. The "Cannot start" validation below is
+ * evaluated against the CHECKED-IN count, not the raw confirmed count
+ * (1.1.0) -- at the moment "Start Round 1 Draw" is pressed,
+ * spp_kq_handle_post_actions()'s 'start_round1' case withdraws anyone
+ * still unchecked (spp_kq_roster_remove(), same call Roster Adjust's own
+ * Remove button uses) BEFORE calling spp_kq_transition_start_round1(),
+ * so that function's own confirmed-count check (unchanged) already
+ * evaluates the post-reconciliation reality.
+ */
 function spp_kq_render_start_screen( int $occurrence_id, string $event_date ) : string {
-    $count = spp_kq_confirmed_count( $occurrence_id );
-    $valid = ( $count >= 4 && $count <= 16 && $count % 4 === 0 );
+    $confirmed        = spp_kq_get_confirmed_registrants_named( $occurrence_id );
+    $checked_in_ids    = spp_kq_get_checked_in_user_ids( $occurrence_id );
+    $confirmed_count   = count( $confirmed );
+    $checked_in_count  = count( $checked_in_ids );
+    $valid             = ( $checked_in_count >= 4 && $checked_in_count <= 16 && $checked_in_count % 4 === 0 );
 
     // Day-of restriction: this feature has no access gate beyond
     // is_user_logged_in() (see spp_kq_can_facilitate()), so this is the one
@@ -659,11 +725,36 @@ function spp_kq_render_start_screen( int $occurrence_id, string $event_date ) : 
 
     ob_start();
     ?>
-    <p class="kq-meta"><?php echo esc_html( $count ); ?> confirmed registrant<?php echo $count === 1 ? '' : 's'; ?></p>
-    <p class="kq-hint">Starts a random card draw that assigns everyone's starting court for Round 1.</p>
+    <p class="kq-meta">
+        <?php echo esc_html( $checked_in_count ); ?> of <?php echo esc_html( $confirmed_count ); ?> confirmed registrant<?php echo $confirmed_count === 1 ? '' : 's'; ?> checked in
+    </p>
+    <p class="kq-hint">Mark each player checked in as they arrive. Anyone still not checked in when you start Round 1 is removed from the registrant list.</p>
+    <p class="kq-hint"><a href="<?php echo esc_url( add_query_arg( 'kq_view', 'roster' ) ); ?>">Roster Adjust</a> &mdash; add a late arrival or remove someone, any time before starting.</p>
+
+    <?php if ( empty( $confirmed ) ) : ?>
+        <p class="kq-hint">No confirmed registrants yet.</p>
+    <?php else : ?>
+        <ul class="kq-checkin-list">
+            <?php foreach ( $confirmed as $p ) :
+                $is_in = in_array( $p['user_id'], $checked_in_ids, true );
+            ?>
+                <li>
+                    <form method="post" class="kq-inline-form" style="width:100%;">
+                        <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
+                        <input type="hidden" name="spp_kq_action" value="<?php echo $is_in ? 'checkin_unmark' : 'checkin_mark'; ?>">
+                        <input type="hidden" name="spp_kq_checkin_user_id" value="<?php echo esc_attr( $p['user_id'] ); ?>">
+                        <button type="submit" class="kq-btn <?php echo $is_in ? 'kq-btn-primary' : 'kq-btn-secondary'; ?>">
+                            <?php echo esc_html( $p['name'] ); ?><?php echo $is_in ? ' -- Checked in ✓' : ' -- Check in'; ?>
+                        </button>
+                    </form>
+                </li>
+            <?php endforeach; ?>
+        </ul>
+    <?php endif; ?>
+
     <?php if ( ! $valid ) : ?>
         <p class="kq-warn">
-            Cannot start: <?php echo esc_html( $count ); ?> confirmed registrant(s) &mdash; need a multiple of 4,
+            Cannot start: <?php echo esc_html( $checked_in_count ); ?> checked in &mdash; need a multiple of 4,
             between 4 and 16. Adjust the roster via
             <a href="<?php echo esc_url( add_query_arg( 'kq_view', 'roster' ) ); ?>">Roster Adjust</a> first.
         </p>
@@ -851,6 +942,14 @@ function spp_kq_render_draw_screen( int $occurrence_id ) : string {
 function spp_kq_render_overview_screen( int $occurrence_id, int $round ) : string {
     $courts_data   = spp_kq_get_round_court_view( $occurrence_id, $round );
     $scores_exist  = spp_kq_has_any_recorded_score( $occurrence_id );
+    // 1.1.0: cancelled courts get a badge instead of team lists;
+    // understaffed courts (a court re-created empty after a
+    // cancellation, not yet re-staffed -- see
+    // spp_kq_transition_advance_round()'s own docblock,
+    // inc/spp-kq-live.php) block Start Play until fixed via Roster
+    // Adjust's live swap screen.
+    $cancelled     = spp_kq_get_cancelled_courts( $occurrence_id, $round );
+    $understaffed  = spp_kq_get_understaffed_courts( $occurrence_id, $round );
 
     ob_start();
     ?>
@@ -859,23 +958,34 @@ function spp_kq_render_overview_screen( int $occurrence_id, int $round ) : strin
         <?php foreach ( $courts_data as $court => $teams ) : ?>
             <div class="kq-court-card">
                 <div class="kq-court-name"><?php echo esc_html( $court ); ?></div>
-                <div class="kq-team kq-team-red">Red: <?php echo esc_html( implode( ', ', $teams['red'] ) ); ?></div>
-                <div class="kq-team kq-team-black">Black: <?php echo esc_html( implode( ', ', $teams['black'] ) ); ?></div>
+                <?php if ( in_array( $court, $cancelled, true ) ) : ?>
+                    <p class="kq-hint">Cancelled for this round.</p>
+                <?php elseif ( in_array( $court, $understaffed, true ) ) : ?>
+                    <p class="kq-hint">Needs players &mdash; <a href="<?php echo esc_url( add_query_arg( 'kq_view', 'roster' ) ); ?>">Roster Adjust</a>.</p>
+                <?php else : ?>
+                    <div class="kq-team kq-team-red">Red: <?php echo esc_html( implode( ', ', $teams['red'] ) ); ?></div>
+                    <div class="kq-team kq-team-black">Black: <?php echo esc_html( implode( ', ', $teams['black'] ) ); ?></div>
+                <?php endif; ?>
             </div>
         <?php endforeach; ?>
     </div>
-    <?php if ( $scores_exist ) : ?>
+    <p class="kq-hint">Swap a player, or cancel a court's game for this round, via <a href="<?php echo esc_url( add_query_arg( 'kq_view', 'roster' ) ); ?>">Roster Adjust</a>.</p>
+    <?php if ( ! empty( $understaffed ) ) : ?>
+        <p class="kq-warn">Cannot start play: <?php echo esc_html( implode( ', ', $understaffed ) ); ?> still need players.</p>
+    <?php elseif ( $scores_exist ) : ?>
         <p class="kq-hint">Start Play opens score entry for every court; End Event closes the day for good &mdash; no more rounds.</p>
     <?php else : ?>
         <p class="kq-hint">Start Play opens score entry for every court.</p>
     <?php endif; ?>
     <div class="kq-action-row">
+        <?php if ( empty( $understaffed ) ) : ?>
         <form method="post" class="kq-inline-form">
             <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
             <input type="hidden" name="spp_kq_action" value="start_play">
             <input type="hidden" name="spp_kq_round" value="<?php echo esc_attr( $round ); ?>">
             <button type="submit" class="kq-btn kq-btn-primary">Start Play</button>
         </form>
+        <?php endif; ?>
         <?php if ( $scores_exist ) : ?>
         <form method="post" class="kq-inline-form" onsubmit="return confirm('End the event now? This closes the day — no more rounds.');">
             <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
@@ -908,6 +1018,9 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round ) : string
     $scores_exist = spp_kq_has_any_recorded_score( $occurrence_id );
 
     $court_view = spp_kq_get_round_court_view( $occurrence_id, $round );
+    // 1.1.0: a cancelled court gets a badge and no score inputs at all --
+    // see spp_kq_get_round_progress()'s own "not counted anywhere" note.
+    $cancelled  = spp_kq_get_cancelled_courts( $occurrence_id, $round );
 
     $scores_by_court = array();
     foreach ( spp_kq_get_round_scores( $occurrence_id, $round ) as $s ) {
@@ -923,29 +1036,35 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round ) : string
     </div>
 
     <p class="kq-hint">Enter both teams' real scores for any court &mdash; play continues until someone wins by a point, so an equal score is treated as a mistake to fix.</p>
+    <p class="kq-hint">A player leaves mid-round or a court can't continue? <a href="<?php echo esc_url( add_query_arg( 'kq_view', 'roster' ) ); ?>">Roster Adjust</a> -- swap in a replacement or cancel that court's game.</p>
 
     <div class="kq-msg kq-notice" id="kq-score-msg" style="display:none;"></div>
 
     <?php foreach ( $court_view as $court => $teams ) :
         $current = $scores_by_court[ $court ] ?? array( 'red_score' => null, 'black_score' => null );
+        $is_cancelled = in_array( $court, $cancelled, true );
     ?>
         <div class="kq-court-card" data-court="<?php echo esc_attr( $court ); ?>">
             <div class="kq-court-name"><?php echo esc_html( $court ); ?></div>
-            <div class="kq-team kq-team-red">Red: <?php echo esc_html( implode( ', ', $teams['red'] ) ); ?></div>
-            <div class="kq-team kq-team-black">Black: <?php echo esc_html( implode( ', ', $teams['black'] ) ); ?></div>
+            <?php if ( $is_cancelled ) : ?>
+                <p class="kq-hint">Cancelled for this round &mdash; no score to enter.</p>
+            <?php else : ?>
+                <div class="kq-team kq-team-red">Red: <?php echo esc_html( implode( ', ', $teams['red'] ) ); ?></div>
+                <div class="kq-team kq-team-black">Black: <?php echo esc_html( implode( ', ', $teams['black'] ) ); ?></div>
 
-            <div class="kq-score-row">
-                <label>Red score<br>
-                    <input type="number" class="kq-score-input kq-court-red-input" min="0" max="11" inputmode="numeric" pattern="[0-9]*"
-                           value="<?php echo esc_attr( $current['red_score'] ?? '' ); ?>">
-                </label>
-                <label>Black score<br>
-                    <input type="number" class="kq-score-input kq-court-black-input" min="0" max="11" inputmode="numeric" pattern="[0-9]*"
-                           value="<?php echo esc_attr( $current['black_score'] ?? '' ); ?>">
-                </label>
-                <button type="button" class="kq-btn kq-btn-primary kq-save-score-btn">Save Score</button>
-                <span class="kq-saved" style="display:none;">Saved &#10003;</span>
-            </div>
+                <div class="kq-score-row">
+                    <label>Red score<br>
+                        <input type="number" class="kq-score-input kq-court-red-input" min="0" max="11" inputmode="numeric" pattern="[0-9]*"
+                               value="<?php echo esc_attr( $current['red_score'] ?? '' ); ?>">
+                    </label>
+                    <label>Black score<br>
+                        <input type="number" class="kq-score-input kq-court-black-input" min="0" max="11" inputmode="numeric" pattern="[0-9]*"
+                               value="<?php echo esc_attr( $current['black_score'] ?? '' ); ?>">
+                    </label>
+                    <button type="button" class="kq-btn kq-btn-primary kq-save-score-btn">Save Score</button>
+                    <span class="kq-saved" style="display:none;">Saved &#10003;</span>
+                </div>
+            <?php endif; ?>
         </div>
     <?php endforeach; ?>
 
@@ -975,6 +1094,11 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round ) : string
             var blackInput = card.querySelector('.kq-court-black-input');
             var saveBtn    = card.querySelector('.kq-save-score-btn');
             var savedTag   = card.querySelector('.kq-saved');
+
+            // 1.1.0: a cancelled court's card has no score inputs at all
+            // (see spp_kq_render_in_play_screen()'s own PHP above) --
+            // nothing to wire up for it.
+            if (!redInput || !blackInput || !saveBtn) return;
 
             function updateSaveState() {
                 if (!saveBtn) return;
@@ -1157,12 +1281,27 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date ) : 
             if ( current_time( 'Y-m-d' ) !== $event_date && ! spp_is_admin() ) {
                 return 'This event can only be started on its actual event date.';
             }
+            // 1.1.0: reconcile check-in reality BEFORE the transition's own
+            // count check runs -- anyone confirmed but not checked in is
+            // withdrawn now (spp_kq_roster_remove(), same call Roster
+            // Adjust's own Remove button uses), so
+            // spp_kq_transition_start_round1()'s unchanged
+            // spp_kq_confirmed_count() check already evaluates the
+            // post-reconciliation count. See inc/spp-kq-checkin.php's own
+            // header for the full flow, including why this makes check-in
+            // effectively mandatory.
+            $checked_in_ids = spp_kq_get_checked_in_user_ids( $occurrence_id );
+            foreach ( spp_kq_confirmed_user_ids( $occurrence_id ) as $uid ) {
+                if ( ! in_array( $uid, $checked_in_ids, true ) ) {
+                    spp_kq_roster_remove( $occurrence_id, $uid );
+                }
+            }
             $r = spp_kq_transition_start_round1( $occurrence_id );
             return ( ! $r['won'] && $r['error'] ) ? $r['error'] : '';
 
         case 'start_play':
-            spp_kq_transition_start_play( $occurrence_id, $round );
-            return '';
+            $r = spp_kq_transition_start_play( $occurrence_id, $round );
+            return ( ! $r['won'] && $r['error'] ) ? $r['error'] : '';
 
         case 'end_event':
             // Same gate the Overview screen's own button visibility
@@ -1265,6 +1404,49 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date ) : 
                 ? spp_kq_roster_add( $occurrence_id, $roster_user_id )
                 : spp_kq_roster_remove( $occurrence_id, $roster_user_id );
             return $roster_result['success'] ? '' : ( $roster_result['error'] ?? '' );
+
+        case 'checkin_mark':
+        case 'checkin_unmark':
+            // 1.1.0 -- see inc/spp-kq-checkin.php's own header. Pre-Round-1
+            // only, same boundary roster_add/roster_remove already enforce
+            // just above.
+            $checkin_state = spp_kq_get_event_state( $occurrence_id );
+            if ( ! $checkin_state || $checkin_state['phase'] !== 'not_started' ) {
+                return 'Check-in is only available before Round 1 starts.';
+            }
+            $checkin_user_id = isset( $_POST['spp_kq_checkin_user_id'] ) ? absint( $_POST['spp_kq_checkin_user_id'] ) : 0;
+            if ( ! $checkin_user_id || ! in_array( $checkin_user_id, spp_kq_confirmed_user_ids( $occurrence_id ), true ) ) {
+                return 'Not a confirmed registrant for this event.';
+            }
+            spp_kq_set_checked_in( $occurrence_id, $checkin_user_id, $action === 'checkin_mark' );
+            return '';
+
+        case 'roster_swap':
+            // 1.1.0 mid-event 1-for-1 substitute -- see
+            // spp_kq_swap_player()'s own docblock (inc/spp-kq-live.php) for
+            // the full validation it performs; this dispatcher just reads
+            // the two user_ids off the POST and hands them over.
+            $swap_old = isset( $_POST['spp_kq_swap_old_user_id'] ) ? absint( $_POST['spp_kq_swap_old_user_id'] ) : 0;
+            $swap_new = isset( $_POST['spp_kq_swap_new_user_id'] ) ? absint( $_POST['spp_kq_swap_new_user_id'] ) : 0;
+            $swap_result = spp_kq_swap_player( $occurrence_id, $swap_old, $swap_new );
+            return $swap_result['success'] ? '' : ( $swap_result['error'] ?? '' );
+
+        case 'roster_fill_slot':
+            // 1.1.0 -- re-staffs one EMPTY slot on a court
+            // spp_kq_transition_advance_round() re-created after a
+            // cancellation. See spp_kq_fill_open_slot()'s own docblock.
+            $fill_court = isset( $_POST['spp_kq_fill_court_name'] ) ? sanitize_text_field( wp_unslash( $_POST['spp_kq_fill_court_name'] ) ) : '';
+            $fill_color = isset( $_POST['spp_kq_fill_team_color'] ) ? sanitize_text_field( wp_unslash( $_POST['spp_kq_fill_team_color'] ) ) : '';
+            $fill_user  = isset( $_POST['spp_kq_fill_new_user_id'] ) ? absint( $_POST['spp_kq_fill_new_user_id'] ) : 0;
+            $fill_result = spp_kq_fill_open_slot( $occurrence_id, $fill_court, $fill_color, $fill_user );
+            return $fill_result['success'] ? '' : ( $fill_result['error'] ?? '' );
+
+        case 'cancel_court':
+            // 1.1.0 -- see spp_kq_cancel_court()'s own docblock
+            // (inc/spp-kq-live.php).
+            $cancel_court_name = isset( $_POST['spp_kq_cancel_court_name'] ) ? sanitize_text_field( wp_unslash( $_POST['spp_kq_cancel_court_name'] ) ) : '';
+            $cancel_result = spp_kq_cancel_court( $occurrence_id, $cancel_court_name );
+            return $cancel_result['success'] ? '' : ( $cancel_result['error'] ?? '' );
     }
 
     return '';
