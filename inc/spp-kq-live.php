@@ -1,8 +1,28 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Live Event Runner
-   Version: 1.5.0
+   Version: 1.6.0
    Date: 2026-09-15
+
+   Changes from 1.5.0 ("Complete Allocation Randomly" at the round-1
+   draw -- see the conversation this was built from for the full spec):
+   - New spp_kq_complete_draw_randomly(): a facilitator shortcut that
+     fills every still-open round-1 slot with whoever hasn't yet
+     claimed one, randomly. INVESTIGATED first, not assumed: the real
+     manual-claim mechanism is spp_kq_draw_card() above (wp_ajax_spp_
+     kq_draw_card, inc/spp-kq-screens.php) -- one atomic RAND()-picked-
+     candidate/CAS-UPDATE/retry-on-contention claim per call, already
+     safe to call repeatedly and already guarding against a player who
+     already has a slot. This new function is deliberately NOTHING
+     MORE than a loop calling that exact same function once per not-
+     yet-drawn player (spp_kq_get_not_yet_drawn(), inc/spp-kq-
+     screens.php) -- no new concurrency mechanism, no second write
+     path, and therefore no way for it to produce an assignment row
+     that a manual tap couldn't also have produced. Zero interaction
+     with the movement algorithm confirmed by inspection: spp_kq_
+     compute_next_round() (inc/spp-kq-movement.php) only ever reads
+     finished round assignment rows, with no concept of "how" a slot
+     got filled.
 
    Changes from 1.4.0 (pre-round announcement flow, and a revision of
    this same day's earlier delayed-start timing -- see the conversation
@@ -1031,6 +1051,47 @@ function spp_kq_draw_card( int $occurrence_id, int $user_id ) : array {
     }
 
     return array( 'success' => false, 'error' => 'Could not claim a slot after several attempts -- please try again.' );
+}
+
+/**
+ * "Complete Allocation Randomly" (1.17.0) -- a facilitator-usable
+ * shortcut for the round-1 draw: fills every STILL-open slot with
+ * whichever confirmed/checked-in players haven't yet claimed one,
+ * randomly paired. Deliberately built as nothing more than a loop
+ * over spp_kq_draw_card() above, called once per not-yet-drawn player
+ * (spp_kq_get_not_yet_drawn(), inc/spp-kq-screens.php -- confirmed
+ * registrants minus whoever already has a round-1 assignment row) --
+ * every individual assignment goes through that SAME atomic per-slot
+ * claim (RAND()-picked candidate, UPDATE ... WHERE user_id IS NULL,
+ * retried on contention) a real card-tap already uses, so a row this
+ * produces is byte-for-byte indistinguishable from one a player
+ * claimed for themselves -- no new concurrency mechanism, and zero
+ * interaction with spp_kq_compute_next_round()/the movement algorithm
+ * (inc/spp-kq-movement.php), which only ever reads finished assignment
+ * rows and has no idea how they were filled in.
+ *
+ * Safe to call at ANY point in the draw (spec: 0 already-claimed
+ * through N-1 already-claimed) -- a player who already has a slot
+ * simply isn't in $not_drawn's list at all, so this never touches
+ * them. Safe against a manual claim racing THIS call for the same
+ * player too: spp_kq_draw_card()'s own "already been drawn" guard
+ * (checked first, inside that function) rejects that one player's
+ * assignment cleanly -- $assigned just comes back one lower than
+ * $remaining_before, not a batch failure -- while every other
+ * player's own independent claim in the same loop is unaffected.
+ *
+ * @return array{assigned: int, remaining_before: int}
+ */
+function spp_kq_complete_draw_randomly( int $occurrence_id ) : array {
+    $not_drawn = spp_kq_get_not_yet_drawn( $occurrence_id );
+    $assigned  = 0;
+    foreach ( $not_drawn as $player ) {
+        $result = spp_kq_draw_card( $occurrence_id, (int) $player['user_id'] );
+        if ( $result['success'] ) {
+            $assigned++;
+        }
+    }
+    return array( 'assigned' => $assigned, 'remaining_before' => count( $not_drawn ) );
 }
 
 // =============================================================

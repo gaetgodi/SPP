@@ -1,8 +1,63 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Screens
-   Version: 1.15.0
+   Version: 1.16.0
    Date: 2026-09-15
+
+   Changes from 1.15.0 (two changes -- see the conversation this was
+   built from for the full spec):
+
+   PART A -- Submit Photo embedded on Complete/Cancelled instead of
+   redirected. Context that made this the right call: the ONLY way to
+   ever reach complete/cancelled is End Event/Cancel Event, both direct
+   page actions (not something a device is ever polled INTO reaching);
+   any other device still watching now gets the identical screen via
+   the persistent app's own fragment-swap (see below), so a separate
+   redirect mechanism was solving a problem the architecture no longer
+   has. Removed entirely: spp_kq_maybe_photo_redirect_url(), the
+   window.location.href script in the dispatcher's complete/cancelled
+   case, and redirect_url from wp_ajax_spp_kq_poll_status's response.
+   KEPT unchanged: spp_kq_history_exists_for_occurrence() -- still the
+   one ground-truth gating condition (completed normally, or cancelled
+   with >=1 round played; nothing played never shows this).
+   INVESTIGATED (required before building): [spp_photo_submit]'s
+   shortcode callback (wp-content/plugins/spp-photo-gallery/includes/
+   photo-submission.php) took NO $atts at all -- confirmed by reading
+   it, not assumed -- so query-string preselection (this morning's
+   redirect) had nothing to fall back on for an inline do_shortcode()
+   call with no URL involved. Fixed with a small, reasonable plugin
+   change (flagged as such, not silently worked around): the callback
+   now accepts event_ref/date via shortcode_atts(), validated through
+   the EXISTING spp_photo_gallery_resolve_event_ref() (same check the
+   AJAX submit handler already runs) and the same real-date/not-future
+   rule confirmed_date already gets -- see that plugin's own 1.5.0
+   changelog. spp_kq_resolve_photo_submit_url() (URL-building) is gone;
+   replaced by spp_kq_resolve_photo_event_ref() (just the "series:<id>"
+   ref, no page/URL lookup needed any more) and new spp_kq_render_
+   photo_prompt(), called directly from spp_kq_render_complete_screen()/
+   spp_kq_render_cancelled_screen() -- so BOTH the dispatcher's direct
+   render (whoever pressed End Event/Cancel Event) and spp_kq_render_
+   live_fragment()'s own 'complete'/'cancelled' cases (every other
+   device, via a normal fragment swap) get the identical screen from
+   one function, nothing duplicated. Order per spec: "Event complete."
+   statement -> note -> embedded form -> "View Full Scoreboard" link --
+   the scoreboard link is now rendered BY these two screen functions
+   themselves (spp_kq_live_shortcode()'s usual top-of-page render is
+   skipped specifically for these two phases) to land in that position.
+   spp_kq_render_live_app()'s own poll() script: complete/cancelled are
+   now normal swappable structural-signature states (same mechanism
+   organizing/in_play already used), not reload/redirect triggers --
+   only not_started (a Full Reset from another tab) still forces a
+   reload, since that's the one phase this app was never built with a
+   fragment for. Polling stops once a terminal fragment is showing --
+   nothing can change server-side past that point.
+
+   PART B -- "Complete Allocation Randomly" at the round-1 draw. New
+   button on the draw screen (spp_kq_render_draw_screen()), plain POST
+   ('complete_draw_randomly' case, spp_kq_handle_post_actions()) --
+   same access level as every other draw-screen action, not admin-only.
+   The actual mechanics (spp_kq_complete_draw_randomly()) live in
+   inc/spp-kq-live.php -- see that file's own 1.6.0 changelog.
 
    Changes from 1.14.0 (two real bugs found during live device testing
    of the AJAX rebuild -- see the conversation this was built from for
@@ -723,76 +778,70 @@ function spp_kq_get_occurrence_summary( int $occurrence_id ) : ?array {
 }
 
 /**
- * Post-completion Submit Photo redirect target (1.11.0) -- see this
- * file's own 1.11.0 changelog for the full spec. Maps a KQ occurrence
- * to its recurring-event gl_event_series row (every real KQ occurrence
- * belongs to one of the 4 fixed Ace/Queen 9:00am/10:30am series -- see
- * spp_kq_get_occurrence_summary()'s own view; series_id is confirmed
- * populated for every real KQ occurrence, never a detached one-off),
- * then builds the [spp_photo_submit] URL with that series pre-selected
- * (event_ref=series:<id>, the exact <option value> that shortcode's own
- * dropdown already renders -- see wp-content/plugins/spp-photo-gallery/
- * includes/photo-submission.php's spp_photo_gallery_event_options())
- * and today's date pre-filled (date=Y-m-d -- redundant with that form's
- * own server-side today default, but explicit per spec rather than
- * relying on that default silently doing the right thing).
+ * A KQ occurrence's recurring-event ref, in the exact "series:<id>"
+ * shape [spp_photo_submit]'s own dropdown already uses as an <option
+ * value> (spp_photo_gallery_event_options(), wp-content/plugins/
+ * spp-photo-gallery/includes/photo-submission.php) -- every real KQ
+ * occurrence belongs to one of the 4 fixed Ace/Queen 9:00am/10:30am
+ * series (spp_kq_get_occurrence_summary()'s own view), never a
+ * detached one-off. FAILS CLOSED: null if the series can't be
+ * resolved (shouldn't happen for a real KQ occurrence, but defensive,
+ * same discipline as this file's other "can't determine X" paths).
  *
- * FAILS CLOSED, same discipline as this file's other "can't determine
- * X" paths (e.g. spp_kq_get_occurrence_start_timestamp()): returns null
- * -- no redirect -- rather than sending a player to a broken/blank
- * form, if the series can't be resolved (shouldn't happen for a real
- * KQ occurrence, but defensive) or the Submit Photo page itself can't
- * be found (e.g. renamed/deleted -- an infrastructure problem this
- * function has no business guessing around).
+ * 1.16.0: this used to also resolve the Submit Photo PAGE and build a
+ * redirect URL (spp_kq_resolve_photo_submit_url(), same file) -- gone
+ * now that the form is embedded inline (spp_kq_render_photo_prompt()
+ * below) instead of linked to; no URL is needed any more, just this
+ * ref string, passed straight to do_shortcode() as an attribute.
  */
-function spp_kq_resolve_photo_submit_url( int $occurrence_id ) : ?string {
+function spp_kq_resolve_photo_event_ref( int $occurrence_id ) : ?string {
     global $wpdb;
     $view = $wpdb->prefix . 'gl_events_v';
     $series_id = $wpdb->get_var( $wpdb->prepare(
         "SELECT series_id FROM {$view} WHERE occurrence_id = %d",
         $occurrence_id
     ) );
-    if ( ! $series_id ) {
-        return null;
-    }
-
-    $photo_page = get_page_by_path( 'submit-photo' );
-    if ( ! $photo_page ) {
-        return null;
-    }
-
-    return add_query_arg(
-        array(
-            'event_ref' => 'series:' . (int) $series_id,
-            'date'      => current_time( 'Y-m-d' ),
-        ),
-        get_permalink( $photo_page )
-    );
+    return $series_id ? ( 'series:' . (int) $series_id ) : null;
 }
 
 /**
- * The ONE gating condition for the post-completion Submit Photo
- * redirect (1.15.0) -- factored out of wp_ajax_spp_kq_poll_status so
- * the dispatcher's direct complete/cancelled render path (spp_kq_live_
- * shortcode()) can apply the EXACT same check for the device that just
- * pressed End Event/Cancel Event itself, not just devices still
- * polling from the persistent app. See this file's own 1.15.0
- * changelog for why that device needed a separate path at all: End
- * Event/Cancel Event are deliberately plain POST forms (so a reload
- * there doesn't interrupt an in-progress announcement), which means
- * the presser's own browser navigates straight to a fresh, un-polled
- * render of spp_kq_render_complete_screen()/spp_kq_render_cancelled_
- * screen() -- a plain static fragment with no script of its own, so it
- * never had any way to act on a redirect before this.
+ * The Submit Photo prompt embedded directly on the Complete/Cancelled
+ * screen (1.16.0 -- replaces the earlier same-day redirect entirely,
+ * see this file's own 1.16.0 changelog for why: End Event/Cancel Event
+ * are the only ways to ever reach these phases, and both are direct
+ * page actions, not something a redirect needed to catch a device
+ * mid-poll for -- every device lands here one way or another, either
+ * via this same direct render or via the persistent app's own
+ * fragment-swap, so embedding beats linking).
+ *
+ * Gating condition UNCHANGED from the redirect it replaces --
+ * spp_kq_history_exists_for_occurrence() is still the one ground-truth
+ * "was this occurrence actually archived" check (event completed
+ * normally, or was cancelled with at least one round played; nothing
+ * played at all never archives, never shows this). Returns '' (no
+ * note, no form) when that condition doesn't hold -- callers can
+ * unconditionally echo this, same convention as spp_kq_render_
+ * scoreboard_link()'s own "return '' when there's nothing to show" shape.
  */
-function spp_kq_maybe_photo_redirect_url( string $phase, int $occurrence_id ) : ?string {
-    if ( ! in_array( $phase, array( 'complete', 'cancelled' ), true ) ) {
-        return null;
-    }
+function spp_kq_render_photo_prompt( int $occurrence_id ) : string {
     if ( ! spp_kq_history_exists_for_occurrence( $occurrence_id ) ) {
-        return null;
+        return '';
     }
-    return spp_kq_resolve_photo_submit_url( $occurrence_id );
+    $event_ref = spp_kq_resolve_photo_event_ref( $occurrence_id );
+    if ( ! $event_ref ) {
+        return '';
+    }
+
+    ob_start();
+    ?>
+    <p class="kq-hint">Please take a photo and submit it!</p>
+    <?php echo do_shortcode( sprintf(
+        '[spp_photo_submit event_ref="%s" date="%s"]',
+        $event_ref,
+        current_time( 'Y-m-d' )
+    ) ); ?>
+    <?php
+    return ob_get_clean();
 }
 
 // =============================================================
@@ -1561,6 +1610,14 @@ function spp_kq_render_draw_screen( int $occurrence_id ) : string {
     </div>
 
     <div class="kq-action-row kq-action-row-right">
+        <?php if ( $unclaimed > 0 ) : ?>
+        <form method="post" class="kq-inline-form" onsubmit="return confirm('Randomly assign the remaining <?php echo (int) $unclaimed; ?> open slot(s) to whoever hasn\'t drawn yet? Already-drawn cards are untouched.');">
+            <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
+            <input type="hidden" name="spp_kq_action" value="complete_draw_randomly">
+            <input type="hidden" name="spp_kq_round" value="1">
+            <button type="submit" class="kq-btn kq-btn-secondary">Complete Allocation Randomly</button>
+        </form>
+        <?php endif; ?>
         <form method="post" class="kq-inline-form" onsubmit="return confirm('Clear this draw and start over? Any cards already drawn will be discarded -- players will need to draw again from scratch.');">
             <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
             <input type="hidden" name="spp_kq_action" value="reset_event">
@@ -2357,7 +2414,19 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round, ?int $rou
     return ob_get_clean();
 }
 
-/** Screen 6: Complete screen */
+/**
+ * Screen 6: Complete screen. 1.16.0: embeds the Submit Photo prompt
+ * (spp_kq_render_photo_prompt()) directly, replacing the earlier
+ * same-day redirect -- see that function's own docblock. Reached both
+ * directly (whichever device pressed End Event) and via the
+ * persistent app's own fragment swap (spp_kq_render_live_fragment())
+ * for every other device still watching -- both callers get the
+ * identical screen from this one function, nothing duplicated between
+ * them. "View Full Scoreboard" is rendered HERE, after the prompt, per
+ * spec's own requested order -- NOT by spp_kq_live_shortcode()'s usual
+ * top-of-page render, which is deliberately skipped for phase
+ * complete/cancelled specifically (see that function's own comment).
+ */
 function spp_kq_render_complete_screen( int $occurrence_id, int $round ) : string {
     $winner = spp_kq_get_final_winner_names( $occurrence_id, $round );
     ob_start();
@@ -2366,6 +2435,8 @@ function spp_kq_render_complete_screen( int $occurrence_id, int $round ) : strin
     <?php if ( $winner ) : ?>
         <p class="kq-meta">Final round winners (Aces): <strong><?php echo esc_html( $winner ); ?></strong></p>
     <?php endif; ?>
+    <?php echo spp_kq_render_photo_prompt( $occurrence_id ); ?>
+    <?php echo spp_kq_render_scoreboard_link( $occurrence_id, false ); ?>
     <?php
     return ob_get_clean();
 }
@@ -2401,6 +2472,8 @@ function spp_kq_render_cancelled_screen( int $occurrence_id, int $round ) : stri
             <p>No round data to report.</p>
         <?php endif; ?>
     </div>
+    <?php echo spp_kq_render_photo_prompt( $occurrence_id ); ?>
+    <?php echo spp_kq_render_scoreboard_link( $occurrence_id, false ); ?>
     <?php
     return ob_get_clean();
 }
@@ -2529,6 +2602,16 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date, ?st
             $history_notice = spp_kq_finalize_event_history_and_recap( $occurrence_id, $event_date );
             return trim( $rating_notice . ( $history_notice !== '' ? ' ' . $history_notice : '' ) );
 
+        case 'complete_draw_randomly':
+            // 1.17.0 -- see spp_kq_complete_draw_randomly()'s own
+            // docblock (inc/spp-kq-live.php). Same access level as
+            // every other draw-screen action (spp_kq_can_facilitate(),
+            // already checked at the dispatcher) -- not admin-only,
+            // this doesn't discard anything, it only fills what's
+            // already open.
+            spp_kq_complete_draw_randomly( $occurrence_id );
+            return '';
+
         case 'reset_event':
             // Available to any facilitator (spp_kq_can_facilitate(), the
             // feature-wide gate already checked at the shortcode
@@ -2649,16 +2732,16 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date, ?st
  * every later AJAX swap (wp_ajax_spp_kq_render_fragment) call this ONE
  * function rather than two copies that could drift apart.
  *
- * complete/cancelled are included defensively only -- spp_kq_live_
- * shortcode() never enters the persistent app for those phases in the
- * first place (spec: no more announcement to protect, a real page
- * navigation is correct there), and the outer poll (spp_kq_render_
- * live_app()'s own script) always redirects/reloads before ever
- * requesting a fragment once phase leaves {organizing, in_play} -- so
- * these two cases, and the not_started default, should never actually
- * be reached via the AJAX endpoint in normal operation.
- */
-/**
+ * complete/cancelled ARE genuinely reachable here as of 1.16.0 -- the
+ * outer poll (spp_kq_render_live_app()'s own script) now treats them
+ * as normal swappable states rather than redirecting/reloading away,
+ * since the post-completion Submit Photo prompt is embedded directly
+ * on those screens now (spp_kq_render_photo_prompt()) and is a normal
+ * in-app destination, not a reason to leave. Only the not_started
+ * default below stays a true "should never actually happen" case (only
+ * reachable via a Full Reset from another tab, which the outer poll
+ * still reloads away from, before ever requesting a fragment).
+ *
  * Returns array{html: string, state: ?array} -- $state (spp_kq_get_
  * event_state()'s own row) is returned ALONGSIDE the markup, from the
  * exact same read this function already made to decide what to render,
@@ -2908,6 +2991,18 @@ function spp_kq_render_live_app( int $occurrence_id, array $state ) : string {
             return [d.phase, d.current_round, d.courts_announced_at].join('|');
         }
 
+        // 1.16.0: complete/cancelled are now normal swappable fragment
+        // states, same as organizing/in_play -- the post-completion
+        // Submit Photo prompt is embedded directly on those screens
+        // now (spp_kq_render_photo_prompt(), spp_kq_render_complete_
+        // screen()/spp_kq_render_cancelled_screen()), so reaching them
+        // is a normal in-app destination, not a reason to redirect or
+        // reload away. not_started is the one true exception left --
+        // only ever reached via a Full Reset from another tab, and
+        // this app was never built with a check-in/draw fragment to
+        // show in place, so that one case still reloads.
+        var pollInterval = null;
+
         function poll() {
             var data = new FormData();
             data.append('action', 'spp_kq_poll_status');
@@ -2920,20 +3015,7 @@ function spp_kq_render_live_app( int $occurrence_id, array $state ) : string {
                     if (!res.success) return;
                     var d = res.data;
 
-                    // Event just completed (or was cancelled with at
-                    // least one round played) -- navigate to Submit
-                    // Photo. No more announcements to protect at this
-                    // point, so a real navigation is correct here (see
-                    // this file's own 1.14.0 changelog, item 6).
-                    if (d.redirect_url) {
-                        window.location.href = d.redirect_url;
-                        return;
-                    }
-                    // Phase left {organizing, in_play} with nothing to
-                    // redirect to (e.g. cancelled before any round
-                    // played, or a Full Reset from another tab) -- same
-                    // reasoning, a plain reload is correct.
-                    if (d.phase !== 'organizing' && d.phase !== 'in_play') {
+                    if (d.phase === 'not_started') {
                         window.location.reload();
                         return;
                     }
@@ -2942,15 +3024,22 @@ function spp_kq_render_live_app( int $occurrence_id, array $state ) : string {
                     if (sig !== lastSignature) {
                         lastSignature = sig;
                         swapFragment();
-                        return;
+                    } else if (SppKqLiveApp.onProgress) {
+                        SppKqLiveApp.onProgress(d.reported, d.total);
                     }
 
-                    if (SppKqLiveApp.onProgress) SppKqLiveApp.onProgress(d.reported, d.total);
+                    // Terminal -- nothing can change server-side past
+                    // this point, so stop polling once the matching
+                    // fragment is showing (or about to be).
+                    if ((d.phase === 'complete' || d.phase === 'cancelled') && pollInterval) {
+                        clearInterval(pollInterval);
+                        pollInterval = null;
+                    }
                 })
                 .catch(function() {});
         }
 
-        setInterval(poll, 4000);
+        pollInterval = setInterval(poll, 4000);
     })();
     </script>
     <div id="kq-live-app">
@@ -3020,7 +3109,18 @@ function spp_kq_live_shortcode() : string {
     echo spp_kq_styles();
     echo '<div class="kq-wrap">';
     echo spp_kq_render_occurrence_header( $occurrence, $notice );
-    echo spp_kq_render_scoreboard_link( $occurrence_id, $viewing_scoreboard );
+    // 1.16.0: skipped here for phase complete/cancelled specifically --
+    // spp_kq_render_complete_screen()/spp_kq_render_cancelled_screen()
+    // now render their OWN "View Full Scoreboard" link, positioned
+    // after the embedded Submit Photo prompt per spec's requested
+    // order, rather than unconditionally at the very top of the page
+    // the way every other phase still gets it. The $viewing_scoreboard/
+    // $viewing_roster toggle (including the "&laquo; Back" link) is
+    // completely unaffected -- still rendered here, unconditionally,
+    // regardless of phase, exactly as before.
+    if ( $viewing_scoreboard || $viewing_roster || ! in_array( $phase, array( 'complete', 'cancelled' ), true ) ) {
+        echo spp_kq_render_scoreboard_link( $occurrence_id, $viewing_scoreboard );
+    }
 
     if ( $viewing_scoreboard ) {
         echo spp_kq_render_full_scoreboard_screen( $occurrence_id );
@@ -3048,27 +3148,21 @@ function spp_kq_live_shortcode() : string {
                 break;
 
             case 'complete':
+                // 1.16.0: this is the direct/fresh render for whichever
+                // device's OWN plain-POST action (End Event) just
+                // caused this phase; any other device still on the
+                // persistent app gets the identical screen via
+                // spp_kq_render_live_fragment()'s own 'complete' case
+                // below instead -- both call this SAME function, so
+                // the two can never render differently. The Submit
+                // Photo prompt is now embedded BY that function itself
+                // (spp_kq_render_photo_prompt()) -- no redirect, no
+                // special-casing needed here any more.
+                echo spp_kq_render_complete_screen( $occurrence_id, $round );
+                break;
+
             case 'cancelled':
-                // 1.15.0: this is the direct/fresh render for whichever
-                // device's OWN plain-POST action (End Event/Cancel
-                // Event) just caused this phase -- unlike a device
-                // still polling from the persistent app (which already
-                // gets redirect_url from wp_ajax_spp_kq_poll_status),
-                // THIS request has no poll of its own to act on it, so
-                // the check has to happen here, once, at render time.
-                // Same exact condition as that poll handler
-                // (spp_kq_maybe_photo_redirect_url(), this file) --
-                // confirmed root cause: this path never had ANY
-                // redirect mechanism before, in any version of this
-                // feature, not something the AJAX rebuild dropped.
-                $photo_redirect = spp_kq_maybe_photo_redirect_url( $phase, $occurrence_id );
-                if ( $photo_redirect ) {
-                    echo '<script>window.location.href = ' . wp_json_encode( $photo_redirect ) . ';</script>';
-                } else {
-                    echo ( $phase === 'complete' )
-                        ? spp_kq_render_complete_screen( $occurrence_id, $round )
-                        : spp_kq_render_cancelled_screen( $occurrence_id, $round );
-                }
+                echo spp_kq_render_cancelled_screen( $occurrence_id, $round );
                 break;
         }
     }
@@ -3229,12 +3323,14 @@ add_action( 'wp_ajax_spp_kq_submit_score', function() {
 // Read-only, no access restriction beyond being logged in: the count
 // alone identifies no one's score.
 //
-// 1.11.0: also carries redirect_url -- set once phase has become
-// complete, or cancelled with at least one round actually played (see
-// spp_kq_history_exists_for_occurrence()'s own docblock,
-// inc/spp-kq-history.php, for why that's the exact right ground-truth
-// check for "played"). A polling in-play screen redirects there instead
-// of reloading -- see this file's own 1.11.0 changelog.
+// 1.16.0: no longer carries redirect_url -- the post-completion Submit
+// Photo prompt is embedded directly on the Complete/Cancelled screen
+// now (spp_kq_render_photo_prompt()) rather than redirected to, so
+// this endpoint doesn't need to compute or expose that at all; a
+// polling device picks up phase becoming complete/cancelled the same
+// way it picks up any other structural change -- a normal fragment
+// swap (see spp_kq_render_live_app()'s own script) -- since that
+// screen IS the correct destination now, not a link off of it.
 // =============================================================
 
 add_action( 'wp_ajax_spp_kq_poll_status', function() {
@@ -3255,17 +3351,11 @@ add_action( 'wp_ajax_spp_kq_poll_status', function() {
 
     $progress = spp_kq_get_round_progress( $occurrence_id, (int) $state['current_round'] );
 
-    // 1.15.0: factored into spp_kq_maybe_photo_redirect_url() (this
-    // file), same logic, no behavior change here -- now also reused by
-    // spp_kq_live_shortcode()'s direct complete/cancelled render path.
-    $redirect_url = spp_kq_maybe_photo_redirect_url( $state['phase'], $occurrence_id );
-
     wp_send_json_success( array(
         'phase'               => $state['phase'],
         'current_round'       => (int) $state['current_round'],
         'reported'            => $progress['reported'],
         'total'               => $progress['total'],
-        'redirect_url'        => $redirect_url,
         // 1.13.0: lets a device detect a DIFFERENT device pressing
         // "Ready -- Announce Courts" -- null until that happens, same
         // nullable-epoch shape as round_started_at. 1.14.0: also part
