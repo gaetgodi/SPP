@@ -1,8 +1,26 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Live Event Schema
-   Version: 1.4.0
-   Date: 2026-09-14
+   Version: 1.5.0
+   Date: 2026-09-15
+
+   Changes from 1.4.0 (race-condition fix -- see inc/spp-kq-live.php's
+   own 1.2.0 changelog for the full incident and fix writeup; same
+   class of bug as spp-score-entry.php's ladder fix, confirmed via live
+   reproduction on a synthetic occurrence before this fix, re-verified
+   after):
+   - spp_kq_scores gains `client_ts` (live ALTER -- same dbDelta ADD
+     COLUMN case as `cancelled` in 1.4.0, no new migration technique
+     needed). Stores the submitting client's own Date.now() at the
+     moment Save was tapped, on the SAME row and in the SAME atomic
+     UPDATE as the score write itself -- not a separate table, and not
+     the Redis-backed transient the ladder fix used, because unlike the
+     ladder (where a round's two team positions live in two different
+     Schedules rows with no single shared row to stamp), KQ already has
+     exactly one row per (occurrence, round, court) to stamp. Folding
+     it directly onto that row lets both the ordering guard AND the
+     round-advance atomicity fix below share one WHERE-clause check
+     instead of needing two different mechanisms.
 
    Changes from 1.3.0 (Check-in + mid-event roster swap + court
    cancellation -- see the conversation this was built from for the
@@ -162,7 +180,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'SPP_KQ_DB_VERSION', '1.4.0' );
+define( 'SPP_KQ_DB_VERSION', '1.5.0' );
 
 /**
  * Create (or, on a later run, no-op/upgrade) the three spp_kq_*
@@ -224,6 +242,10 @@ function spp_kq_create_tables() {
     // row, never counted as "awaiting" or "reported" anywhere. See this
     // file's own 1.4.0 changelog and inc/spp-kq-live.php's
     // spp_kq_cancel_court()/spp_kq_transition_advance_round().
+    // client_ts (1.5.0): the submitting client's own Date.now() at Save
+    // time, in the same row and same atomic UPDATE as the score write --
+    // see this file's own 1.5.0 changelog and
+    // spp_kq_submit_court_score()'s docblock (inc/spp-kq-live.php).
     dbDelta( "CREATE TABLE {$p}spp_kq_scores (
         occurrence_id  INT UNSIGNED NOT NULL,
         round_number   SMALLINT UNSIGNED NOT NULL,
@@ -232,6 +254,7 @@ function spp_kq_create_tables() {
         black_score    SMALLINT UNSIGNED DEFAULT NULL,
         cancelled      TINYINT UNSIGNED NOT NULL DEFAULT 0,
         updated_by     BIGINT UNSIGNED DEFAULT NULL,
+        client_ts      BIGINT UNSIGNED DEFAULT NULL,
         updated_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         PRIMARY KEY (occurrence_id, round_number, court_name)
     ) {$charset};" );

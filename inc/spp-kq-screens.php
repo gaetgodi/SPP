@@ -1289,6 +1289,11 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round ) : string
                 data.append('court_name', court);
                 data.append('red_score', redInput.value);
                 data.append('black_score', blackInput.value);
+                // Submission-order marker (1.2.0) -- see
+                // spp_kq_submit_court_score()'s own docblock
+                // (inc/spp-kq-live.php) for why this closes the race a
+                // slow correction vs. a fast round-advance could hit.
+                data.append('client_ts', Date.now());
 
                 fetch(ajaxUrl, { method: 'POST', body: data, credentials: 'same-origin' })
                     .then(function(r) { return r.json(); })
@@ -1298,7 +1303,17 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round ) : string
                             showMsg(res.data || 'Save failed.', false);
                             return;
                         }
-                        savedTag.style.display = 'inline';
+                        if (res.data.applied === false) {
+                            // A newer submission for this court already
+                            // landed while this one was in flight -- don't
+                            // let this response paint over it. Reconcile
+                            // the inputs to the actual current values instead.
+                            if (res.data.red_score !== null) redInput.value = res.data.red_score;
+                            if (res.data.black_score !== null) blackInput.value = res.data.black_score;
+                            showMsg('A newer entry for this court was already saved -- showing the current value.', true);
+                        } else {
+                            savedTag.style.display = 'inline';
+                        }
                         if (progressEl) progressEl.textContent = res.data.reported + ' of ' + res.data.total + ' courts reported';
                     })
                     .catch(function() {
@@ -1845,12 +1860,16 @@ add_action( 'wp_ajax_spp_kq_submit_score', function() {
     $court_name    = isset( $_POST['court_name'] ) ? sanitize_text_field( wp_unslash( $_POST['court_name'] ) ) : '';
     $red_score     = isset( $_POST['red_score'] ) ? intval( $_POST['red_score'] ) : -1;
     $black_score   = isset( $_POST['black_score'] ) ? intval( $_POST['black_score'] ) : -1;
+    // Submission-order marker (1.2.0) -- see spp_kq_submit_court_score()'s
+    // own docblock (inc/spp-kq-live.php). 0/absent just means an old
+    // cached client; the function degrades gracefully for that case.
+    $client_ts     = isset( $_POST['client_ts'] ) ? absint( $_POST['client_ts'] ) : 0;
 
     if ( ! $occurrence_id || ! $round || $court_name === '' ) {
         wp_send_json_error( 'Missing parameters.' );
     }
 
-    $result = spp_kq_submit_court_score( $occurrence_id, $round, $court_name, $red_score, $black_score, get_current_user_id() );
+    $result = spp_kq_submit_court_score( $occurrence_id, $round, $court_name, $red_score, $black_score, get_current_user_id(), $client_ts );
     if ( ! $result['success'] ) {
         wp_send_json_error( $result['error'] );
     }

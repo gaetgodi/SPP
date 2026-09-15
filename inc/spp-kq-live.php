@@ -1,8 +1,74 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Live Event Runner
-   Version: 1.1.0
-   Date: 2026-09-14
+   Version: 1.2.0
+   Date: 2026-09-15
+
+   Changes from 1.1.0 (race-condition fix -- audited and confirmed via
+   live reproduction against a synthetic occurrence on production, same
+   session that also fixed the analogous bug in the ladder's
+   inc/spp-score-entry.php; that audit's own writeup has the full
+   before-state):
+   - THE BUG: spp_kq_submit_court_score()'s score write was a plain
+     UPDATE with no ordering guard -- "most recent entry wins" was the
+     documented intent (same as the ladder), but nothing enforced it.
+     Reproduced concretely: a slow correction to an already-reported
+     court (Aces, wrong score on record) raced a fast submission to a
+     DIFFERENT court (Kings) that happened to be the round's last one
+     to report. Kings' submission saw "all courts reported," computed
+     movement from Aces' still-stale score, and committed the round
+     advance BEFORE the Aces correction's UPDATE landed. The correction
+     then landed anyway (nothing stopped it), leaving Aces' SCORE
+     looking completely correct while the movement -- who actually
+     plays where next round -- was silently computed from the wrong
+     value, with both requests reporting success and no way to detect
+     the mismatch afterward. Worse than the ladder bug: there the wrong
+     VALUE could persist; here the value can end up right while a
+     downstream, non-recomputable decision (movement) is wrong.
+   - THE FIX has two parts, both folded into the SAME single atomic
+     UPDATE statement (never a separate pre-check that could itself
+     race -- same discipline spp_kq_transition_reset_event()'s own
+     NOT-EXISTS-in-WHERE guard already established in this codebase):
+       1. Submission-order guard: the score UPDATE's WHERE clause now
+          requires `client_ts IS NULL OR client_ts < <incoming>` on the
+          spp_kq_scores row itself (new column, schema 1.5.0) -- a
+          write whose client_ts is older than one already accepted for
+          that exact court+round is rejected outright, exactly the
+          ladder fix's client_ts pattern, just stamped on KQ's own
+          existing per-court row instead of a separate transient (KQ
+          already has one row per occurrence+round+court to stamp;
+          the ladder didn't have an equivalent single row for a round,
+          which is why that fix used a transient instead).
+       2. Round-still-current guard: the SAME UPDATE's WHERE clause
+          also requires `EXISTS (... spp_kq_events WHERE current_round
+          = this round AND phase = 'in_play' ...)`, evaluated at the
+          instant of the write, not read-then-trusted from the
+          function's earlier precondition check. This is what actually
+          closes the race above: if the round has ALREADY advanced past
+          this score's round_number by the time this UPDATE executes
+          -- regardless of why it took so long to get here -- the write
+          is rejected, atomically, every time. A too-late correction
+          now fails LOUDLY ("this round is no longer accepting scores")
+          instead of silently succeeding into a round whose movement
+          already happened without it. This is a deliberate choice not
+          to attempt an automatic movement redo (far riskier, no
+          existing mechanism for it) -- once a round has advanced, nothing
+          can retroactively fix its movement, so the correct behavior is
+          to refuse and surface that plainly, not to pretend it worked.
+     Net effect: spp_kq_transition_advance_round() itself needed NO
+     internal change -- by the time it reads spp_kq_scores to compute
+     movement, every value it sees is, by construction, one that can
+     never again be silently superseded once the round moves past it.
+   - A superseded write (either reason) still returns success:true
+     (nothing is actually broken from the caller's point of view for
+     the ordering-guard case) but skips the write and returns the
+     court's true current score + progress, mirroring the ladder fix's
+     `applied:false` convention -- so a stale client's UI can't paint
+     stale data either.
+   - Normal, non-racing single-submission scoring is unaffected: with
+     no prior client_ts on the row (NULL) and the round genuinely still
+     current, both new WHERE conditions are trivially true and the
+     UPDATE proceeds exactly as before.
 
    Changes from 1.0.1 (mid-event roster swap + court cancellation --
    see the conversation this was built from for the full spec, and
@@ -823,13 +889,37 @@ function spp_kq_get_round_progress( int $occurrence_id, int $round_number ) : ar
 }
 
 /**
+ * One court's current red_score/black_score/client_ts for a round --
+ * the "true current state" payload returned alongside both a normal
+ * success and a superseded/rejected one (1.2.0), so a caller whose own
+ * write didn't stick still gets handed reality instead of silence.
+ */
+function spp_kq_get_court_score( int $occurrence_id, int $round_number, string $court_name ) : ?array {
+    global $wpdb;
+    $row = $wpdb->get_row( $wpdb->prepare(
+        "SELECT red_score, black_score, client_ts FROM " . spp_kq_scores_table() . "
+         WHERE occurrence_id = %d AND round_number = %d AND court_name = %s",
+        $occurrence_id, $round_number, $court_name
+    ), ARRAY_A );
+    if ( ! $row ) return null;
+    return array(
+        'red_score'   => $row['red_score']   === null ? null : (int) $row['red_score'],
+        'black_score' => $row['black_score'] === null ? null : (int) $row['black_score'],
+        'client_ts'   => $row['client_ts']   === null ? null : (int) $row['client_ts'],
+    );
+}
+
+/**
  * Submit (or correct -- always an overwrite, "most recent entry wins"
  * exactly as spp-score-entry.php's own ladder version) one court's
  * score for the round the caller believes is current. Re-derives
  * everything server-side rather than trusting the caller:
  *  - phase must still be 'in_play' AND current_round must still equal
  *    $round_number (the round may have already advanced between page
- *    load and submit -- rejected, not silently misapplied).
+ *    load and submit -- rejected, not silently misapplied). This
+ *    up-front check is a fast/friendly rejection for the common case
+ *    (page just genuinely went stale); it is NOT what makes the write
+ *    itself race-safe -- see the WRITE ITSELF below for that.
  *  - $court_name must be a real court that genuinely exists for this
  *    occurrence/round -- checked against a real spp_kq_scores
  *    placeholder row, never taken on faith. Unlike the assignment
@@ -842,17 +932,45 @@ function spp_kq_get_round_progress( int $occurrence_id, int $round_number ) : ar
  *    a real tie should not occur); 11-11 specifically gets its own
  *    message, since it's a logical impossibility, not just a tie.
  *
+ * THE WRITE ITSELF (1.2.0 -- see this file's own 1.2.0 changelog for
+ * the reproduced bug this closes): a single atomic UPDATE whose WHERE
+ * clause folds in BOTH of the following, never a separate pre-check
+ * that could itself go stale between checking and writing:
+ *   1. `client_ts IS NULL OR client_ts < $client_ts` -- an ordering
+ *      guard exactly like the ladder's, stamped on this court's own
+ *      row (schema 1.5.0) instead of a transient. $client_ts <= 0 (an
+ *      old cached client that predates this fix) disables just this
+ *      condition, never the one below.
+ *   2. `EXISTS (spp_kq_events WHERE current_round = $round_number AND
+ *      phase = 'in_play')` -- re-verified AT WRITE TIME, not trusted
+ *      from the precondition check above. This is what actually closes
+ *      the race: if the round has already advanced past this score's
+ *      round by the moment this UPDATE executes -- for ANY reason,
+ *      including this exact request simply having taken a long time to
+ *      get here -- the write is refused. A too-late correction fails
+ *      loudly instead of landing silently into a round whose movement
+ *      already happened without it; there is no attempt to undo and
+ *      recompute movement after the fact, deliberately -- see the
+ *      changelog for why.
+ * Zero rows affected means one of the two guards fired; the caller gets
+ * back which one (a fresh event-state read distinguishes them) plus
+ * this court's actual current score, so its UI can reconcile rather
+ * than assume its own submission's values are now truth.
+ *
  * After a successful write, checks whether every court in this round
  * has now reported and, if so, attempts spp_kq_transition_advance_round()
- * (Stage 2, unchanged) -- safe under real concurrency because that
- * function's own CAS is what actually decides the single winner; this
- * function's own "should I even try" check just decides who ATTEMPTS,
- * not who succeeds, and multiple simultaneous attempts are exactly
- * what that CAS already handles (see Stage 2's own concurrency test,
- * and this stage's own version of the same test against the real
- * submit path).
+ * (Stage 2, unchanged -- and unchanged again here: by the time it reads
+ * spp_kq_scores, every value it can see is one the guard above
+ * guarantees can never again be silently superseded once the round
+ * moves past it, so no internal change was needed there) -- safe under
+ * real concurrency because that function's own CAS is what actually
+ * decides the single winner; this function's own "should I even try"
+ * check just decides who ATTEMPTS, not who succeeds, and multiple
+ * simultaneous attempts are exactly what that CAS already handles (see
+ * Stage 2's own concurrency test, and this stage's own version of the
+ * same test against the real submit path).
  */
-function spp_kq_submit_court_score( int $occurrence_id, int $round_number, string $court_name, int $red_score, int $black_score, int $user_id ) : array {
+function spp_kq_submit_court_score( int $occurrence_id, int $round_number, string $court_name, int $red_score, int $black_score, int $user_id, int $client_ts = 0 ) : array {
     $state = spp_kq_get_event_state( $occurrence_id );
     if ( ! $state || $state['phase'] !== 'in_play' || (int) $state['current_round'] !== $round_number ) {
         return array( 'success' => false, 'error' => 'This round is no longer accepting scores -- refresh to see the current state.' );
@@ -860,6 +978,7 @@ function spp_kq_submit_court_score( int $occurrence_id, int $round_number, strin
 
     global $wpdb;
     $scores_table = spp_kq_scores_table();
+    $events_table = spp_kq_events_table();
 
     $court_row = $wpdb->get_row( $wpdb->prepare(
         "SELECT cancelled FROM {$scores_table} WHERE occurrence_id = %d AND round_number = %d AND court_name = %s",
@@ -897,11 +1016,63 @@ function spp_kq_submit_court_score( int $occurrence_id, int $round_number, strin
         return array( 'success' => false, 'error' => "Scores can't be tied -- games are extended by a point specifically to avoid this. Please check and resubmit." );
     }
 
-    $wpdb->query( $wpdb->prepare(
-        "UPDATE {$scores_table} SET red_score = %d, black_score = %d, updated_by = %d
-         WHERE occurrence_id = %d AND round_number = %d AND court_name = %s",
-        $red_score, $black_score, $user_id, $occurrence_id, $round_number, $court_name
+    // $client_ts <= 0 means an old cached client that predates this fix --
+    // disable just the ordering guard for THIS write (never touch the
+    // round-still-current guard below) and leave any previously-stored
+    // client_ts on the row alone rather than clobbering it with a
+    // meaningless value. Interpolated directly (not a %d placeholder):
+    // already an int by function signature, same "validated int, safe to
+    // interpolate" precedent as spp_sc_apply()'s WHERE event_id = {$event_id}
+    // elsewhere in this codebase.
+    $client_ts     = max( 0, $client_ts );
+    $where_ts_guard = ( $client_ts > 0 ) ? "AND (s.client_ts IS NULL OR s.client_ts < {$client_ts})" : '';
+    $set_ts         = ( $client_ts > 0 ) ? ", s.client_ts = {$client_ts}" : '';
+
+    $affected = $wpdb->query( $wpdb->prepare(
+        "UPDATE {$scores_table} s
+         SET s.red_score = %d, s.black_score = %d, s.updated_by = %d {$set_ts}
+         WHERE s.occurrence_id = %d AND s.round_number = %d AND s.court_name = %s
+           {$where_ts_guard}
+           AND EXISTS (
+               SELECT 1 FROM {$events_table} e
+               WHERE e.occurrence_id = s.occurrence_id
+                 AND e.current_round = s.round_number
+                 AND e.phase = 'in_play'
+           )",
+        $red_score, $black_score, $user_id,
+        $occurrence_id, $round_number, $court_name
     ) );
+
+    if ( (int) $affected !== 1 ) {
+        // Distinguish which guard fired: re-read event state fresh (not
+        // the $state captured at the top, which is now provably stale by
+        // definition -- that's exactly why we're here).
+        $now_state = spp_kq_get_event_state( $occurrence_id );
+        $round_moved_on = ! $now_state || $now_state['phase'] !== 'in_play' || (int) $now_state['current_round'] !== $round_number;
+
+        if ( $round_moved_on ) {
+            return array( 'success' => false, 'error' => 'This round is no longer accepting scores -- refresh to see the current state.' );
+        }
+
+        // Otherwise: the round is still current, so this was purely the
+        // ordering guard -- a newer submission for this exact court
+        // already landed. Not an error from the caller's point of view;
+        // hand back the real current state instead of pretending this
+        // request's numbers are now truth.
+        $current = spp_kq_get_court_score( $occurrence_id, $round_number, $court_name );
+        $progress = spp_kq_get_round_progress( $occurrence_id, $round_number );
+        return array(
+            'success'    => true,
+            'applied'    => false,
+            'court_name' => $court_name,
+            'red_score'  => $current['red_score']   ?? null,
+            'black_score'=> $current['black_score'] ?? null,
+            'reported'   => $progress['reported'],
+            'total'      => $progress['total'],
+            'advanced'   => false,
+            'message'    => 'A newer entry for this court was already saved.',
+        );
+    }
 
     $progress = spp_kq_get_round_progress( $occurrence_id, $round_number );
     $advanced = false;
@@ -912,11 +1083,14 @@ function spp_kq_submit_court_score( int $occurrence_id, int $round_number, strin
     }
 
     return array(
-        'success'    => true,
-        'court_name' => $court_name,
-        'reported'   => $progress['reported'],
-        'total'      => $progress['total'],
-        'advanced'   => $advanced,
+        'success'     => true,
+        'applied'     => true,
+        'court_name'  => $court_name,
+        'red_score'   => $red_score,
+        'black_score' => $black_score,
+        'reported'    => $progress['reported'],
+        'total'       => $progress['total'],
+        'advanced'    => $advanced,
     );
 }
 
