@@ -1,8 +1,32 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Permanent History, Live Scoreboard, Recap Email
-   Version: 1.6.0
+   Version: 1.7.0
    Date: 2026-09-15
+
+   Changes from 1.6.0 (decouple the Submit Photo prompt from the
+   Club-Rating launch-date gate -- see the conversation this was built
+   from for the full investigation/spec):
+   - Removed spp_kq_history_exists_for_occurrence(): confirmed via a
+     full-theme search that its only two callers (wp_ajax_spp_kq_poll_
+     status's now-removed redirect_url, and spp_kq_render_photo_
+     prompt()'s own gating check) are BOTH gone as of this change --
+     the poll handler dropped it when the redirect became an embedded
+     form (inc/spp-kq-screens.php 1.16.0), and the photo prompt now
+     uses spp_kq_has_any_recorded_score() directly instead, with
+     deliberately no launch-date check riding along (see that
+     function's own updated docblock). Genuinely dead code, not
+     speculative cleanup -- removed as a direct, natural consequence of
+     this fix rather than left to confuse a future reader into reusing
+     it for the same coupling this fix just undid.
+   - spp_kq_archive_event_history() and spp_kq_maybe_publish_to_club_
+     ratings() (inc/spp-kq-club-rating.php) are BYTE-FOR-BYTE unchanged
+     -- confirmed by inspection, not just claimed: neither function was
+     touched, both still check event_date < SPP_KQ_CLUB_RATING_LAUNCH_
+     DATE first, exactly as before. The photo prompt and the archival/
+     ratings pipeline are now two genuinely independent decisions that
+     happen to often agree once the launch date passes, not one shared
+     gate.
 
    Changes from 1.5.0 (post-completion Submit Photo redirect -- see the
    conversation this was built from for the full spec; the poll
@@ -763,24 +787,6 @@ function spp_kq_send_recap_emails( array $scoreboard, string $event_date, string
     }
 
     return $results;
-}
-
-/**
- * Ground-truth "did this occurrence actually get archived" check --
- * see this file's own 1.6.0 changelog for why this reads the real
- * result rather than re-deriving spp_kq_archive_event_history()'s
- * gating logic a second time. Used by the live screen's poll handler
- * (inc/spp-kq-screens.php) to decide whether a still-polling device
- * should redirect to Submit Photo once phase becomes complete/
- * cancelled.
- */
-function spp_kq_history_exists_for_occurrence( int $occurrence_id ) : bool {
-    global $wpdb;
-    $table = spp_kq_history_table();
-    return (bool) $wpdb->get_var( $wpdb->prepare(
-        "SELECT EXISTS(SELECT 1 FROM {$table} WHERE occurrence_id = %d)",
-        $occurrence_id
-    ) );
 }
 
 // =============================================================

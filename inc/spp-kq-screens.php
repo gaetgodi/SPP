@@ -1,8 +1,29 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Screens
-   Version: 1.16.0
+   Version: 1.17.0
    Date: 2026-09-15
+
+   Changes from 1.16.0 (decouple the Submit Photo prompt from the
+   Club-Rating launch-date gate): confirmed via a REAL occurrence (118,
+   2026-09-10, 3 rounds genuinely played, properly ended via End Event),
+   not a synthetic case -- the prompt showed nothing purely because
+   spp_kq_history_exists_for_occurrence() also required spp_kq_archive_
+   event_history() to have actually written rows, and that function
+   refuses to for ANY occurrence dated before SPP_KQ_CLUB_RATING_
+   LAUNCH_DATE, regardless of how real/complete the event was. Fixed:
+   spp_kq_render_photo_prompt() now gates on spp_kq_has_any_recorded_
+   score() directly (inc/spp-kq-live.php, already the exact "was
+   anything really played" check End Event's own precondition and
+   spp_kq_archive_event_history()'s "nothing-reported" branch both
+   independently re-derive) -- no launch-date check attached at all.
+   See that function's own updated docblock for the full reasoning,
+   including why it correctly still requires "played" for the
+   cancelled-screen caller while being unconditionally true for the
+   complete-screen caller (End Event itself won't fire before a score
+   exists). spp_kq_history_exists_for_occurrence() is gone (inc/spp-kq-
+   history.php 1.7.0) -- confirmed fully orphaned before removing it,
+   not assumed.
 
    Changes from 1.15.0 (two changes -- see the conversation this was
    built from for the full spec):
@@ -814,17 +835,40 @@ function spp_kq_resolve_photo_event_ref( int $occurrence_id ) : ?string {
  * via this same direct render or via the persistent app's own
  * fragment-swap, so embedding beats linking).
  *
- * Gating condition UNCHANGED from the redirect it replaces --
- * spp_kq_history_exists_for_occurrence() is still the one ground-truth
- * "was this occurrence actually archived" check (event completed
- * normally, or was cancelled with at least one round played; nothing
- * played at all never archives, never shows this). Returns '' (no
- * note, no form) when that condition doesn't hold -- callers can
- * unconditionally echo this, same convention as spp_kq_render_
- * scoreboard_link()'s own "return '' when there's nothing to show" shape.
+ * Gating condition (1.17.0 -- DECOUPLED from spp_kq_history_exists_
+ * for_occurrence(), which this used to reuse): now just spp_kq_has_
+ * any_recorded_score() directly -- "was at least one round of THIS
+ * occurrence actually played," full stop, no other condition riding
+ * along with it. Confirmed via a real event, not a synthetic case: a
+ * genuine occurrence, fully played through 3 rounds and properly ended
+ * via End Event, showed no prompt purely because spp_kq_history_
+ * exists_for_occurrence() ALSO requires spp_kq_archive_event_history()
+ * to have actually written rows -- which that function refuses to do
+ * for ANY occurrence dated before SPP_KQ_CLUB_RATING_LAUNCH_DATE,
+ * regardless of how real or complete the event was (see that
+ * function's own pre-launch guard, inc/spp-kq-history.php -- checked
+ * FIRST, before it even looks at whether anything was reported). The
+ * photo prompt has nothing to do with permanent history archival or
+ * Club Rating publishing -- both of those KEEP their own launch-date
+ * gate completely unchanged (spp_kq_archive_event_history(),
+ * spp_kq_maybe_publish_to_club_ratings()) -- this was never a
+ * reasonable case for the two to share one gate. Called only from
+ * spp_kq_render_complete_screen()/spp_kq_render_cancelled_screen(), so
+ * "is this occurrence complete, or cancelled" is already satisfied by
+ * construction (this function is never reached from anywhere else);
+ * spp_kq_has_any_recorded_score() is the one remaining real question,
+ * and for the complete-screen caller specifically it's always true
+ * anyway -- End Event itself refuses to fire at all until at least one
+ * score already exists (spp_kq_handle_post_actions()'s own 'end_event'
+ * precondition), so this only ever actually DISCRIMINATES for the
+ * cancelled-screen caller, exactly as the spec's own rule describes.
+ * Returns '' (no note, no form) when that condition doesn't hold --
+ * callers can unconditionally echo this, same convention as spp_kq_
+ * render_scoreboard_link()'s own "return '' when there's nothing to
+ * show" shape.
  */
 function spp_kq_render_photo_prompt( int $occurrence_id ) : string {
-    if ( ! spp_kq_history_exists_for_occurrence( $occurrence_id ) ) {
+    if ( ! spp_kq_has_any_recorded_score( $occurrence_id ) ) {
         return '';
     }
     $event_ref = spp_kq_resolve_photo_event_ref( $occurrence_id );
