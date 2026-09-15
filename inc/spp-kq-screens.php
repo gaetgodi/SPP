@@ -1,8 +1,106 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Screens
-   Version: 1.13.0
+   Version: 1.14.0
    Date: 2026-09-15
+
+   Changes from 1.13.0 ("full monty" -- convert the announcement-
+   carrying part of the KQ live flow from full-page-reload navigation
+   to a single persistent AJAX-polling page, so SppKqAnnouncer's
+   audioUnlocked/keep-alive state -- and any in-flight speechSynthesis
+   utterance -- survives across announce-courts, rest countdown, Start
+   Play, and in-play scoring for an entire event. See the conversation
+   this was built from for the full spec. SAFETY: git tag
+   pre-ajax-kq-live created at the prior commit (da5c271) before any of
+   this started, as a clean revert target.
+
+   ARCHITECTURE CHOSEN: fetch server-rendered HTML FRAGMENTS via AJAX
+   and swap them into a container, NOT a client-side
+   render-everything-and-toggle-visibility approach. Reasoning: every
+   screen in this feature (spp_kq_render_overview_screen(),
+   spp_kq_render_in_play_screen(), etc.) was ALREADY a self-contained
+   HTML+inline-script string producer (ob_start()/ob_get_clean()) --
+   fragment-shaped from the start. Reusing those functions as-is behind
+   one new AJAX endpoint means the exact same PHP stays the single
+   source of truth for markup (court rosters, score values, timer
+   state) that a parallel client-side template would have had to
+   duplicate and keep in sync by hand -- a much larger, much riskier
+   surface for a rebuild whose actual goal is audio continuity, not a
+   new rendering system.
+
+   SCOPE (confirmed by re-reading spp_kq_live_shortcode()'s dispatcher
+   before changing it): only organizing (once past the round-1 draw)
+   and in_play join the persistent app -- check-in (not_started),
+   roster-adjust, and the round-1 draw/court-claim screen carry no
+   audio and stay ordinary page loads, exactly as the spec expected.
+   complete/cancelled ALSO stay ordinary page loads/navigations when
+   reached directly -- the persistent app's own poll always redirects
+   (Submit Photo) or reloads the instant phase leaves {organizing,
+   in_play}, per item 6's own reasoning: there is no more announcement
+   to protect at that point, so a real navigation there is correct, not
+   a gap.
+
+   SppKqAnnouncer CONTINUITY (the actual point of this rebuild, verified
+   explicitly, not assumed to fall out of removing reloads): spp_kq_
+   render_speech_announcer() is now called EXACTLY ONCE, by the new
+   spp_kq_render_live_app() shell, OUTSIDE the swappable #kq-live-app
+   container -- previously spp_kq_render_overview_screen() and spp_kq_
+   render_in_play_screen() each called it themselves, which would have
+   RECREATED SppKqAnnouncer (and reset audioUnlocked to false) on every
+   single fragment swap, defeating the entire rebuild. Both screens now
+   just reference the already-existing global.
+
+   HOW TRANSITIONS WORK WITHOUT A RELOAD: the existing wp_ajax_spp_kq_
+   poll_status (server-side UNCHANGED -- still just reads state, same
+   redirect_url/courts_announced_at fields as before) is now polled by
+   ONE outer loop (spp_kq_render_live_app()'s own script) instead of
+   being duplicated across screens. On each tick it computes a
+   structural signature (phase|round|courts_announced_at --
+   round_started_at/round_duration_seconds deliberately excluded: they
+   are set once, atomically, at the exact instant phase flips to
+   in_play, so phase+round alone already captures that transition, and
+   they never change again while still in_play for that round) and,
+   only when it differs from last time, fetches the new fragment's HTML
+   (new wp_ajax_spp_kq_render_fragment, which just calls the new
+   spp_kq_render_live_fragment() -- the SAME phase-switch spp_kq_live_
+   shortcode() always had, factored out so the initial paint and every
+   later swap can never render differently for the same state) and
+   swaps it into #kq-live-app. A fragment's own <script> tags are inert
+   when set via .innerHTML (standard DOM behavior); executeScripts()
+   clones each into a fresh <script> element (which DOES execute)
+   immediately after every swap -- every fragment's script was ALREADY
+   a self-contained IIFE computing everything from embedded server
+   timestamps + Date.now(), so re-running it fresh on a swap is
+   indistinguishable, from that script's own point of view, from a
+   fresh page load -- this is why the "Go to your courts."/"Start play
+   now." timing logic built earlier today needed ZERO changes to work
+   correctly here.
+
+   Announce Courts and Start Play -- the two actions that happen WITHIN
+   the persistent app's own lifetime -- now submit via a new AJAX action
+   (wp_ajax_spp_kq_live_action) instead of a plain POST: their <form>
+   markup is COMPLETELY UNCHANGED (same wp_nonce_field()/hidden inputs),
+   only the submit is intercepted (SppKqLiveApp.wireAjaxForm(), the
+   shell's own script) and sent via FormData(form) + fetch() instead of
+   a browser navigation, then the result triggers an immediate
+   swapFragment() rather than a reload. The AJAX handler itself is
+   nothing more than a thin wrapper calling spp_kq_handle_post_actions()
+   -- completely unchanged, the exact same function every plain-POST
+   action already goes through. End Event/Cancel Event/Full Reset are
+   DELIBERATELY left as plain POST forms (a real reload there is
+   correct, not a gap -- each one legitimately ends or interrupts the
+   sequence, matching item 6's own reasoning for the final redirect).
+
+   CAS/RACE-GUARD CONFIRMATION: spp_kq_transition_announce_courts(),
+   spp_kq_transition_start_play(), spp_kq_transition_advance_round(),
+   and spp_kq_submit_court_score()'s submission-order/round-still-
+   current guard (inc/spp-kq-live.php) are completely untouched by this
+   change -- confirmed by inspection, not re-derived: every one of
+   today's new AJAX handlers is a thin wrapper around functions that
+   already existed and already enforced these guards server-side; this
+   rebuild only changed how the RESULT reaches the client (JSON + a
+   fragment swap instead of a fresh page render), never how or whether
+   a transition is allowed to happen.
 
    Changes from 1.12.0 (pre-round announcement flow for both Round 1
    and Round 2+, plus a revision of this SAME DAY's earlier delayed-
@@ -1627,9 +1725,9 @@ function spp_kq_render_overview_screen( int $occurrence_id, int $round, ?int $co
         // own 1.13.0 changelog for the full flow.
         ?>
         <p class="kq-hint">Once everyone's checked their court, announce play &mdash; this speaks "Go to your courts" on every phone following along, then opens Start Play.</p>
-        <?php echo spp_kq_render_speech_announcer(); ?>
+        <div class="kq-notice kq-notice-err" id="kq-announce-msg" style="display:none;"></div>
         <div class="kq-action-row">
-            <form method="post" class="kq-inline-form">
+            <form method="post" class="kq-inline-form kq-announce-courts-form">
                 <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
                 <input type="hidden" name="spp_kq_action" value="announce_courts">
                 <input type="hidden" name="spp_kq_round" value="<?php echo esc_attr( $round ); ?>">
@@ -1638,45 +1736,17 @@ function spp_kq_render_overview_screen( int $occurrence_id, int $round, ?int $co
         </div>
 
         <script>
-        (function() {
-            var ajaxUrl       = <?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>;
-            var nonce         = <?php echo wp_json_encode( wp_create_nonce( 'spp_kq_live_action' ) ); ?>;
-            var occ           = <?php echo (int) $occurrence_id; ?>;
-            var renderedRound = <?php echo (int) $round; ?>;
-            var handled = false;
-
-            // No known future instant to count down to until SOMEONE
-            // presses "Announce Courts" (possibly a different device) --
-            // poll for that, same endpoint/cadence the in-play screen's
-            // own poll() already uses. The presser's own device instead
-            // finds out via its own plain form-POST reload, same as
-            // every other action in this feature.
-            function poll() {
-                var data = new FormData();
-                data.append('action', 'spp_kq_poll_status');
-                data.append('nonce', nonce);
-                data.append('occ', occ);
-
-                fetch(ajaxUrl, { method: 'POST', body: data, credentials: 'same-origin' })
-                    .then(function(r) { return r.json(); })
-                    .then(function(res) {
-                        if (!res.success || handled) return;
-                        var d = res.data;
-                        if (d.phase !== 'organizing' || d.current_round !== renderedRound) {
-                            handled = true;
-                            window.location.reload();
-                            return;
-                        }
-                        if (d.courts_announced_at) {
-                            handled = true;
-                            SppKqAnnouncer.speak('Go to your courts.');
-                            window.location.reload();
-                        }
-                    })
-                    .catch(function() {});
-            }
-            setInterval(poll, 4000);
-        })();
+        // 1.14.0: this form now submits via the persistent app's own
+        // AJAX action instead of a plain POST -- see
+        // spp_kq_render_live_app()'s own script for wireAjaxForm()/
+        // submitAction() and this file's 1.14.0 changelog for why
+        // (reloading here would wipe SppKqAnnouncer's audioUnlocked/
+        // keep-alive state right before the very announcement this
+        // button exists to trigger). Detection for OTHER devices
+        // sitting on this same screen is now the persistent app's own
+        // outer poll (courts_announced_at is part of its structural
+        // signature) -- no separate poll loop needed here any more.
+        SppKqLiveApp.wireAjaxForm('.kq-announce-courts-form', 'kq-announce-msg');
         </script>
 
     <?php else : ?>
@@ -1692,7 +1762,6 @@ function spp_kq_render_overview_screen( int $occurrence_id, int $round, ?int $co
         // "Go to your courts" once, then reveal the SAME Start Play
         // form either flow already shared before this feature existed.
         ?>
-        <?php echo spp_kq_render_speech_announcer(); ?>
         <div class="kq-timer-wrap" id="kq-rest-timer-wrap">
             <div class="kq-timer" id="kq-rest-timer">--:--</div>
             <div class="kq-timer-label" id="kq-rest-timer-label">Next round starts in</div>
@@ -1704,6 +1773,7 @@ function spp_kq_render_overview_screen( int $occurrence_id, int $round, ?int $co
             <?php else : ?>
                 <p class="kq-hint">Start Play opens score entry for every court.</p>
             <?php endif; ?>
+            <div class="kq-notice kq-notice-err" id="kq-start-play-msg" style="display:none;"></div>
             <div class="kq-action-row">
                 <form method="post" class="kq-inline-form kq-start-play-form">
                     <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
@@ -1721,6 +1791,15 @@ function spp_kq_render_overview_screen( int $occurrence_id, int $round, ?int $co
         </div>
 
         <script>
+        // 1.14.0: same AJAX-submit treatment as the Announce Courts form
+        // above -- see that script's own comment. Wired unconditionally
+        // here even though the form starts hidden (#kq-start-play-wrap):
+        // harmless to wire an unsubmittable hidden form, and it's
+        // already visible+submittable by the time a human could
+        // possibly reach it (the countdown below reveals it well before
+        // any real click could land).
+        SppKqLiveApp.wireAjaxForm('.kq-start-play-form', 'kq-start-play-msg');
+
         (function() {
             var courtsAnnouncedAt = <?php echo (int) $courts_announced_at; ?>;
             var serverNowMs       = <?php echo (int) round( microtime( true ) * 1000 ); ?>;
@@ -1819,7 +1898,6 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round, ?int $rou
     <p class="kq-round-label">Round <?php echo esc_html( $round ); ?> &mdash; In Play</p>
 
     <?php if ( $round_started_at && $round_duration_seconds ) : ?>
-    <?php echo spp_kq_render_speech_announcer(); ?>
     <div class="kq-timer-wrap" id="kq-timer-wrap">
         <div class="kq-timer" id="kq-timer">--:--</div>
         <div class="kq-timer-label" id="kq-timer-label">Time remaining</div>
@@ -1904,11 +1982,14 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round, ?int $rou
 
                 // 1.13.0: unlock banner + speak()/keep-alive fix for
                 // Chromium's speechSynthesis idle bug all now live in
-                // the shared spp_kq_render_speech_announcer() helper
-                // (echoed just above, in place of this screen's own
-                // former #kq-audio-unlock markup) -- see that function's
-                // own docblock for the full writeup this used to carry
-                // inline here.
+                // the shared spp_kq_render_speech_announcer() helper --
+                // see that function's own docblock for the full writeup
+                // this used to carry inline here. 1.14.0: rendered ONCE
+                // by the persistent app shell (spp_kq_render_live_app())
+                // rather than by this screen itself, so SppKqAnnouncer
+                // (and its audioUnlocked/keep-alive state) survives every
+                // fragment swap for the rest of the event -- this screen
+                // just references the already-existing global.
                 var speak = SppKqAnnouncer.speak;
 
                 // Anchor every client to the SAME absolute end instant
@@ -2130,40 +2211,21 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round, ?int $rou
             });
         });
 
-        // Lightweight poll: update the live count, and reload only once
-        // this round has actually moved on (no real-time push needed --
-        // "people are standing together anyway").
-        function poll() {
-            var data = new FormData();
-            data.append('action', 'spp_kq_poll_status');
-            data.append('nonce', nonce);
-            data.append('occ', occ);
-
-            fetch(ajaxUrl, { method: 'POST', body: data, credentials: 'same-origin' })
-                .then(function(r) { return r.json(); })
-                .then(function(res) {
-                    if (!res.success) return;
-                    var d = res.data;
-                    // 1.11.0: event just completed (or was cancelled with at
-                    // least one round played) -- redirect instead of the
-                    // usual round-advance reload. Checked BEFORE the phase/
-                    // round check below since complete/cancelled would also
-                    // trip that check, and a redirect is a completely
-                    // different action from reloading back into this screen.
-                    if (d.redirect_url) {
-                        window.location.href = d.redirect_url;
-                        return;
-                    }
-                    if (d.phase !== 'in_play' || d.current_round !== renderedRound) {
-                        window.location.reload();
-                        return;
-                    }
-                    if (progressEl) progressEl.textContent = d.reported + ' of ' + d.total + ' courts reported';
-                    if (d.total > 0 && d.reported === d.total) markRoundComplete();
-                })
-                .catch(function() {});
-        }
-        setInterval(poll, 4000);
+        // 1.14.0: progress updates from OTHER devices' submissions (and
+        // the redirect_url/phase-round-change detection that used to
+        // live in this screen's own poll()) are now entirely the
+        // persistent app shell's job (spp_kq_render_live_app()) -- its
+        // outer poll is the ONLY poll loop running once this feature's
+        // screens joined the persistent page, and it calls this exact
+        // callback on every tick where the structural state (phase/
+        // round/courts_announced_at/round_started_at/duration) hasn't
+        // changed enough to warrant a full fragment swap. A structural
+        // change (round actually advancing) swaps this whole fragment
+        // out instead, which is what used to be this poll's own reload.
+        window.SppKqLiveApp.onProgress = function(reported, total) {
+            if (progressEl) progressEl.textContent = reported + ' of ' + total + ' courts reported';
+            if (total > 0 && reported === total) markRoundComplete();
+        };
     })();
     </script>
 
@@ -2464,6 +2526,279 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date, ?st
 }
 
 // =============================================================
+// Persistent AJAX app (1.14.0) -- organizing (announce/rest/Start Play)
+// and in_play only. See this file's own 1.14.0 changelog for the full
+// architecture writeup. Check-in, roster-adjust, and the draw screen
+// are deliberately NOT part of this -- none of them carry audio, so a
+// plain page load/reload for those is unchanged and correct.
+// =============================================================
+
+/**
+ * The swappable content for whichever of organizing/in_play/complete/
+ * cancelled currently applies -- the SAME phase-dispatch logic
+ * spp_kq_live_shortcode() always used, factored out so BOTH the
+ * persistent app's initial paint (spp_kq_render_live_app() below) and
+ * every later AJAX swap (wp_ajax_spp_kq_render_fragment) call this ONE
+ * function rather than two copies that could drift apart.
+ *
+ * complete/cancelled are included defensively only -- spp_kq_live_
+ * shortcode() never enters the persistent app for those phases in the
+ * first place (spec: no more announcement to protect, a real page
+ * navigation is correct there), and the outer poll (spp_kq_render_
+ * live_app()'s own script) always redirects/reloads before ever
+ * requesting a fragment once phase leaves {organizing, in_play} -- so
+ * these two cases, and the not_started default, should never actually
+ * be reached via the AJAX endpoint in normal operation.
+ */
+function spp_kq_render_live_fragment( int $occurrence_id ) : string {
+    spp_kq_ensure_event_row( $occurrence_id );
+    $state = spp_kq_get_event_state( $occurrence_id );
+    if ( ! $state ) {
+        return '<p class="kq-warn">This occurrence could not be found.</p>';
+    }
+    $phase = $state['phase'];
+    $round = (int) $state['current_round'];
+
+    // spp_kq_render_scoreboard_link()/spp_kq_render_full_reset() are
+    // deliberately NOT re-rendered here -- spp_kq_live_shortcode()
+    // already renders both once, statically, OUTSIDE #kq-live-app
+    // (same as it always did), so including them here too would
+    // double-render them for organizing/in_play specifically. Full
+    // Reset's $round is a hidden field spp_kq_full_reset() itself
+    // never even reads (full reset wipes everything regardless), so a
+    // static/stale round number there is harmless. The scoreboard link
+    // going stale for the length of one persistent session (it only
+    // ever needs to APPEAR, the moment the event's first score is
+    // saved) is a minor, pre-existing-shaped gap, not a regression --
+    // a manual refresh already always fixed it.
+    ob_start();
+
+    switch ( $phase ) {
+        case 'organizing':
+            $unclaimed = spp_kq_count_unclaimed( $occurrence_id, $round );
+            if ( $round === 1 && $unclaimed > 0 ) {
+                echo spp_kq_render_draw_screen( $occurrence_id );
+            } else {
+                echo spp_kq_render_overview_screen( $occurrence_id, $round, $state['courts_announced_at'] );
+            }
+            break;
+
+        case 'in_play':
+            echo spp_kq_render_in_play_screen( $occurrence_id, $round, $state['round_started_at'], $state['round_duration_seconds'] );
+            break;
+
+        case 'complete':
+            echo spp_kq_render_complete_screen( $occurrence_id, $round );
+            break;
+
+        case 'cancelled':
+            echo spp_kq_render_cancelled_screen( $occurrence_id, $round );
+            break;
+
+        default:
+            echo '<p class="kq-hint">This event just changed status &mdash; refreshing&hellip;</p><script>window.location.reload();</script>';
+    }
+
+    return ob_get_clean();
+}
+
+/**
+ * The persistent app shell: renders the shared speech-announcer banner
+ * ONCE (spp_kq_render_speech_announcer() -- NOT called by the
+ * individual screens any more, precisely so SppKqAnnouncer's
+ * audioUnlocked/keep-alive state survives every later swap instead of
+ * being recreated from scratch each time), then a swappable #kq-live-
+ * app container holding the current fragment, then the orchestration
+ * script: polls (reusing wp_ajax_spp_kq_poll_status, unchanged
+ * server-side) for a structural-state signature (phase/round/
+ * courts_announced_at -- round_started_at/round_duration_seconds are
+ * deliberately NOT part of it: they're set once, atomically, at the
+ * SAME instant phase flips to in_play, so phase+round alone already
+ * captures that transition; they never change again while still
+ * in_play for that round), and on a change fetches the new fragment's
+ * HTML (wp_ajax_spp_kq_render_fragment) and swaps it in.
+ *
+ * SCRIPT RE-EXECUTION: a fragment's own <script> tags are inert when
+ * set via .innerHTML (standard DOM behavior) -- executeScripts() below
+ * clones each into a fresh <script> element (which DOES execute) right
+ * after every swap. Every fragment's own script is already a self-
+ * contained IIFE that queries the DOM it just landed next to and
+ * computes everything from embedded server timestamps + Date.now(), so
+ * re-running it fresh on each swap is exactly correct -- from that
+ * script's own point of view a swap is indistinguishable from a fresh
+ * page load, which is why the "Go to your courts."/"Start play now."
+ * timing logic built earlier today needed NO changes at all to work
+ * correctly under this architecture.
+ *
+ * SCRIPT ORDERING matters here: this shell's own <script> (which
+ * defines window.SppKqLiveApp) is emitted BEFORE the #kq-live-app div
+ * that holds the first fragment, specifically so that fragment's own
+ * inline script -- which calls SppKqLiveApp.wireAjaxForm(...) -- finds
+ * it already defined. That's safe because this script never touches
+ * #kq-live-app synchronously at parse time, only later, inside
+ * functions invoked by setInterval/fetch callbacks -- by which point
+ * the rest of the page (including the div, further down in source
+ * order) has already been parsed into the DOM.
+ */
+function spp_kq_render_live_app( int $occurrence_id, array $state ) : string {
+    // Matches signatureOf()'s own JS Array.prototype.join() behavior
+    // exactly: a null element joins as an empty string, not the
+    // literal text "null" -- getting this wrong would make the
+    // PHP-computed initial signature permanently disagree with every
+    // later JS-computed one for any occurrence where one of these is
+    // ever null, causing a spurious fragment swap on the very first poll.
+    $initial_signature = implode( '|', array(
+        $state['phase'],
+        (int) $state['current_round'],
+        $state['courts_announced_at'] !== null ? (string) (int) $state['courts_announced_at'] : '',
+    ) );
+
+    ob_start();
+    ?>
+    <?php echo spp_kq_render_speech_announcer(); ?>
+    <script>
+    (function() {
+        var ajaxUrl = <?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>;
+        var nonce   = <?php echo wp_json_encode( wp_create_nonce( 'spp_kq_live_action' ) ); ?>;
+        var occ     = <?php echo (int) $occurrence_id; ?>;
+
+        function executeScripts(container) {
+            var scripts = container.querySelectorAll('script');
+            scripts.forEach(function(oldScript) {
+                var newScript = document.createElement('script');
+                for (var i = 0; i < oldScript.attributes.length; i++) {
+                    newScript.setAttribute(oldScript.attributes[i].name, oldScript.attributes[i].value);
+                }
+                newScript.textContent = oldScript.textContent;
+                oldScript.parentNode.replaceChild(newScript, oldScript);
+            });
+        }
+
+        function swapFragment() {
+            var data = new FormData();
+            data.append('action', 'spp_kq_render_fragment');
+            data.append('nonce', nonce);
+            data.append('occ', occ);
+            fetch(ajaxUrl, { method: 'POST', body: data, credentials: 'same-origin' })
+                .then(function(r) { return r.json(); })
+                .then(function(res) {
+                    if (!res.success) return;
+                    var appEl = document.getElementById('kq-live-app');
+                    if (!appEl) return;
+                    // Reset before injecting the new fragment -- if the
+                    // new fragment doesn't register its own handler
+                    // (e.g. it's not the in-play screen), a stale one
+                    // from whatever WAS active must not keep firing.
+                    SppKqLiveApp.onProgress = null;
+                    appEl.innerHTML = res.data.html;
+                    executeScripts(appEl);
+                })
+                .catch(function() {});
+        }
+
+        // Submits a REAL <form> (same hidden nonce/action/round inputs
+        // every plain-POST action in this feature already renders) via
+        // fetch instead of letting the browser navigate -- reloading
+        // here would wipe SppKqAnnouncer's audioUnlocked/keep-alive
+        // state right before the very announcement the action exists
+        // to trigger. Reuses spp_kq_handle_post_actions() server-side,
+        // completely unchanged -- see wp_ajax_spp_kq_live_action below.
+        function submitAction(form, onSuccess, onError) {
+            var data = new FormData(form);
+            data.append('action', 'spp_kq_live_action');
+            data.append('occ', occ);
+            fetch(ajaxUrl, { method: 'POST', body: data, credentials: 'same-origin' })
+                .then(function(r) { return r.json(); })
+                .then(function(res) {
+                    if (!res.success) {
+                        if (onError) onError(res.data || 'Action failed.');
+                        return;
+                    }
+                    if (onSuccess) onSuccess();
+                    swapFragment();
+                })
+                .catch(function() {
+                    if (onError) onError('Network error -- try again.');
+                });
+        }
+
+        function wireAjaxForm(formSelector, msgElId) {
+            var form = document.querySelector(formSelector);
+            if (!form) return;
+            var msgEl = msgElId ? document.getElementById(msgElId) : null;
+            form.addEventListener('submit', function(e) {
+                e.preventDefault();
+                var btn = form.querySelector('button[type="submit"]');
+                if (btn) btn.disabled = true;
+                if (msgEl) msgEl.style.display = 'none';
+                submitAction(form, null, function(errMsg) {
+                    if (btn) btn.disabled = false;
+                    if (msgEl) { msgEl.textContent = errMsg; msgEl.style.display = 'block'; }
+                });
+            });
+        }
+
+        window.SppKqLiveApp = { refreshNow: swapFragment, wireAjaxForm: wireAjaxForm, onProgress: null };
+
+        var lastSignature = <?php echo wp_json_encode( $initial_signature ); ?>;
+
+        function signatureOf(d) {
+            return [d.phase, d.current_round, d.courts_announced_at].join('|');
+        }
+
+        function poll() {
+            var data = new FormData();
+            data.append('action', 'spp_kq_poll_status');
+            data.append('nonce', nonce);
+            data.append('occ', occ);
+
+            fetch(ajaxUrl, { method: 'POST', body: data, credentials: 'same-origin' })
+                .then(function(r) { return r.json(); })
+                .then(function(res) {
+                    if (!res.success) return;
+                    var d = res.data;
+
+                    // Event just completed (or was cancelled with at
+                    // least one round played) -- navigate to Submit
+                    // Photo. No more announcements to protect at this
+                    // point, so a real navigation is correct here (see
+                    // this file's own 1.14.0 changelog, item 6).
+                    if (d.redirect_url) {
+                        window.location.href = d.redirect_url;
+                        return;
+                    }
+                    // Phase left {organizing, in_play} with nothing to
+                    // redirect to (e.g. cancelled before any round
+                    // played, or a Full Reset from another tab) -- same
+                    // reasoning, a plain reload is correct.
+                    if (d.phase !== 'organizing' && d.phase !== 'in_play') {
+                        window.location.reload();
+                        return;
+                    }
+
+                    var sig = signatureOf(d);
+                    if (sig !== lastSignature) {
+                        lastSignature = sig;
+                        swapFragment();
+                        return;
+                    }
+
+                    if (SppKqLiveApp.onProgress) SppKqLiveApp.onProgress(d.reported, d.total);
+                })
+                .catch(function() {});
+        }
+
+        setInterval(poll, 4000);
+    })();
+    </script>
+    <div id="kq-live-app">
+        <?php echo spp_kq_render_live_fragment( $occurrence_id ); ?>
+    </div>
+    <?php
+    return ob_get_clean();
+}
+
+// =============================================================
 // Main shortcode
 // =============================================================
 
@@ -2538,14 +2873,16 @@ function spp_kq_live_shortcode() : string {
             case 'organizing':
                 $unclaimed = spp_kq_count_unclaimed( $occurrence_id, $round );
                 if ( $round === 1 && $unclaimed > 0 ) {
+                    // Draw/court-claim carries no audio -- deliberately
+                    // NOT part of the persistent app (1.14.0).
                     echo spp_kq_render_draw_screen( $occurrence_id );
                 } else {
-                    echo spp_kq_render_overview_screen( $occurrence_id, $round, $state['courts_announced_at'] );
+                    echo spp_kq_render_live_app( $occurrence_id, $state );
                 }
                 break;
 
             case 'in_play':
-                echo spp_kq_render_in_play_screen( $occurrence_id, $round, $state['round_started_at'], $state['round_duration_seconds'] );
+                echo spp_kq_render_live_app( $occurrence_id, $state );
                 break;
 
             case 'complete':
@@ -2752,10 +3089,94 @@ add_action( 'wp_ajax_spp_kq_poll_status', function() {
         'reported'            => $progress['reported'],
         'total'               => $progress['total'],
         'redirect_url'        => $redirect_url,
-        // 1.13.0: lets the Round-1 "not yet announced" screen's poll
-        // (spp_kq_render_overview_screen()) detect a DIFFERENT device
-        // pressing "Ready -- Announce Courts" -- null until that
-        // happens, same nullable-epoch shape as round_started_at.
+        // 1.13.0: lets a device detect a DIFFERENT device pressing
+        // "Ready -- Announce Courts" -- null until that happens, same
+        // nullable-epoch shape as round_started_at. 1.14.0: also part
+        // of the persistent app's own structural-state signature
+        // (spp_kq_render_live_app()) that decides when to swap in a
+        // new fragment.
         'courts_announced_at' => $state['courts_announced_at'] !== null ? (int) $state['courts_announced_at'] : null,
     ) );
+} );
+
+// =============================================================
+// AJAX: persistent app fragment fetch + form-action submit (1.14.0)
+// =============================================================
+
+/**
+ * Returns the current fragment's HTML for the persistent app to swap
+ * into #kq-live-app -- literally spp_kq_render_live_fragment(), the
+ * exact same function the app's own initial page paint already calls,
+ * so the two can never render differently for the same underlying
+ * state. Read-only from this endpoint's own point of view (it only
+ * ever reflects whatever state already exists); state changes
+ * themselves only ever happen via wp_ajax_spp_kq_live_action below or
+ * the existing wp_ajax_spp_kq_submit_score/wp_ajax_spp_kq_draw_card
+ * handlers, unchanged.
+ */
+add_action( 'wp_ajax_spp_kq_render_fragment', function() {
+    if ( ! spp_kq_can_facilitate() ) {
+        wp_send_json_error( 'Not authorized' );
+    }
+    check_ajax_referer( 'spp_kq_live_action', 'nonce' );
+
+    $occurrence_id = isset( $_POST['occ'] ) ? absint( $_POST['occ'] ) : 0;
+    if ( ! $occurrence_id ) {
+        wp_send_json_error( 'Missing parameters.' );
+    }
+
+    wp_send_json_success( array( 'html' => spp_kq_render_live_fragment( $occurrence_id ) ) );
+} );
+
+/**
+ * AJAX front door for the two actions that occur WITHIN the persistent
+ * app's own lifetime and must not cause a page reload (Announce
+ * Courts, Start Play) -- see spp_kq_render_live_app()'s own docblock
+ * for why a reload here would defeat the entire point of this feature
+ * (it would wipe SppKqAnnouncer's audioUnlocked/keep-alive state right
+ * before the very announcement each of these two actions exists to
+ * trigger). Every OTHER action available from within the persistent
+ * app's own fragments (End Event, Cancel Event, Full Reset) is
+ * deliberately left as a plain POST form causing a real reload/
+ * navigation -- each of those legitimately ends or interrupts the
+ * announcement sequence anyway, so a reload at that exact point is
+ * correct, not a gap (see this file's own 1.14.0 changelog).
+ *
+ * Reuses spp_kq_handle_post_actions() completely unchanged -- the
+ * SAME function every plain-POST action in this feature already goes
+ * through, reading spp_kq_action/spp_kq_round straight off $_POST
+ * exactly as it always has (the client submits the real, unmodified
+ * <form>'s own fields via FormData(form), just routed through fetch()
+ * instead of a browser navigation) -- so the CAS-guarded transition
+ * functions and their server-side validation are completely
+ * untouched; only how the RESULT reaches the client differs (JSON
+ * instead of a fresh page render).
+ */
+add_action( 'wp_ajax_spp_kq_live_action', function() {
+    if ( ! spp_kq_can_facilitate() ) {
+        wp_send_json_error( 'Not authorized' );
+    }
+    check_ajax_referer( 'spp_kq_live_action', 'spp_kq_nonce' );
+
+    $occurrence_id = isset( $_POST['occ'] ) ? absint( $_POST['occ'] ) : 0;
+    if ( ! $occurrence_id ) {
+        wp_send_json_error( 'Missing parameters.' );
+    }
+    $occurrence = spp_kq_get_occurrence_summary( $occurrence_id );
+    if ( ! $occurrence ) {
+        wp_send_json_error( 'Occurrence not found.' );
+    }
+
+    $notice = spp_kq_handle_post_actions( $occurrence_id, $occurrence['event_date'], $occurrence['eff_event_time'] );
+
+    // Same '' on success / plain text on error convention every plain-
+    // POST action already returns -- SPP_KQ_NOTICE_OK_PREFIX is the one
+    // opt-in success-text exception (see spp_kq_render_occurrence_
+    // header()'s own comment), never applicable to announce_courts/
+    // start_play specifically, but checked here for correctness anyway
+    // rather than assuming.
+    if ( $notice !== '' && ! str_starts_with( $notice, SPP_KQ_NOTICE_OK_PREFIX ) ) {
+        wp_send_json_error( $notice );
+    }
+    wp_send_json_success();
 } );
