@@ -1,8 +1,74 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Screens
-   Version: 1.10.0
+   Version: 1.11.0
    Date: 2026-09-15
+
+   Changes from 1.10.0 (post-completion Submit Photo redirect -- see the
+   conversation this was built from for the full spec; the ground-truth
+   "was this archived" check lives in inc/spp-kq-history.php 1.6.0, see
+   that file's own changelog):
+
+   INVESTIGATION (required before wiring the redirect target -- confirm
+   the real Submit Photo form structure, not assumed): [spp_photo_submit]
+   lives in a SEPARATE plugin, wp-content/plugins/spp-photo-gallery/
+   includes/photo-submission.php (its own git repo, spp-photo-gallery.git
+   -- not this theme), on the page at /submit-photo/ (post ID 20010543).
+   Its Event <select name="event_ref"> renders one <option> per ACTIVE
+   gl_event_series row as value="series:<id>" (spp_photo_gallery_
+   event_options(), same file) -- confirmed directly against the live
+   DB, not guessed: all 4 real KQ recurring time slots are active
+   gl_event_series rows with EXACTLY the titles named in the spec, and
+   every real KQ occurrence's gl_events_v.series_id already points at
+   one of them (0 NULL series_id rows among all category 2/3
+   occurrences) --
+     id=2 "Ace of the Courts - 9:00 am"   -> series:2
+     id=3 "Ace of the Courts 10:30am"     -> series:3
+     id=4 "Queen of the Courts - 9:00 am" -> series:4
+     id=5 "Queen of the Courts 10:30am"   -> series:5
+   The date field (<input type="date" name="confirmed_date">) already
+   server-side defaults its value to current_time('Y-m-d') on every
+   fresh load -- redundant with "today" in the redirect's own case, but
+   the redirect still passes date=Y-m-d explicitly per spec rather than
+   silently relying on that default. Neither field had any existing
+   query-string preselection mechanism -- added to assets/js/
+   photo-submit.js (that plugin's own 1.4.0, see its changelog) as a
+   small, isolated read of event_ref/date from location.search, applied
+   only if event_ref matches a REAL <option> already in the dropdown
+   (never trusts an arbitrary value blindly) and otherwise a complete
+   no-op, so a normal (non-redirected) visit to the page is unaffected.
+
+   THE BUILD:
+   - spp_kq_resolve_photo_submit_url() (new): occurrence -> its
+     series_id -> the [spp_photo_submit] page's URL with event_ref/date
+     query args. Fails closed (returns null, no redirect) if the series
+     or the page itself can't be resolved -- see its own docblock.
+   - wp_ajax_spp_kq_poll_status now also returns redirect_url: null
+     unless phase has become complete, or cancelled with
+     spp_kq_history_exists_for_occurrence() true (inc/spp-kq-history.php
+     1.6.0 -- the exact real outcome of the SAME archive/recap gating
+     spp_kq_finalize_event_history_and_recap() already applied,
+     synchronously, in the request that made the transition -- not a
+     second implementation of that gating). This is the ONLY new signal
+     added to that endpoint; reported/total/phase/current_round are
+     unchanged.
+   - spp_kq_render_in_play_screen()'s poll() checks redirect_url FIRST,
+     before its existing phase/round-advance reload check (complete/
+     cancelled would also trip that check, but a redirect is a
+     different action from a reload) -- window.location.href instead of
+     window.location.reload(). Nothing else about poll()'s cadence,
+     payload for reported/total, or the round-advance reload path for a
+     still-in-play round changed.
+   - SCOPE, confirmed deliberately NOT expanded: the Full Scoreboard
+     sub-view (?kq_view=scoreboard, spp_kq_render_full_scoreboard_
+     screen()) has no poll() of its own today -- it's a static render,
+     entirely separate from spp_kq_render_in_play_screen() in the
+     dispatcher's own kq_view branch (spp_kq_live_shortcode()). A device
+     sitting on that view (or check-in/roster/anywhere else) is
+     unaffected by this change, same as spec item 4 already expects for
+     "a different KQ screen" -- this task extends the EXISTING in-play
+     poll only, per its own framing ("extends that same detection"), it
+     does not add a new poll loop to a screen that never had one.
 
    Changes from 1.9.0 (match timer with voice announcements -- see the
    conversation this was built from for the full spec; the schema/CAS
@@ -344,6 +410,54 @@ function spp_kq_get_occurrence_summary( int $occurrence_id ) : ?array {
         $occurrence_id
     ), ARRAY_A );
     return $row ?: null;
+}
+
+/**
+ * Post-completion Submit Photo redirect target (1.11.0) -- see this
+ * file's own 1.11.0 changelog for the full spec. Maps a KQ occurrence
+ * to its recurring-event gl_event_series row (every real KQ occurrence
+ * belongs to one of the 4 fixed Ace/Queen 9:00am/10:30am series -- see
+ * spp_kq_get_occurrence_summary()'s own view; series_id is confirmed
+ * populated for every real KQ occurrence, never a detached one-off),
+ * then builds the [spp_photo_submit] URL with that series pre-selected
+ * (event_ref=series:<id>, the exact <option value> that shortcode's own
+ * dropdown already renders -- see wp-content/plugins/spp-photo-gallery/
+ * includes/photo-submission.php's spp_photo_gallery_event_options())
+ * and today's date pre-filled (date=Y-m-d -- redundant with that form's
+ * own server-side today default, but explicit per spec rather than
+ * relying on that default silently doing the right thing).
+ *
+ * FAILS CLOSED, same discipline as this file's other "can't determine
+ * X" paths (e.g. spp_kq_get_occurrence_start_timestamp()): returns null
+ * -- no redirect -- rather than sending a player to a broken/blank
+ * form, if the series can't be resolved (shouldn't happen for a real
+ * KQ occurrence, but defensive) or the Submit Photo page itself can't
+ * be found (e.g. renamed/deleted -- an infrastructure problem this
+ * function has no business guessing around).
+ */
+function spp_kq_resolve_photo_submit_url( int $occurrence_id ) : ?string {
+    global $wpdb;
+    $view = $wpdb->prefix . 'gl_events_v';
+    $series_id = $wpdb->get_var( $wpdb->prepare(
+        "SELECT series_id FROM {$view} WHERE occurrence_id = %d",
+        $occurrence_id
+    ) );
+    if ( ! $series_id ) {
+        return null;
+    }
+
+    $photo_page = get_page_by_path( 'submit-photo' );
+    if ( ! $photo_page ) {
+        return null;
+    }
+
+    return add_query_arg(
+        array(
+            'event_ref' => 'series:' . (int) $series_id,
+            'date'      => current_time( 'Y-m-d' ),
+        ),
+        get_permalink( $photo_page )
+    );
 }
 
 // =============================================================
@@ -1610,6 +1724,16 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round, ?int $rou
                 .then(function(res) {
                     if (!res.success) return;
                     var d = res.data;
+                    // 1.11.0: event just completed (or was cancelled with at
+                    // least one round played) -- redirect instead of the
+                    // usual round-advance reload. Checked BEFORE the phase/
+                    // round check below since complete/cancelled would also
+                    // trip that check, and a redirect is a completely
+                    // different action from reloading back into this screen.
+                    if (d.redirect_url) {
+                        window.location.href = d.redirect_url;
+                        return;
+                    }
                     if (d.phase !== 'in_play' || d.current_round !== renderedRound) {
                         window.location.reload();
                         return;
@@ -2162,6 +2286,13 @@ add_action( 'wp_ajax_spp_kq_submit_score', function() {
 // without a full reload, while staying well short of real-time push.
 // Read-only, no access restriction beyond being logged in: the count
 // alone identifies no one's score.
+//
+// 1.11.0: also carries redirect_url -- set once phase has become
+// complete, or cancelled with at least one round actually played (see
+// spp_kq_history_exists_for_occurrence()'s own docblock,
+// inc/spp-kq-history.php, for why that's the exact right ground-truth
+// check for "played"). A polling in-play screen redirects there instead
+// of reloading -- see this file's own 1.11.0 changelog.
 // =============================================================
 
 add_action( 'wp_ajax_spp_kq_poll_status', function() {
@@ -2182,10 +2313,17 @@ add_action( 'wp_ajax_spp_kq_poll_status', function() {
 
     $progress = spp_kq_get_round_progress( $occurrence_id, (int) $state['current_round'] );
 
+    $redirect_url = null;
+    if ( in_array( $state['phase'], array( 'complete', 'cancelled' ), true )
+        && spp_kq_history_exists_for_occurrence( $occurrence_id ) ) {
+        $redirect_url = spp_kq_resolve_photo_submit_url( $occurrence_id );
+    }
+
     wp_send_json_success( array(
         'phase'         => $state['phase'],
         'current_round' => (int) $state['current_round'],
         'reported'      => $progress['reported'],
         'total'         => $progress['total'],
+        'redirect_url'  => $redirect_url,
     ) );
 } );

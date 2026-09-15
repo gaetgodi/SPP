@@ -1,8 +1,31 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Permanent History, Live Scoreboard, Recap Email
-   Version: 1.5.0
-   Date: 2026-09-14
+   Version: 1.6.0
+   Date: 2026-09-15
+
+   Changes from 1.5.0 (post-completion Submit Photo redirect -- see the
+   conversation this was built from for the full spec; the poll
+   handler/redirect-URL building live in inc/spp-kq-screens.php, see
+   that file's own changelog):
+   - New spp_kq_history_exists_for_occurrence(): a ground-truth
+     "did spp_kq_archive_event_history() actually archive this
+     occurrence" check, used by the live screen's poll handler to
+     decide whether to redirect a still-polling device to Submit Photo
+     once phase becomes complete/cancelled. Deliberately NOT a second
+     implementation of spp_kq_archive_event_history()'s own gating
+     logic (pre-launch date / not-ace-or-queen / nothing-reported) --
+     that logic already ran, synchronously, in the SAME request that
+     flipped phase to complete/cancelled (spp_kq_handle_post_actions(),
+     inc/spp-kq-screens.php, calls spp_kq_finalize_event_history_and_
+     recap() immediately after the transition succeeds, before that
+     request ever returns) -- by the time any OTHER device's poll next
+     runs and observes the new phase, spp_kq_history either already has
+     rows for this occurrence or it never will for this occurrence
+     (archival is one-shot per occurrence, see that function's own
+     docblock). Reading the actual result is simpler and can never drift
+     from spp_kq_archive_event_history()'s real decision the way a
+     parallel re-implementation of its three gating reasons could.
 
    Changes from 1.4.0:
    - spp_kq_get_full_scoreboard()'s WHERE now also checks
@@ -740,6 +763,24 @@ function spp_kq_send_recap_emails( array $scoreboard, string $event_date, string
     }
 
     return $results;
+}
+
+/**
+ * Ground-truth "did this occurrence actually get archived" check --
+ * see this file's own 1.6.0 changelog for why this reads the real
+ * result rather than re-deriving spp_kq_archive_event_history()'s
+ * gating logic a second time. Used by the live screen's poll handler
+ * (inc/spp-kq-screens.php) to decide whether a still-polling device
+ * should redirect to Submit Photo once phase becomes complete/
+ * cancelled.
+ */
+function spp_kq_history_exists_for_occurrence( int $occurrence_id ) : bool {
+    global $wpdb;
+    $table = spp_kq_history_table();
+    return (bool) $wpdb->get_var( $wpdb->prepare(
+        "SELECT EXISTS(SELECT 1 FROM {$table} WHERE occurrence_id = %d)",
+        $occurrence_id
+    ) );
 }
 
 // =============================================================
