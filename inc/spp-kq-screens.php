@@ -1,8 +1,157 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Screens
-   Version: 1.11.0
+   Version: 1.13.0
    Date: 2026-09-15
+
+   Changes from 1.12.0 (pre-round announcement flow for both Round 1
+   and Round 2+, plus a revision of this SAME DAY's earlier delayed-
+   start timing -- see the conversation this was built from for the
+   full spec; the transitions/constants live in inc/spp-kq-live.php
+   1.5.0 and the schema in inc/spp-kq-schema.php 1.7.0, see those
+   files' own changelogs):
+
+   INVESTIGATION (required before inserting the new steps -- confirmed
+   by re-reading spp_kq_live_shortcode()'s phase-driven switch before
+   changing anything, not assumed): BOTH Round 1 (draw complete,
+   unclaimed = 0) AND every Round 2+ (spp_kq_transition_advance_round(),
+   always landing on phase='organizing') fell through to the exact SAME
+   spp_kq_render_overview_screen() with no intermediate step at all --
+   confirmed by reading the dispatcher's 'organizing' case, which only
+   ever distinguishes "round 1 with cards still unclaimed" (draw
+   screen) from literally everything else (overview screen, no further
+   distinction). This is exactly the single insertion point both new
+   flows need, and why one screen function can serve both --
+   spp_kq_render_overview_screen() itself is now that shared screen,
+   branching purely on whether courts_announced_at is null (round 1,
+   not yet pressed) or set (round 1 just pressed, or round 2+
+   automatically) rather than on the round number at all.
+
+   TIMING REVISION (Start Play): SPP_KQ_ROUND_START_DELAY_SECONDS is
+   now 10, not 30 (inc/spp-kq-live.php 1.5.0), and "Start play now."
+   now fires on the FIRST tick the in-play screen's script ever runs,
+   unconditionally (once, via fired.start) -- not gated behind reaching
+   round_started_at the way this morning's version was. This matches
+   the exact same "fire once on first tick if not yet fired, even if
+   that tick happens a little late" precedent announceIfDue() already
+   established for every other trigger in this feature (a device that
+   loads mid-round already retroactively announces whatever threshold
+   it just missed crossing) -- not a new special case, see tick()'s own
+   comment. The "Starting in mm:ss" display now counts the 10 seconds
+   AFTER that announcement, toward round_started_at, instead of before
+   it.
+
+   THE BUILD:
+   - New spp_kq_render_speech_announcer(): the "tap to enable sound"
+     banner + speak()/keep-alive machinery, factored OUT of
+     spp_kq_render_in_play_screen() (which used to be its only caller)
+     now that spp_kq_render_overview_screen() needs the identical thing
+     for "Go to your courts" -- see that function's own docblock. Both
+     screens echo it once and call into the `SppKqAnnouncer` global it
+     defines; no logic duplicated between the two screens.
+   - spp_kq_render_overview_screen() gains a $courts_announced_at
+     param and three states in its action-row (understaffed warning is
+     unchanged and still checked first):
+       1. courts_announced_at === null (round 1 only): a "Ready --
+          Announce Courts" button (spp_kq_transition_announce_courts(),
+          inc/spp-kq-live.php) + a poll loop (reusing wp_ajax_spp_kq_
+          poll_status, now also returning courts_announced_at) so any
+          OTHER device sitting on this screen detects a different
+          device's press, speaks "Go to your courts.", and reloads. The
+          presser's own device just finds out via its own ordinary
+          form-POST reload, same asymmetry Start Play's own press
+          already has with the match timer's announcements.
+       2. courts_announced_at set (round 1 just pressed, or round 2+
+          automatically via spp_kq_transition_advance_round()): a live
+          countdown to that instant (same absolute-anchor/skew-
+          corrected math as the match timer), speaks "Go to your
+          courts." once it's reached (immediately, on the very first
+          tick, for round 1's own already-elapsed reload -- no separate
+          branch needed), then reveals the SAME Start Play form
+          (#kq-start-play-wrap, initially display:none) both flows
+          already shared before this feature existed -- satisfies
+          "reuse one implementation for both flows" directly, since
+          it's the literal same markup/script either way.
+     End Event's own form is unchanged and un-nested from all of the
+     above -- still gated only by $scores_exist, exactly as before.
+   - spp_kq_handle_post_actions() gains 'announce_courts' (round 1
+     only -- round 2+ never POSTs it, its own rest period is fully
+     automatic).
+   - Dispatcher: the one call site passes $state['courts_announced_at']
+     through -- no other change to phase-selection logic. Round 2+'s
+     routing to the new rest-countdown state needed NO change at all
+     to the EXISTING poll-detects-round-advance-then-reload code in
+     spp_kq_render_in_play_screen() (confirmed, not re-derived): that
+     reload already lands back on the dispatcher, which now shows
+     different content purely because spp_kq_transition_advance_round()
+     stamps courts_announced_at -- satisfying "round-advance must route
+     to the new screen" with zero changes to the round-advance
+     detection/reload mechanism itself, only to what the destination
+     renders.
+
+   Changes from 1.11.0 (30-second delayed start + a real live-tested
+   audio bug fix -- see the conversation this was built from for the
+   full spec; the round_started_at plumbing lives in
+   inc/spp-kq-live.php 1.4.0, see that file's own changelog):
+
+   PART A -- delayed start: spp_kq_render_in_play_screen()'s timer JS
+   gained a second absolute anchor, localStartMs (same skew-corrected
+   design as the existing localEndMs), computed from round_started_at
+   alone -- no new PHP param, no new DB column. tick() now checks
+   `now < localStartMs` first: while true, it renders a "Starting in
+   mm:ss" countdown (reusing the same #kq-timer/#kq-timer-label
+   elements, just a different label) instead of the round timer, and
+   is a complete no-op for the round-timer classes/announceIfDue().
+   The instant that countdown reaches zero, it speaks "Start play
+   now." exactly once (fired.start, same one-shot-per-round bookkeeping
+   as every other trigger) and falls through into the SAME tick() call's
+   normal round-timer rendering -- no extra frame stuck at "Starting in
+   0:00" before the real countdown appears. Every device anchors to the
+   same round_started_at regardless of when it individually loads the
+   screen, exactly like the round timer itself already did.
+
+   PART B -- investigated and fixed a live-tested bug: the 2-minute
+   warning produced no audio (1-minute and the 10->0 countdown worked
+   fine), plus the spoken countdown seemed to start a bit late relative
+   to the displayed digits. Investigated and RULED OUT before landing
+   on a fix (see speak()'s own inline comment for the full writeup):
+     - NOT the trigger-threshold logic -- already <= thresholds
+       (never exact-equality), re-checked in full every 250ms tick
+       regardless of any single tick's lateness, so a late/skipped tick
+       can never cause a threshold to be silently skipped.
+     - NOT two independently-drifting clocks -- the visual digit
+       (timerEl.textContent) and the announcement check
+       (announceIfDue(remainingSeconds)) are computed from the exact
+       same remainingSeconds value, once per tick(), not two separate
+       reads.
+     - NOT setInterval drift accumulating -- tick() recomputes
+       remainingSeconds fresh from the absolute anchor every call, never
+       increments a counter, so a late/irregular tick can never make the
+       DISPLAYED value wrong, only (at most) render it a little late.
+   CONFIRMED root cause: Chromium's own long-documented speechSynthesis
+   idle bug -- the engine's internal speech queue can silently pause/
+   stall after roughly 15 seconds without actively speaking, dropping
+   the next speak() call with no error and no visible symptom. This
+   feature's announcements are naturally sparse (the "Sound enabled."
+   confirmation, then dead air until the 2-minute mark -- up to ~11
+   minutes on the 13-minute default round), which is exactly the idle
+   window that bug needs; a later speak() call working again after the
+   engine already went idle-and-stuck also plausibly explains the
+   "starts a bit late" symptom (the first utterance out of a stalled
+   engine can carry its own startup lag that a never-idle engine
+   doesn't have). Fix: resume() immediately before every speak() call
+   (unsticks an already-stalled queue for that one utterance), plus a
+   10-second pause()+resume() keep-alive interval running for as long
+   as audio stays unlocked (well inside the ~15s idle window, so the
+   engine never gets the chance to stall at all) -- both standard,
+   narrowly-targeted mitigations for this specific documented engine
+   bug, not a rewrite of the announcement scheduling itself (which was
+   already correct). Also added: onstart/onerror handlers per utterance
+   plus a console.debug at the moment a trigger fires (separate from
+   whether speech actually played) -- previously a dropped utterance
+   was completely silent and unfalsifiable; a future recurrence is now
+   diagnosable from the browser console instead of another guessing
+   exercise.
 
    Changes from 1.10.0 (post-completion Submit Photo redirect -- see the
    conversation this was built from for the full spec; the ground-truth
@@ -1319,6 +1468,107 @@ function spp_kq_render_draw_screen( int $occurrence_id ) : string {
 }
 
 /**
+ * Shared "tap to enable sound" banner + speechSynthesis wrapper
+ * (1.13.0), used by every screen that needs independent per-device
+ * voice announcements -- currently spp_kq_render_overview_screen()'s
+ * pre-Start-Play announce/rest state and spp_kq_render_in_play_screen()'s
+ * match timer. Previously this whole apparatus (unlock button wiring,
+ * the resume()-before-speak()/keep-alive fix for Chromium's
+ * speechSynthesis idle bug, onstart/onerror diagnostic logging) lived
+ * inline inside spp_kq_render_in_play_screen() only; factored out here
+ * once a SECOND screen needed the identical thing rather than copy-
+ * pasting it -- see this file's own 1.13.0 changelog. Exposes a global
+ * `SppKqAnnouncer` object with `.speak(text)` and `.stopKeepAlive()`;
+ * the caller's own script (loaded after this one on the same page,
+ * same non-deferred inline-script convention every screen here already
+ * uses) calls into it directly.
+ *
+ * Emits its own <div>/<button> banner markup AND the <script> that
+ * wires it, together -- callers just echo this once, anywhere before
+ * their own script needs SppKqAnnouncer, and don't reimplement any of
+ * it themselves. Every screen that calls this owns exactly one
+ * #kq-audio-unlock on the page at a time (screens are mutually
+ * exclusive per page load), so the fixed element ids are never at risk
+ * of colliding.
+ */
+function spp_kq_render_speech_announcer() : string {
+    ob_start();
+    ?>
+    <div class="kq-audio-unlock" id="kq-audio-unlock">
+        <button type="button" class="kq-btn kq-btn-secondary" id="kq-audio-unlock-btn">&#128266; Tap to enable sound announcements</button>
+    </div>
+    <script>
+    var SppKqAnnouncer = (function() {
+        var unlockWrap = document.getElementById('kq-audio-unlock');
+        var unlockBtn  = document.getElementById('kq-audio-unlock-btn');
+
+        var audioUnlocked = false;
+        var keepAliveInterval = null;
+
+        // Fixes a live-tested bug where a sparsely-spaced announcement
+        // (e.g. the match timer's 2-minute warning) produced no audio
+        // even though earlier/later announcements worked fine: this is
+        // Chromium's own long-documented speechSynthesis idle bug --
+        // the engine's internal queue can silently pause/stall after
+        // roughly 15 seconds of not actively speaking, dropping the
+        // next speak() call with no error and no visible symptom.
+        // resume() immediately before every speak() unsticks an
+        // already-stalled queue for that one utterance; the periodic
+        // keep-alive (started once audio is unlocked) nudges the
+        // engine well inside that 15-second window so it never gets
+        // the chance to stall at all. onstart/onerror plus a
+        // console.debug at the trigger-fired moment are diagnostic
+        // logging -- previously a dropped utterance was completely
+        // silent; a recurrence is now visible in the browser console.
+        function speak(text) {
+            console.debug('[KQ announce] trigger fired:', text, '(audioUnlocked=' + audioUnlocked + ')');
+            if (!audioUnlocked || !('speechSynthesis' in window)) return;
+            try {
+                window.speechSynthesis.resume();
+                var utter = new SpeechSynthesisUtterance(text);
+                utter.onstart = function() { console.debug('[KQ announce] speech started:', text); };
+                utter.onerror = function(e) { console.warn('[KQ announce] speech FAILED:', text, e && e.error); };
+                window.speechSynthesis.speak(utter);
+            } catch (e) {
+                console.warn('[KQ announce] speak() threw:', e);
+            }
+        }
+
+        function startKeepAlive() {
+            if (!('speechSynthesis' in window) || keepAliveInterval) return;
+            keepAliveInterval = setInterval(function() {
+                try { window.speechSynthesis.pause(); window.speechSynthesis.resume(); } catch (e) {}
+            }, 10000);
+        }
+        function stopKeepAlive() {
+            if (keepAliveInterval) { clearInterval(keepAliveInterval); keepAliveInterval = null; }
+        }
+
+        if ('speechSynthesis' in window && unlockWrap && unlockBtn) {
+            unlockBtn.addEventListener('click', function() {
+                audioUnlocked = true;
+                unlockWrap.style.display = 'none';
+                startKeepAlive();
+                try {
+                    window.speechSynthesis.resume();
+                    window.speechSynthesis.speak(new SpeechSynthesisUtterance('Sound enabled.'));
+                } catch (e) {}
+            });
+        } else if (unlockWrap) {
+            // No SpeechSynthesis in this browser -- nothing to unlock,
+            // so don't show a prompt with no effect. Every caller's own
+            // visual UI is completely unaffected either way.
+            unlockWrap.style.display = 'none';
+        }
+
+        return { speak: speak, stopKeepAlive: stopKeepAlive };
+    })();
+    </script>
+    <?php
+    return ob_get_clean();
+}
+
+/**
  * Screen 4: Overview screen (organizing, draw complete or round > 1)
  *
  * End Event is only offered once at least one real score exists
@@ -1331,7 +1581,7 @@ function spp_kq_render_draw_screen( int $occurrence_id ) : string {
  * incomplete draw, or the In-Play screen, to undo Start Play itself --
  * see spp_kq_transition_reset_event()'s own docblock).
  */
-function spp_kq_render_overview_screen( int $occurrence_id, int $round ) : string {
+function spp_kq_render_overview_screen( int $occurrence_id, int $round, ?int $courts_announced_at = null ) : string {
     $courts_data   = spp_kq_get_round_court_view( $occurrence_id, $round );
     $scores_exist  = spp_kq_has_any_recorded_score( $occurrence_id );
     // 1.1.0: cancelled courts get a badge instead of team lists;
@@ -1362,37 +1612,176 @@ function spp_kq_render_overview_screen( int $occurrence_id, int $round ) : strin
         <?php endforeach; ?>
     </div>
     <p class="kq-hint">Swap a player, or cancel a court's game for this round, via <a href="<?php echo esc_url( add_query_arg( 'kq_view', 'roster' ) ); ?>">Roster Adjust</a>.</p>
+
     <?php if ( ! empty( $understaffed ) ) : ?>
+
         <p class="kq-warn">Cannot start play: <?php echo esc_html( implode( ', ', $understaffed ) ); ?> still need players.</p>
-    <?php elseif ( $scores_exist ) : ?>
-        <p class="kq-hint">Start Play opens score entry for every court; End Event closes the day for good &mdash; no more rounds.</p>
+
+    <?php elseif ( $courts_announced_at === null ) : ?>
+
+        <?php
+        // 1.13.0: Round 1 only reaches here -- round 2+'s courts_announced_at
+        // is never null (spp_kq_transition_advance_round() always stamps
+        // it, inc/spp-kq-live.php). Manual: whenever the facilitator
+        // judges the room ready, not a fixed duration -- see this file's
+        // own 1.13.0 changelog for the full flow.
+        ?>
+        <p class="kq-hint">Once everyone's checked their court, announce play &mdash; this speaks "Go to your courts" on every phone following along, then opens Start Play.</p>
+        <?php echo spp_kq_render_speech_announcer(); ?>
+        <div class="kq-action-row">
+            <form method="post" class="kq-inline-form">
+                <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
+                <input type="hidden" name="spp_kq_action" value="announce_courts">
+                <input type="hidden" name="spp_kq_round" value="<?php echo esc_attr( $round ); ?>">
+                <button type="submit" class="kq-btn kq-btn-primary">Ready &mdash; Announce Courts</button>
+            </form>
+        </div>
+
+        <script>
+        (function() {
+            var ajaxUrl       = <?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>;
+            var nonce         = <?php echo wp_json_encode( wp_create_nonce( 'spp_kq_live_action' ) ); ?>;
+            var occ           = <?php echo (int) $occurrence_id; ?>;
+            var renderedRound = <?php echo (int) $round; ?>;
+            var handled = false;
+
+            // No known future instant to count down to until SOMEONE
+            // presses "Announce Courts" (possibly a different device) --
+            // poll for that, same endpoint/cadence the in-play screen's
+            // own poll() already uses. The presser's own device instead
+            // finds out via its own plain form-POST reload, same as
+            // every other action in this feature.
+            function poll() {
+                var data = new FormData();
+                data.append('action', 'spp_kq_poll_status');
+                data.append('nonce', nonce);
+                data.append('occ', occ);
+
+                fetch(ajaxUrl, { method: 'POST', body: data, credentials: 'same-origin' })
+                    .then(function(r) { return r.json(); })
+                    .then(function(res) {
+                        if (!res.success || handled) return;
+                        var d = res.data;
+                        if (d.phase !== 'organizing' || d.current_round !== renderedRound) {
+                            handled = true;
+                            window.location.reload();
+                            return;
+                        }
+                        if (d.courts_announced_at) {
+                            handled = true;
+                            SppKqAnnouncer.speak('Go to your courts.');
+                            window.location.reload();
+                        }
+                    })
+                    .catch(function() {});
+            }
+            setInterval(poll, 4000);
+        })();
+        </script>
+
     <?php else : ?>
-        <p class="kq-hint">Start Play opens score entry for every court.</p>
+
+        <?php
+        // 1.13.0: courts_announced_at is set -- either round 1 just
+        // after the manual press above, or round 2+'s automatic
+        // SPP_KQ_COURTS_REST_SECONDS rest period (inc/spp-kq-live.php).
+        // Both converge on the exact same markup/JS from here on: a
+        // live countdown to that instant (already in the past for
+        // round 1's own reload -- the countdown/reveal below resolves
+        // that on its very first tick, no separate branch needed), then
+        // "Go to your courts" once, then reveal the SAME Start Play
+        // form either flow already shared before this feature existed.
+        ?>
+        <?php echo spp_kq_render_speech_announcer(); ?>
+        <div class="kq-timer-wrap" id="kq-rest-timer-wrap">
+            <div class="kq-timer" id="kq-rest-timer">--:--</div>
+            <div class="kq-timer-label" id="kq-rest-timer-label">Next round starts in</div>
+        </div>
+
+        <div id="kq-start-play-wrap" style="display:none;">
+            <?php if ( $scores_exist ) : ?>
+                <p class="kq-hint">Start Play opens score entry for every court; End Event closes the day for good &mdash; no more rounds.</p>
+            <?php else : ?>
+                <p class="kq-hint">Start Play opens score entry for every court.</p>
+            <?php endif; ?>
+            <div class="kq-action-row">
+                <form method="post" class="kq-inline-form kq-start-play-form">
+                    <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
+                    <input type="hidden" name="spp_kq_action" value="start_play">
+                    <input type="hidden" name="spp_kq_round" value="<?php echo esc_attr( $round ); ?>">
+                    <label class="kq-duration-label">Round length (minutes)<br>
+                        <input type="number" name="spp_kq_round_minutes" class="kq-duration-input"
+                               value="<?php echo esc_attr( SPP_KQ_DEFAULT_ROUND_MINUTES ); ?>"
+                               min="<?php echo esc_attr( SPP_KQ_MIN_ROUND_MINUTES ); ?>"
+                               max="<?php echo esc_attr( SPP_KQ_MAX_ROUND_MINUTES ); ?>" step="1" inputmode="numeric">
+                    </label>
+                    <button type="submit" class="kq-btn kq-btn-primary">Start Play</button>
+                </form>
+            </div>
+        </div>
+
+        <script>
+        (function() {
+            var courtsAnnouncedAt = <?php echo (int) $courts_announced_at; ?>;
+            var serverNowMs       = <?php echo (int) round( microtime( true ) * 1000 ); ?>;
+
+            var restWrapEl  = document.getElementById('kq-rest-timer-wrap');
+            var restTimerEl = document.getElementById('kq-rest-timer');
+            var restLabelEl = document.getElementById('kq-rest-timer-label');
+            var startPlayWrap = document.getElementById('kq-start-play-wrap');
+            if (!restTimerEl) return;
+
+            // Same absolute-anchor/skew-corrected pattern as the match
+            // timer itself (inc/spp-kq-screens.php's spp_kq_render_
+            // in_play_screen()) -- every device converges on the same
+            // real instant regardless of when it loaded this screen.
+            // Already-past on load (round 1's own post-press reload) is
+            // NOT a special case: the first tick below just computes a
+            // remaining of 0 and resolves immediately.
+            var localAnnounceMs = courtsAnnouncedAt * 1000 + (Date.now() - serverNowMs);
+            var fired = false;
+            var interval = null;
+
+            function formatTime(totalSeconds) {
+                var m = Math.floor(totalSeconds / 60);
+                var s = totalSeconds % 60;
+                return m + ':' + (s < 10 ? '0' : '') + s;
+            }
+
+            function tick() {
+                var remaining = Math.max(0, Math.round((localAnnounceMs - Date.now()) / 1000));
+
+                if (remaining > 0) {
+                    restTimerEl.textContent = formatTime(remaining);
+                    return;
+                }
+
+                if (!fired) {
+                    fired = true;
+                    if (interval) clearInterval(interval);
+                    SppKqAnnouncer.speak('Go to your courts.');
+                    if (restWrapEl) restWrapEl.style.display = 'none';
+                    if (startPlayWrap) startPlayWrap.style.display = '';
+                }
+            }
+
+            tick();
+            interval = setInterval(tick, 250);
+        })();
+        </script>
+
     <?php endif; ?>
-    <div class="kq-action-row">
-        <?php if ( empty( $understaffed ) ) : ?>
-        <form method="post" class="kq-inline-form kq-start-play-form">
-            <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
-            <input type="hidden" name="spp_kq_action" value="start_play">
-            <input type="hidden" name="spp_kq_round" value="<?php echo esc_attr( $round ); ?>">
-            <label class="kq-duration-label">Round length (minutes)<br>
-                <input type="number" name="spp_kq_round_minutes" class="kq-duration-input"
-                       value="<?php echo esc_attr( SPP_KQ_DEFAULT_ROUND_MINUTES ); ?>"
-                       min="<?php echo esc_attr( SPP_KQ_MIN_ROUND_MINUTES ); ?>"
-                       max="<?php echo esc_attr( SPP_KQ_MAX_ROUND_MINUTES ); ?>" step="1" inputmode="numeric">
-            </label>
-            <button type="submit" class="kq-btn kq-btn-primary">Start Play</button>
-        </form>
-        <?php endif; ?>
-        <?php if ( $scores_exist ) : ?>
+
+    <?php if ( $scores_exist ) : ?>
+    <div class="kq-action-row kq-action-row-right">
         <form method="post" class="kq-inline-form" onsubmit="return confirm('End the event now? This closes the day — no more rounds.');">
             <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
             <input type="hidden" name="spp_kq_action" value="end_event">
             <input type="hidden" name="spp_kq_round" value="<?php echo esc_attr( $round ); ?>">
             <button type="submit" class="kq-btn kq-btn-secondary">End Event</button>
         </form>
-        <?php endif; ?>
     </div>
+    <?php endif; ?>
     <?php
     return ob_get_clean();
 }
@@ -1430,9 +1819,7 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round, ?int $rou
     <p class="kq-round-label">Round <?php echo esc_html( $round ); ?> &mdash; In Play</p>
 
     <?php if ( $round_started_at && $round_duration_seconds ) : ?>
-    <div class="kq-audio-unlock" id="kq-audio-unlock">
-        <button type="button" class="kq-btn kq-btn-secondary" id="kq-audio-unlock-btn">&#128266; Tap to enable sound announcements</button>
-    </div>
+    <?php echo spp_kq_render_speech_announcer(); ?>
     <div class="kq-timer-wrap" id="kq-timer-wrap">
         <div class="kq-timer" id="kq-timer">--:--</div>
         <div class="kq-timer-label" id="kq-timer-label">Time remaining</div>
@@ -1513,9 +1900,16 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round, ?int $rou
                 var timerEl     = document.getElementById('kq-timer');
                 var timerWrapEl = document.getElementById('kq-timer-wrap');
                 var timerLabelEl = document.getElementById('kq-timer-label');
-                var unlockWrap  = document.getElementById('kq-audio-unlock');
-                var unlockBtn   = document.getElementById('kq-audio-unlock-btn');
                 if (!timerEl) return;
+
+                // 1.13.0: unlock banner + speak()/keep-alive fix for
+                // Chromium's speechSynthesis idle bug all now live in
+                // the shared spp_kq_render_speech_announcer() helper
+                // (echoed just above, in place of this screen's own
+                // former #kq-audio-unlock markup) -- see that function's
+                // own docblock for the full writeup this used to carry
+                // inline here.
+                var speak = SppKqAnnouncer.speak;
 
                 // Anchor every client to the SAME absolute end instant
                 // (a true epoch), corrected once for THIS client's own
@@ -1524,37 +1918,23 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round, ?int $rou
                 // This is what makes "same start instant for every
                 // court" hold even though phones actually load this
                 // screen at slightly different real moments.
-                var endEpochMs = (roundStartedAt + roundDurationSeconds) * 1000;
-                var skewMs     = Date.now() - serverNowMs;
-                var localEndMs = endEpochMs + skewMs;
+                //
+                // localStartMs is the SAME kind of absolute anchor, just
+                // for round_started_at itself rather than its +duration
+                // end -- round_started_at is stamped SPP_KQ_ROUND_START_
+                // DELAY_SECONDS after the Start Play press (10 seconds,
+                // inc/spp-kq-live.php 1.5.0), so a client can find itself
+                // rendering BEFORE this instant (that short delay
+                // window) as well as after it.
+                var endEpochMs   = (roundStartedAt + roundDurationSeconds) * 1000;
+                var startEpochMs = roundStartedAt * 1000;
+                var skewMs       = Date.now() - serverNowMs;
+                var localEndMs   = endEpochMs + skewMs;
+                var localStartMs = startEpochMs + skewMs;
 
-                var audioUnlocked = false;
                 var roundDone      = false;
                 var fired          = {};
                 var timerInterval  = null;
-
-                function speak(text) {
-                    if (!audioUnlocked || !('speechSynthesis' in window)) return;
-                    try {
-                        window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
-                    } catch (e) {}
-                }
-
-                if ('speechSynthesis' in window && unlockWrap && unlockBtn) {
-                    unlockBtn.addEventListener('click', function() {
-                        audioUnlocked = true;
-                        unlockWrap.style.display = 'none';
-                        try {
-                            window.speechSynthesis.speak(new SpeechSynthesisUtterance('Sound enabled.'));
-                        } catch (e) {}
-                    });
-                } else if (unlockWrap) {
-                    // No SpeechSynthesis in this browser -- nothing to
-                    // unlock, so don't show a prompt with no effect. The
-                    // visual timer below is completely unaffected either
-                    // way.
-                    unlockWrap.style.display = 'none';
-                }
 
                 // Trigger seconds-remaining thresholds, in the order the
                 // spec calls for. 120/60 are each skipped entirely when
@@ -1589,9 +1969,47 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round, ?int $rou
                     return m + ':' + (s < 10 ? '0' : '') + s;
                 }
 
+                // 1.13.0 TIMING REVISION: "Start play now." now fires
+                // IMMEDIATELY -- the very first tick this screen ever
+                // runs, unconditionally (once, via fired.start) -- not
+                // at the end of a silent delay the way this morning's
+                // version worked. Every device that loads this screen,
+                // from the earliest possible moment onward, finds
+                // fired.start still false on its own first tick and
+                // announces right away -- exactly the same "fire once on
+                // first tick if not yet fired, even if that first tick
+                // happens to be a little late" precedent every other
+                // trigger in this feature already follows (see
+                // announceIfDue() above: a device that loads mid-round
+                // already retroactively fires whatever threshold it just
+                // missed crossing) -- not a new special case.
+                //
+                // Separately, while now < localStartMs (the
+                // SPP_KQ_ROUND_START_DELAY_SECONDS = 10 window AFTER
+                // that announcement, not before it), show "Starting in
+                // mm:ss" instead of the round timer -- same absolute-
+                // anchor/skew-corrected math as the round timer itself.
+                // The instant that countdown reaches zero, fall through
+                // into the normal round-timer rendering for that same
+                // tick (no extra frame stuck at "Starting in 0:00").
                 function tick() {
                     if (roundDone) return;
-                    var remainingSeconds = Math.max(0, Math.round((localEndMs - Date.now()) / 1000));
+                    var now = Date.now();
+
+                    if (!fired.start) {
+                        fired.start = true;
+                        speak('Start play now.');
+                    }
+
+                    if (now < localStartMs) {
+                        var untilStart = Math.max(0, Math.round((localStartMs - now) / 1000));
+                        timerEl.textContent = formatTime(untilStart);
+                        if (timerLabelEl) timerLabelEl.textContent = 'Starting in';
+                        return;
+                    }
+                    if (timerLabelEl) timerLabelEl.textContent = 'Time remaining';
+
+                    var remainingSeconds = Math.max(0, Math.round((localEndMs - now) / 1000));
 
                     timerEl.textContent = formatTime(remainingSeconds);
                     if (timerWrapEl) {
@@ -1614,11 +2032,13 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round, ?int $rou
                     if (roundDone) return;
                     roundDone = true;
                     if (timerInterval) clearInterval(timerInterval);
+                    SppKqAnnouncer.stopKeepAlive();
                     if (timerWrapEl) {
                         timerWrapEl.classList.add('kq-timer-done');
                         timerWrapEl.classList.remove('kq-timer-warn', 'kq-timer-critical');
                     }
                     if (timerLabelEl) timerLabelEl.textContent = 'All courts reported';
+                    var unlockWrap = document.getElementById('kq-audio-unlock');
                     if (unlockWrap) unlockWrap.style.display = 'none';
                 };
             })();
@@ -1878,6 +2298,13 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date, ?st
             $r = spp_kq_transition_start_round1( $occurrence_id );
             return ( ! $r['won'] && $r['error'] ) ? $r['error'] : '';
 
+        case 'announce_courts':
+            // 1.13.0: round 1 only -- round 2+ never POSTs this action
+            // (its own courts_announced_at is stamped automatically by
+            // spp_kq_transition_advance_round(), inc/spp-kq-live.php).
+            $r = spp_kq_transition_announce_courts( $occurrence_id, $round );
+            return ( ! $r['won'] && $r['error'] ) ? $r['error'] : '';
+
         case 'start_play':
             // 1.10.0: facilitator-set match-timer length, locked in for
             // the round the instant this transition wins -- see
@@ -2113,7 +2540,7 @@ function spp_kq_live_shortcode() : string {
                 if ( $round === 1 && $unclaimed > 0 ) {
                     echo spp_kq_render_draw_screen( $occurrence_id );
                 } else {
-                    echo spp_kq_render_overview_screen( $occurrence_id, $round );
+                    echo spp_kq_render_overview_screen( $occurrence_id, $round, $state['courts_announced_at'] );
                 }
                 break;
 
@@ -2320,10 +2747,15 @@ add_action( 'wp_ajax_spp_kq_poll_status', function() {
     }
 
     wp_send_json_success( array(
-        'phase'         => $state['phase'],
-        'current_round' => (int) $state['current_round'],
-        'reported'      => $progress['reported'],
-        'total'         => $progress['total'],
-        'redirect_url'  => $redirect_url,
+        'phase'               => $state['phase'],
+        'current_round'       => (int) $state['current_round'],
+        'reported'            => $progress['reported'],
+        'total'               => $progress['total'],
+        'redirect_url'        => $redirect_url,
+        // 1.13.0: lets the Round-1 "not yet announced" screen's poll
+        // (spp_kq_render_overview_screen()) detect a DIFFERENT device
+        // pressing "Ready -- Announce Courts" -- null until that
+        // happens, same nullable-epoch shape as round_started_at.
+        'courts_announced_at' => $state['courts_announced_at'] !== null ? (int) $state['courts_announced_at'] : null,
     ) );
 } );

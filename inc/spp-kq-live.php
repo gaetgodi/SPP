@@ -1,8 +1,77 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Live Event Runner
-   Version: 1.3.0
+   Version: 1.5.0
    Date: 2026-09-15
+
+   Changes from 1.4.0 (pre-round announcement flow, and a revision of
+   this same day's earlier delayed-start timing -- see the conversation
+   this was built from for the full spec; the screens/JS live in
+   inc/spp-kq-screens.php, see that file's own changelog):
+
+   TIMING REVISION: SPP_KQ_ROUND_START_DELAY_SECONDS drops from 30 to
+   10, and its MEANING shifts -- this morning's version announced
+   "Start play now" AT round_started_at (the end of a 30-second silent
+   delay); today's revision announces it IMMEDIATELY at the Start Play
+   press, with round_started_at simply 10 seconds later. The constant's
+   own contract (round_started_at = press instant + this many seconds)
+   is unchanged -- only its value and which client-side moment the
+   announcement itself is tied to (a spp-kq-screens.php-side change,
+   not this constant's concern).
+
+   PRE-ROUND ANNOUNCEMENT FLOW (new): confirmed by re-reading the
+   dispatcher (spp_kq_live_shortcode(), inc/spp-kq-screens.php) before
+   building anything -- both Round 1 (draw complete, unclaimed = 0) and
+   every Round 2+ (spp_kq_transition_advance_round() below, always
+   landing on phase='organizing') currently fall through to the exact
+   SAME spp_kq_render_overview_screen() with no intermediate step at
+   all. New courts_announced_at (schema 1.7.0) is what the new
+   intermediate screen keys off, in ONE unified way for both flows:
+     - Round 1: stays NULL from the fresh draw; a facilitator presses
+       "Ready -- Announce Courts", which calls the new
+       spp_kq_transition_announce_courts() below (plain CAS: WHERE
+       phase='organizing' AND current_round=expected AND
+       courts_announced_at IS NULL) to stamp it to the press instant.
+     - Round 2+: spp_kq_transition_advance_round() now ALSO stamps
+       courts_announced_at, unconditionally, to current instant +
+       SPP_KQ_COURTS_REST_SECONDS (120), in the SAME atomic UPDATE that
+       advances current_round/phase -- no separate write, and this
+       value is never NULL for round 2+, so the screen-selection logic
+       in inc/spp-kq-screens.php never has to ask "which round is
+       this" -- only "is courts_announced_at null or set" matters,
+       which is exactly the "reuse one implementation for both flows"
+       the spec asked for.
+   Neither change touches spp_kq_submit_court_score()'s submission-
+   order/round-still-current guard (1.2.0) or spp_kq_transition_
+   advance_round()'s own CAS/movement-computation logic AT ALL beyond
+   adding one more column to its existing SET clause -- confirmed by
+   reading that function in full before editing it: the movement
+   computation, cancelled-court handling, and the CAS's WHERE clause
+   are byte-for-byte unchanged.
+
+   Changes from 1.3.0 (30-second delayed start -- see the conversation
+   this was built from for the full spec; the "Starting in..."
+   countdown UI/JS and the "Start play now." announcement live in
+   inc/spp-kq-screens.php, see that file's own changelog):
+   - New SPP_KQ_ROUND_START_DELAY_SECONDS constant (30). spp_kq_
+     transition_start_play() now stamps round_started_at as
+     current_time('timestamp', true) + SPP_KQ_ROUND_START_DELAY_SECONDS
+     instead of the bare current-instant -- round_started_at's MEANING
+     is unchanged ("the instant the official round timer begins
+     counting down from round_duration_seconds"), only ITS VALUE moves
+     30 seconds later than the Start Play button press. Nothing else
+     about this function changes: phase still flips organizing->in_play
+     at the exact instant of the button press (score entry, polling,
+     round-advance-on-all-reported are all unaffected and start working
+     immediately, same as before) -- only the STORED start instant used
+     by the timer/announcement math is delayed. This deliberately avoids
+     a new phase or a second timestamp column: every existing reader of
+     round_started_at (the in-play screen's client-side countdown) is
+     already anchored to "current server time vs. this absolute epoch"
+     -- a client simply now sometimes finds itself BEFORE that epoch
+     (during the 30-second window) instead of always after it, and
+     renders the pre-start "Starting in..." state for exactly that
+     window with no new data plumbing required.
 
    Changes from 1.2.0 (match timer with voice announcements -- see the
    conversation this was built from for the full spec; the timer UI/JS
@@ -195,6 +264,28 @@ function spp_kq_can_facilitate() : bool {
 }
 
 /**
+ * Delayed-start buffer: seconds between the Start Play button press
+ * and the official round timer actually beginning. See
+ * spp_kq_transition_start_play()'s own docblock for how this is
+ * applied -- the ONLY place this constant is used. 1.5.0: the "Start
+ * play now" announcement itself fires at the press instant (a client-
+ * side concern, inc/spp-kq-screens.php), not at press-instant-plus-
+ * this-many-seconds the way it did this morning -- see this file's own
+ * 1.5.0 changelog.
+ */
+const SPP_KQ_ROUND_START_DELAY_SECONDS = 10;
+
+/**
+ * Round 2+ automatic rest period (1.5.0): seconds between a round
+ * advancing (spp_kq_transition_advance_round() below) and "Go to your
+ * courts" auto-announcing for the newly-current round. Round 1 has no
+ * equivalent constant -- its own announce step is manually triggered
+ * (spp_kq_transition_announce_courts() below), on the facilitator's
+ * own timing, not a fixed duration.
+ */
+const SPP_KQ_COURTS_REST_SECONDS = 120;
+
+/**
  * Fixed top-to-bottom court hierarchy. Index 0 is always the top
  * court (Aces); active courts for a given event are always the first
  * N of this list, where N is decided once at round-1 start from
@@ -232,7 +323,7 @@ function spp_kq_get_event_state( int $occurrence_id ) : ?array {
     global $wpdb;
     $table = spp_kq_events_table();
     $row = $wpdb->get_row( $wpdb->prepare(
-        "SELECT current_round, phase, round_duration_seconds, round_started_at FROM {$table} WHERE occurrence_id = %d",
+        "SELECT current_round, phase, round_duration_seconds, round_started_at, courts_announced_at FROM {$table} WHERE occurrence_id = %d",
         $occurrence_id
     ), ARRAY_A );
     return $row ?: null;
@@ -452,6 +543,47 @@ function spp_kq_transition_start_round1( int $occurrence_id ) : array {
 }
 
 /**
+ * Round 1 only: facilitator-pressed "Ready -- Announce Courts", fired
+ * whenever they judge the room ready (no fixed timing, unlike round
+ * 2+'s automatic rest period below). Plain CAS, same shape as every
+ * other transition here: courts_announced_at IS NULL in the WHERE
+ * clause means a duplicate/near-simultaneous press simply no-ops on
+ * whichever request loses, exactly like every other "first request to
+ * match wins" transition in this file. Round 2+ never calls this --
+ * spp_kq_transition_advance_round() stamps courts_announced_at itself,
+ * unconditionally, the moment a round advances.
+ */
+function spp_kq_transition_announce_courts( int $occurrence_id, int $expected_round ) : array {
+    global $wpdb;
+
+    // Same understaffed guard spp_kq_transition_start_play() already
+    // enforces, applied here too for the same reason: announcing "go
+    // to your courts" while a court is short a player is confusing at
+    // best -- the UI already hides this button in that state
+    // (spp_kq_render_overview_screen()), this is the "never trust the
+    // client" re-check.
+    $understaffed = spp_kq_get_understaffed_courts( $occurrence_id, $expected_round );
+    if ( ! empty( $understaffed ) ) {
+        return array(
+            'won'   => false,
+            'error' => 'Cannot announce courts: ' . implode( ', ', $understaffed ) . " still need players -- fix via Roster Adjust or cancel the court first.",
+        );
+    }
+
+    $events_table = spp_kq_events_table();
+    $announced_at = current_time( 'timestamp', true );
+
+    $affected = $wpdb->query( $wpdb->prepare(
+        "UPDATE {$events_table}
+         SET courts_announced_at = %d
+         WHERE occurrence_id = %d AND current_round = %d AND phase = 'organizing' AND courts_announced_at IS NULL",
+        $announced_at, $occurrence_id, $expected_round
+    ) );
+
+    return array( 'won' => ( (int) $affected === 1 ), 'error' => null );
+}
+
+/**
  * Start Play: organizing -> in_play, same round number. $expected_round
  * is the round the caller believes is current -- guards against
  * starting play on a round that has already moved on.
@@ -477,6 +609,15 @@ function spp_kq_transition_start_round1( int $occurrence_id ) : array {
  * epoch (current_time('timestamp', true)) -- see schema 1.6.0's own
  * changelog for why that's deliberately NOT this file's usual
  * local-wall-clock-as-UTC current_time() domain.
+ *
+ * DELAYED START (1.4.0): round_started_at is stamped SPP_KQ_ROUND_
+ * START_DELAY_SECONDS in the future, not the instant of this call --
+ * see that constant's own docblock. Phase still flips to 'in_play'
+ * (and score entry/polling/round-advance all still become live) at the
+ * real instant this transition wins; only the timer's own official
+ * start instant is pushed later, so round_duration_seconds keeps
+ * counting from when play actually starts rather than from the button
+ * press.
  */
 function spp_kq_transition_start_play( int $occurrence_id, int $expected_round, int $duration_seconds ) : array {
     global $wpdb;
@@ -490,7 +631,7 @@ function spp_kq_transition_start_play( int $occurrence_id, int $expected_round, 
     }
 
     $events_table = spp_kq_events_table();
-    $started_at   = current_time( 'timestamp', true );
+    $started_at   = current_time( 'timestamp', true ) + SPP_KQ_ROUND_START_DELAY_SECONDS;
 
     $affected = $wpdb->query( $wpdb->prepare(
         "UPDATE {$events_table}
@@ -530,6 +671,15 @@ function spp_kq_transition_start_play( int $occurrence_id, int $expected_round, 
  * before it can proceed (see spp_kq_get_understaffed_courts(), which
  * both spp_kq_transition_start_play() and spp_kq_submit_court_score()
  * check).
+ *
+ * COURTS-ANNOUNCED REST PERIOD (1.5.0): courts_announced_at is
+ * unconditionally stamped to current instant + SPP_KQ_COURTS_REST_
+ * SECONDS in the same UPDATE that advances current_round/phase --
+ * every round this function ever lands on (round 2+, by construction,
+ * since this only ever advances OUT of round >= 1) gets its own
+ * automatic "Go to your courts" rest countdown with no further action
+ * needed. See inc/spp-kq-screens.php for how the screen this lands on
+ * reads that value.
  */
 function spp_kq_transition_advance_round( int $occurrence_id, int $expected_round ) : array {
     global $wpdb;
@@ -555,12 +705,18 @@ function spp_kq_transition_advance_round( int $occurrence_id, int $expected_roun
         return array( 'won' => false, 'error' => $e->getMessage() );
     }
 
-    $events_table = spp_kq_events_table();
+    $events_table   = spp_kq_events_table();
+    // 1.5.0: courts_announced_at is stamped here too, unconditionally,
+    // in the SAME atomic UPDATE as the round advance itself -- round
+    // 2+'s "Go to your courts" rest countdown is fully determined the
+    // instant this transition wins, no separate write, never NULL for
+    // round 2+ (see this file's own 1.5.0 changelog).
+    $rest_announce_at = current_time( 'timestamp', true ) + SPP_KQ_COURTS_REST_SECONDS;
     $affected = $wpdb->query( $wpdb->prepare(
         "UPDATE {$events_table}
-         SET current_round = current_round + 1, phase = 'organizing'
+         SET current_round = current_round + 1, phase = 'organizing', courts_announced_at = %d
          WHERE occurrence_id = %d AND current_round = %d AND phase = 'in_play'",
-        $occurrence_id, $expected_round
+        $rest_announce_at, $occurrence_id, $expected_round
     ) );
 
     if ( (int) $affected !== 1 ) {

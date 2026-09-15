@@ -1,8 +1,28 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Live Event Schema
-   Version: 1.6.0
+   Version: 1.7.0
    Date: 2026-09-15
+
+   Changes from 1.6.0 (pre-round announcement flow -- "Go to your
+   courts" for round 1 (manual) and round 2+ (automatic 2-minute rest)
+   -- see the conversation this was built from for the full spec; the
+   transitions live in inc/spp-kq-live.php 1.5.0, the screens/JS in
+   inc/spp-kq-screens.php, see those files' own changelogs):
+   - spp_kq_events gains `courts_announced_at` (live ALTER -- same
+     dbDelta ADD COLUMN case as round_started_at/round_duration_seconds
+     in 1.6.0, no new technique needed). Same true Unix/GMT epoch
+     domain as round_started_at, for the same reason (only ever
+     compared against JS Date.now()). NULL means "not yet announced
+     for this round" -- round 1 starts every fresh draw there and
+     stays there until a facilitator presses "Ready -- Announce
+     Courts" (spp_kq_transition_announce_courts(), inc/spp-kq-live.php);
+     round 2+ never sees NULL at all -- spp_kq_transition_advance_round()
+     stamps it to current instant + SPP_KQ_COURTS_REST_SECONDS in the
+     SAME atomic UPDATE that advances current_round/phase, so the
+     2-minute rest countdown is already fully determined the moment
+     that screen becomes reachable, with no separate write and no
+     "was it set yet" race to handle.
 
    Changes from 1.5.0 (match timer with voice announcements -- see the
    conversation this was built from for the full spec; the actual
@@ -206,7 +226,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'SPP_KQ_DB_VERSION', '1.6.0' );
+define( 'SPP_KQ_DB_VERSION', '1.7.0' );
 
 /**
  * Create (or, on a later run, no-op/upgrade) the three spp_kq_*
@@ -235,6 +255,7 @@ function spp_kq_create_tables() {
         phase                  ENUM('not_started','organizing','in_play','complete','cancelled') NOT NULL DEFAULT 'not_started',
         round_duration_seconds SMALLINT UNSIGNED DEFAULT NULL,
         round_started_at       BIGINT UNSIGNED DEFAULT NULL,
+        courts_announced_at    BIGINT UNSIGNED DEFAULT NULL,
         updated_at             DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         PRIMARY KEY (occurrence_id)
     ) {$charset};" );
