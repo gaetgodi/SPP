@@ -1,8 +1,71 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Screens
-   Version: 1.14.0
+   Version: 1.15.0
    Date: 2026-09-15
+
+   Changes from 1.14.0 (two real bugs found during live device testing
+   of the AJAX rebuild -- see the conversation this was built from for
+   the full investigation):
+
+   BUG 1 -- most audio announcements fired twice, including the
+   countdown. CONFIRMED root cause (grepped every reference to
+   lastSignature before concluding, not guessed): submitAction()
+   (Announce Courts/Start Play) called swapFragment() directly for
+   immediate feedback, but never touched lastSignature -- poll()'s own
+   setInterval kept running regardless and still held the PRE-
+   transition signature, so its very next tick (<=4s later) ALWAYS saw
+   a stale mismatch and called swapFragment() a SECOND time for the
+   exact same transition, re-executing that fragment's inline script
+   again and arming a second, completely independent copy of whatever
+   timer it sets up -- the first copy was never cleared, so both kept
+   running, both speaking through the same persistent SppKqAnnouncer,
+   for the rest of that fragment's life. Fix: spp_kq_render_live_
+   fragment() now returns {html, state} instead of a bare string (both
+   read from the SAME spp_kq_get_event_state() call, so they can never
+   disagree), wp_ajax_spp_kq_render_fragment returns the structural
+   fields alongside the html, and swapFragment() now sets lastSignature
+   itself from whatever it just fetched -- correct immediately after
+   EITHER caller (poll() or submitAction()) triggers a swap, so a
+   stale mismatch can no longer occur. Defense in depth added for the
+   separate, rarer case this doesn't directly address (two overlapping
+   fetch() calls under a slow connection): a `swapping` guard makes a
+   second concurrent swapFragment() call a no-op, and a new
+   SppKqLiveApp.cleanup hook (same reset-before-swap convention
+   onProgress already used) lets whichever fragment is currently active
+   stop its own interval before being replaced -- the round timer
+   reuses markRoundComplete() directly (its "stop counting, stop
+   speaking" is exactly what cleanup needs too); the rest-countdown
+   registers an equivalent small function.
+
+   BUG 2 -- at event completion, the screen just showed "Event
+   complete." with no redirect to Submit Photo. INVESTIGATED AND RULED
+   OUT before concluding: wp_ajax_spp_kq_poll_status still computes and
+   returns redirect_url correctly (unchanged), and spp_kq_render_live_
+   app()'s own poll() DOES check `d.redirect_url` and navigate --
+   confirmed directly by reading the code, not assumed; nothing was
+   "dropped" during the AJAX consolidation. CONFIRMED actual root
+   cause: End Event/Cancel Event are DELIBERATELY plain POST forms
+   (1.14.0 -- a reload there is correct, it doesn't interrupt an
+   in-progress announcement), which means the device that PRESSES one
+   of them gets a full browser navigation straight to spp_kq_live_
+   shortcode()'s direct, un-wrapped render of spp_kq_render_complete_
+   screen()/spp_kq_render_cancelled_screen() -- a bare static fragment
+   with no script, no poll, and therefore no way to ever have acted on
+   redirect_url. This gap predates the AJAX rebuild entirely: End Event
+   has always been a plain POST, in every version of this feature back
+   to when the redirect was first built, so the presser's own device
+   never had a path to it -- only OTHER devices still polling from the
+   in-play/persistent-app screen ever got redirected. Fix: new
+   spp_kq_maybe_photo_redirect_url() factors the exact condition
+   wp_ajax_spp_kq_poll_status already used (now calls the factored
+   version, no behavior change there) out to a shared helper;
+   spp_kq_live_shortcode()'s complete/cancelled cases now call it
+   directly at render time and, when it applies, emit a tiny inline
+   `<script>window.location.href = ...;</script>` instead of the
+   static screen -- the SAME client-side-navigation approach this
+   entire feature's redirect has always used, just triggered from the
+   one render path that had never had any mechanism to check it before.
 
    Changes from 1.13.0 ("full monty" -- convert the announcement-
    carrying part of the KQ live flow from full-page-reload navigation
@@ -705,6 +768,31 @@ function spp_kq_resolve_photo_submit_url( int $occurrence_id ) : ?string {
         ),
         get_permalink( $photo_page )
     );
+}
+
+/**
+ * The ONE gating condition for the post-completion Submit Photo
+ * redirect (1.15.0) -- factored out of wp_ajax_spp_kq_poll_status so
+ * the dispatcher's direct complete/cancelled render path (spp_kq_live_
+ * shortcode()) can apply the EXACT same check for the device that just
+ * pressed End Event/Cancel Event itself, not just devices still
+ * polling from the persistent app. See this file's own 1.15.0
+ * changelog for why that device needed a separate path at all: End
+ * Event/Cancel Event are deliberately plain POST forms (so a reload
+ * there doesn't interrupt an in-progress announcement), which means
+ * the presser's own browser navigates straight to a fresh, un-polled
+ * render of spp_kq_render_complete_screen()/spp_kq_render_cancelled_
+ * screen() -- a plain static fragment with no script of its own, so it
+ * never had any way to act on a redirect before this.
+ */
+function spp_kq_maybe_photo_redirect_url( string $phase, int $occurrence_id ) : ?string {
+    if ( ! in_array( $phase, array( 'complete', 'cancelled' ), true ) ) {
+        return null;
+    }
+    if ( ! spp_kq_history_exists_for_occurrence( $occurrence_id ) ) {
+        return null;
+    }
+    return spp_kq_resolve_photo_submit_url( $occurrence_id );
 }
 
 // =============================================================
@@ -1846,6 +1934,16 @@ function spp_kq_render_overview_screen( int $occurrence_id, int $round, ?int $co
 
             tick();
             interval = setInterval(tick, 250);
+
+            // 1.15.0: same cleanup-hook convention as the round timer
+            // (spp_kq_render_in_play_screen()) -- lets swapFragment()
+            // stop THIS interval before replacing this fragment. Marks
+            // fired=true too, so a tick() call already mid-flight when
+            // cleanup runs can't still fire the announcement/reveal.
+            window.SppKqLiveApp.cleanup = function() {
+                fired = true;
+                if (interval) clearInterval(interval);
+            };
         })();
         </script>
 
@@ -2122,6 +2220,16 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round, ?int $rou
                     var unlockWrap = document.getElementById('kq-audio-unlock');
                     if (unlockWrap) unlockWrap.style.display = 'none';
                 };
+
+                // 1.15.0: lets the persistent app's own swapFragment()
+                // (inc/spp-kq-screens.php's spp_kq_render_live_app())
+                // stop THIS timer before replacing this fragment with a
+                // new one -- reuses markRoundComplete() directly since
+                // "stop counting, stop speaking" is exactly what both
+                // situations need; the cosmetic DOM/class updates it
+                // also does are harmless on a fragment about to be
+                // discarded anyway.
+                window.SppKqLiveApp.cleanup = markRoundComplete;
             })();
         }
 
@@ -2550,11 +2658,22 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date, ?st
  * these two cases, and the not_started default, should never actually
  * be reached via the AJAX endpoint in normal operation.
  */
-function spp_kq_render_live_fragment( int $occurrence_id ) : string {
+/**
+ * Returns array{html: string, state: ?array} -- $state (spp_kq_get_
+ * event_state()'s own row) is returned ALONGSIDE the markup, from the
+ * exact same read this function already made to decide what to render,
+ * rather than making the AJAX endpoint re-query it separately (1.15.0
+ * -- see this file's own 1.15.0 changelog: a caller needs BOTH the
+ * html AND an up-to-date structural signature from the SAME instant,
+ * and returning them together is what makes swapFragment() able to
+ * keep lastSignature correctly in sync no matter who triggered the
+ * swap, closing the double-announcement bug that fix addresses).
+ */
+function spp_kq_render_live_fragment( int $occurrence_id ) : array {
     spp_kq_ensure_event_row( $occurrence_id );
     $state = spp_kq_get_event_state( $occurrence_id );
     if ( ! $state ) {
-        return '<p class="kq-warn">This occurrence could not be found.</p>';
+        return array( 'html' => '<p class="kq-warn">This occurrence could not be found.</p>', 'state' => null );
     }
     $phase = $state['phase'];
     $round = (int) $state['current_round'];
@@ -2599,7 +2718,7 @@ function spp_kq_render_live_fragment( int $occurrence_id ) : string {
             echo '<p class="kq-hint">This event just changed status &mdash; refreshing&hellip;</p><script>window.location.reload();</script>';
     }
 
-    return ob_get_clean();
+    return array( 'html' => ob_get_clean(), 'state' => $state );
 }
 
 /**
@@ -2674,7 +2793,45 @@ function spp_kq_render_live_app( int $occurrence_id, array $state ) : string {
             });
         }
 
+        // 1.15.0: fixes a live-tested bug where most announcements
+        // fired twice (including the countdown). CONFIRMED root cause,
+        // not guessed: submitAction() (Announce Courts/Start Play)
+        // calls swapFragment() directly for immediate feedback, but
+        // never touched lastSignature -- poll()'s own setInterval kept
+        // running regardless and still held the PRE-transition
+        // signature, so its very next tick (<=4s later) ALWAYS saw a
+        // stale mismatch and called swapFragment() a SECOND time for
+        // the exact same transition. That second swap re-executed the
+        // fragment's inline script again, arming a second, completely
+        // independent copy of whatever timer it sets up (the round
+        // timer's tick()/setInterval, or the rest-countdown's own) --
+        // the first copy was never cleared, so both kept running,
+        // both speaking through the same persistent SppKqAnnouncer,
+        // for the rest of that fragment's life. Confirmed by grepping
+        // every reference to lastSignature before this fix: only
+        // poll() ever read or wrote it.
+        //
+        // FIX, two parts:
+        //   1. swapFragment() now updates lastSignature itself, from
+        //      the SAME response it just used for the html -- so
+        //      whichever caller triggers a swap (poll() or
+        //      submitAction()), lastSignature is correct immediately
+        //      afterward, and poll()'s own next tick can never see a
+        //      stale mismatch for a transition that already happened.
+        //   2. A `swapping` guard plus a SppKqLiveApp.cleanup() hook
+        //      (mirroring the existing onProgress convention) as
+        //      defense in depth against the SEPARATE, rarer case this
+        //      fix doesn't directly address -- two overlapping fetch()
+        //      calls (e.g. a slow connection) both starting before
+        //      either resolves. cleanup() lets whichever fragment is
+        //      CURRENTLY active (in-play's round timer, or the rest-
+        //      countdown) stop its own interval before being replaced,
+        //      exactly like onProgress is already reset before every
+        //      swap.
+        var swapping = false;
         function swapFragment() {
+            if (swapping) return;
+            swapping = true;
             var data = new FormData();
             data.append('action', 'spp_kq_render_fragment');
             data.append('nonce', nonce);
@@ -2682,18 +2839,23 @@ function spp_kq_render_live_app( int $occurrence_id, array $state ) : string {
             fetch(ajaxUrl, { method: 'POST', body: data, credentials: 'same-origin' })
                 .then(function(r) { return r.json(); })
                 .then(function(res) {
+                    swapping = false;
                     if (!res.success) return;
                     var appEl = document.getElementById('kq-live-app');
                     if (!appEl) return;
-                    // Reset before injecting the new fragment -- if the
-                    // new fragment doesn't register its own handler
-                    // (e.g. it's not the in-play screen), a stale one
-                    // from whatever WAS active must not keep firing.
+                    // Stop whatever the OUTGOING fragment armed, then
+                    // reset both hooks -- if the new fragment doesn't
+                    // register its own (e.g. it's not the in-play
+                    // screen), a stale one from whatever WAS active
+                    // must not keep firing.
+                    if (SppKqLiveApp.cleanup) SppKqLiveApp.cleanup();
                     SppKqLiveApp.onProgress = null;
+                    SppKqLiveApp.cleanup = null;
+                    lastSignature = signatureOf(res.data);
                     appEl.innerHTML = res.data.html;
                     executeScripts(appEl);
                 })
-                .catch(function() {});
+                .catch(function() { swapping = false; });
         }
 
         // Submits a REAL <form> (same hidden nonce/action/round inputs
@@ -2738,7 +2900,7 @@ function spp_kq_render_live_app( int $occurrence_id, array $state ) : string {
             });
         }
 
-        window.SppKqLiveApp = { refreshNow: swapFragment, wireAjaxForm: wireAjaxForm, onProgress: null };
+        window.SppKqLiveApp = { refreshNow: swapFragment, wireAjaxForm: wireAjaxForm, onProgress: null, cleanup: null };
 
         var lastSignature = <?php echo wp_json_encode( $initial_signature ); ?>;
 
@@ -2792,7 +2954,7 @@ function spp_kq_render_live_app( int $occurrence_id, array $state ) : string {
     })();
     </script>
     <div id="kq-live-app">
-        <?php echo spp_kq_render_live_fragment( $occurrence_id ); ?>
+        <?php echo spp_kq_render_live_fragment( $occurrence_id )['html']; ?>
     </div>
     <?php
     return ob_get_clean();
@@ -2886,11 +3048,27 @@ function spp_kq_live_shortcode() : string {
                 break;
 
             case 'complete':
-                echo spp_kq_render_complete_screen( $occurrence_id, $round );
-                break;
-
             case 'cancelled':
-                echo spp_kq_render_cancelled_screen( $occurrence_id, $round );
+                // 1.15.0: this is the direct/fresh render for whichever
+                // device's OWN plain-POST action (End Event/Cancel
+                // Event) just caused this phase -- unlike a device
+                // still polling from the persistent app (which already
+                // gets redirect_url from wp_ajax_spp_kq_poll_status),
+                // THIS request has no poll of its own to act on it, so
+                // the check has to happen here, once, at render time.
+                // Same exact condition as that poll handler
+                // (spp_kq_maybe_photo_redirect_url(), this file) --
+                // confirmed root cause: this path never had ANY
+                // redirect mechanism before, in any version of this
+                // feature, not something the AJAX rebuild dropped.
+                $photo_redirect = spp_kq_maybe_photo_redirect_url( $phase, $occurrence_id );
+                if ( $photo_redirect ) {
+                    echo '<script>window.location.href = ' . wp_json_encode( $photo_redirect ) . ';</script>';
+                } else {
+                    echo ( $phase === 'complete' )
+                        ? spp_kq_render_complete_screen( $occurrence_id, $round )
+                        : spp_kq_render_cancelled_screen( $occurrence_id, $round );
+                }
                 break;
         }
     }
@@ -3077,11 +3255,10 @@ add_action( 'wp_ajax_spp_kq_poll_status', function() {
 
     $progress = spp_kq_get_round_progress( $occurrence_id, (int) $state['current_round'] );
 
-    $redirect_url = null;
-    if ( in_array( $state['phase'], array( 'complete', 'cancelled' ), true )
-        && spp_kq_history_exists_for_occurrence( $occurrence_id ) ) {
-        $redirect_url = spp_kq_resolve_photo_submit_url( $occurrence_id );
-    }
+    // 1.15.0: factored into spp_kq_maybe_photo_redirect_url() (this
+    // file), same logic, no behavior change here -- now also reused by
+    // spp_kq_live_shortcode()'s direct complete/cancelled render path.
+    $redirect_url = spp_kq_maybe_photo_redirect_url( $state['phase'], $occurrence_id );
 
     wp_send_json_success( array(
         'phase'               => $state['phase'],
@@ -3113,6 +3290,16 @@ add_action( 'wp_ajax_spp_kq_poll_status', function() {
  * themselves only ever happen via wp_ajax_spp_kq_live_action below or
  * the existing wp_ajax_spp_kq_submit_score/wp_ajax_spp_kq_draw_card
  * handlers, unchanged.
+ *
+ * 1.15.0: also returns phase/current_round/courts_announced_at --
+ * the SAME structural-signature fields wp_ajax_spp_kq_poll_status
+ * returns, read from the exact same spp_kq_get_event_state() call that
+ * decided what html to render (spp_kq_render_live_fragment() now
+ * returns both together for exactly this reason). This lets
+ * swapFragment() update its own lastSignature from whatever it just
+ * fetched, regardless of whether poll() or submitAction() triggered
+ * it -- see spp_kq_render_live_app()'s own script for the double-
+ * announcement bug this closes.
  */
 add_action( 'wp_ajax_spp_kq_render_fragment', function() {
     if ( ! spp_kq_can_facilitate() ) {
@@ -3125,7 +3312,15 @@ add_action( 'wp_ajax_spp_kq_render_fragment', function() {
         wp_send_json_error( 'Missing parameters.' );
     }
 
-    wp_send_json_success( array( 'html' => spp_kq_render_live_fragment( $occurrence_id ) ) );
+    $fragment = spp_kq_render_live_fragment( $occurrence_id );
+    $state    = $fragment['state'];
+
+    wp_send_json_success( array(
+        'html'                => $fragment['html'],
+        'phase'               => $state ? $state['phase'] : null,
+        'current_round'       => $state ? (int) $state['current_round'] : null,
+        'courts_announced_at' => ( $state && $state['courts_announced_at'] !== null ) ? (int) $state['courts_announced_at'] : null,
+    ) );
 } );
 
 /**
