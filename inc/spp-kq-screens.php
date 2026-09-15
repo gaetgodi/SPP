@@ -1,8 +1,26 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Screens
-   Version: 1.17.0
+   Version: 1.18.0
    Date: 2026-09-15
+
+   Changes from 1.17.0 (fix the embedded Submit Photo form's assets
+   never loading, and its init logic never running when injected via
+   fragment-swap -- see the conversation this was built from for the
+   full investigation/root-cause writeup): spp_kq_render_photo_prompt()
+   now calls the photo-gallery plugin's new public spp_photo_gallery_
+   enqueue_submit_assets() and embeds its returned <script>/<link> tags
+   directly in this function's own output, right after the embedded
+   form -- see that plugin function's own docblock (wp-content/plugins/
+   spp-photo-gallery, 1.6.0) for why printing the tags immediately (not
+   a plain wp_enqueue_script() left for wp_footer() to flush) is what
+   makes this work both for a direct page render of the Complete/
+   Cancelled screen AND the persistent app's own executeScripts()
+   fragment-swap injecting this same html much later. Paired with that
+   plugin's own photo-submit.js fix (document.readyState check instead
+   of an unconditional one-time DOMContentLoaded listener), the
+   embedded form's submit button now correctly enables once a photo is
+   selected, in both scenarios.
 
    Changes from 1.16.0 (decouple the Submit Photo prompt from the
    Club-Rating launch-date gate): confirmed via a REAL occurrence (118,
@@ -885,6 +903,29 @@ function spp_kq_render_photo_prompt( int $occurrence_id ) : string {
         current_time( 'Y-m-d' )
     ) ); ?>
     <?php
+    // 1.18.0: force-enqueue [spp_photo_submit]'s own assets (Cropper.js,
+    // exif-js, photo-submit.js) and embed the resulting <script>/<link>
+    // tags DIRECTLY in this same output -- confirmed the plugin's own
+    // conditional wp_enqueue_scripts callback can never detect this
+    // shortcode being rendered here (has_shortcode() checks the KQ
+    // page's OWN stored content, which is just [spp_kq_live] -- this
+    // shortcode only ever appears dynamically, deep inside this
+    // function, never as literal text on that page), so without this
+    // the embedded form's submit button stays permanently disabled --
+    // nothing ever wires it up. Embedding the actual tags (rather than
+    // a plain wp_enqueue_script() call relying on wp_footer() to flush
+    // them) is what makes this work for BOTH a direct page render of
+    // this screen AND the persistent app's own fragment-swap
+    // (executeScripts(), same file) injecting this same html much
+    // later -- there is no wp_footer() call at all during the AJAX
+    // request that path uses, so the tags have to travel WITH this
+    // string itself. function_exists() guard: the photo-gallery plugin
+    // is a separate plugin this theme depends on, not the other way
+    // around -- degrade to just the (script-less, submit-button-
+    // disabled) form rather than a fatal error if it's ever inactive.
+    if ( function_exists( 'spp_photo_gallery_enqueue_submit_assets' ) ) {
+        echo spp_photo_gallery_enqueue_submit_assets();
+    }
     return ob_get_clean();
 }
 
