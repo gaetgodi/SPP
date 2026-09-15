@@ -1,8 +1,95 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Screens
-   Version: 1.9.0
-   Date: 2026-09-14
+   Version: 1.10.0
+   Date: 2026-09-15
+
+   Changes from 1.9.0 (match timer with voice announcements -- see the
+   conversation this was built from for the full spec; the schema/CAS
+   plumbing lives in inc/spp-kq-schema.php 1.6.0 and
+   inc/spp-kq-live.php 1.3.0, see those files' own changelogs):
+
+   INVESTIGATION (required before building the audio-unlock UX -- see
+   the conversation for the full ask): does the in-play screen persist
+   as one page across a whole round (AJAX-only updates), or does it
+   reload at the start of every round? Confirmed by reading this file's
+   own existing code, not assumed: it reloads every round, for TWO
+   independent reasons, so the "tap to enable sound" prompt cannot be
+   made to persist across rounds no matter how it's built --
+     1. spp_kq_render_overview_screen()'s "Start Play" button (below)
+        is a plain <form method="post"> with no JS/fetch intercepting
+        it -- pressing it is an ordinary full-page browser navigation,
+        every single round, not an AJAX call. This alone means every
+        round's in-play screen is a genuinely fresh page load, on
+        whichever device presses it.
+     2. The in-play screen's own poll() (below) detects a round advance
+        via `d.current_round !== renderedRound` and calls
+        window.location.reload() -- also a full navigation, for every
+        OTHER device already sitting on the in-play screen when a round
+        ends.
+   Net: there is no "one page load spans a whole round" case here to
+   exploit -- every round boundary is a real page load for every
+   participant, one way or the other. So the audio-unlock prompt is
+   built to reappear once per round (see spp_kq_render_in_play_screen()
+   below) -- this is a real UX trade-off (a facilitator/player must tap
+   "Enable sound" again each round), not a bug, and not something
+   fixable client-side; it's a direct consequence of how this screen
+   already navigates, unrelated to this feature.
+
+   THE BUILD:
+   - spp_kq_render_overview_screen(): new "Round length (minutes)"
+     number input on the Start Play form (name spp_kq_round_minutes,
+     default 13, min 1, max 60) -- the ONLY place duration is set;
+     once Start Play is pressed the value is read server-side, clamped,
+     and locked into spp_kq_events for the round (spp_kq_transition_
+     start_play(), inc/spp-kq-live.php) -- no mid-round edit path
+     exists anywhere.
+   - spp_kq_handle_post_actions()'s 'start_play' case: reads/clamps
+     spp_kq_round_minutes (default 13 on missing/invalid input, same
+     "never trust the client, but the UI already enforces min/max"
+     discipline as every other action here), converts to seconds,
+     passes to spp_kq_transition_start_play().
+   - spp_kq_render_in_play_screen(): new $round_started_at/
+     $round_duration_seconds params (sourced from spp_kq_get_event_
+     state() by the dispatcher, below) drive a per-client countdown.
+     EVERY client anchors to the same ABSOLUTE end instant
+     (round_started_at + round_duration_seconds, a true epoch) rather
+     than "seconds since my own page loaded" -- satisfies "same start
+     instant for every court simultaneously" even though different
+     phones actually load the in-play screen at slightly different
+     real moments (the facilitator's own device sees it immediately via
+     the Start Play form's own re-render; everyone else gets there by
+     navigating in once told play has started -- pre-existing behavior,
+     not something this feature changes). Client-clock skew is
+     corrected once, at render, by also embedding the server's own
+     current epoch and computing a LOCAL target epoch from the two
+     deltas -- not by trusting Date.now() against the raw server value
+     directly.
+   - Announcements (2min/1min verbal warnings, 10..0 spoken countdown,
+     final "finish rally and stop play") fire via window.speechSynthesis
+     (Web Speech API), entirely client-side, independently on every
+     phone -- no server push, no single "master" device. A small
+     "Tap to enable sound" banner satisfies the mobile-browser
+     autoplay-needs-a-gesture requirement (this fires once per PAGE
+     LOAD, i.e. once per round per the investigation above); the
+     visual countdown itself never waits on it -- declining or ignoring
+     the prompt only silences the spoken announcements, the digits
+     keep ticking regardless. Missing SpeechSynthesis support (rare)
+     degrades the same way: visual-only, no error, no prompt shown.
+   - The timer is intentionally NOT wired to individual court score
+     submissions -- it has no idea a court just reported and keeps
+     running (per spec: "does not stop or pause when one court submits
+     early"). It only reacts to the EXISTING reported/total figures
+     this screen already tracks (both the save-score AJAX response and
+     the 4-second poll already carried these, unchanged) -- once
+     reported === total, the timer display is frozen and greyed
+     (.kq-timer-done) rather than hidden outright, so a court that
+     finished early can still see what the clock read at that moment;
+     it stops actually counting and stops scheduling any further
+     announcements at that point, since the round is effectively over
+     by score progress regardless of what the clock says. The round
+     eventually really ends via the existing, completely unrelated
+     poll-detects-round-advance -> reload path (unchanged).
 
    Changes from 1.8.0:
    - Start-Round-1's own timing gate ($can_start_now in
@@ -220,6 +307,28 @@ defined( 'ABSPATH' ) || exit;
  * failure"). See that function's own comment for the full reasoning.
  */
 const SPP_KQ_NOTICE_OK_PREFIX = "\u{2713} "; // "✓ "
+
+/**
+ * Match-timer defaults/bounds (1.10.0) -- the ONE place these three
+ * numbers are defined; the Start Play duration field's default/min/max
+ * attributes and spp_kq_sanitize_round_minutes()'s server-side clamp
+ * both read from these constants so the two can never drift apart.
+ */
+const SPP_KQ_DEFAULT_ROUND_MINUTES = 13;
+const SPP_KQ_MIN_ROUND_MINUTES = 1;
+const SPP_KQ_MAX_ROUND_MINUTES = 60;
+
+/**
+ * Clamp a facilitator-submitted round length to a sane range, same
+ * "never trust the client even though the UI already enforces min/max"
+ * discipline as every other POST handler in this file -- missing or
+ * non-numeric input falls back to the same default the UI itself
+ * offers, rather than erroring the whole Start Play action out.
+ */
+function spp_kq_sanitize_round_minutes( $raw ) : int {
+    $minutes = is_numeric( $raw ) ? (int) $raw : SPP_KQ_DEFAULT_ROUND_MINUTES;
+    return max( SPP_KQ_MIN_ROUND_MINUTES, min( SPP_KQ_MAX_ROUND_MINUTES, $minutes ) );
+}
 
 // =============================================================
 // Small read helpers specific to rendering (mechanics live in
@@ -663,6 +772,22 @@ function spp_kq_styles() : string {
             .kq-wrap { max-width:900px; }
             .kq-court-grid { grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); }
         }
+        /* 1.10.0: match timer + voice announcements -- the Start Play
+           duration field, the audio-unlock banner, and the timer itself. */
+        .kq-start-play-form { display:flex; align-items:flex-end; gap:12px; flex-wrap:wrap; }
+        .kq-duration-label { font-size:13px; color:#555; }
+        .kq-duration-input { display:block; width:70px; padding:8px; font-size:16px; text-align:center; border:1px solid #bbb; border-radius:6px; margin-top:4px; }
+        .kq-audio-unlock { margin-bottom:14px; }
+        .kq-audio-unlock .kq-btn { width:100%; }
+        .kq-timer-wrap { text-align:center; background:#f0f7ff; border:1px solid #3766AB; border-radius:8px; padding:14px; margin-bottom:16px; }
+        .kq-timer { font-size:42px; font-weight:bold; color:#2c3e50; line-height:1.1; font-variant-numeric:tabular-nums; }
+        .kq-timer-label { font-size:13px; color:#666; margin-top:2px; }
+        .kq-timer-wrap.kq-timer-warn { background:#fff8e1; border-color:#e67e22; }
+        .kq-timer-wrap.kq-timer-warn .kq-timer { color:#e67e22; }
+        .kq-timer-wrap.kq-timer-critical { background:#f8d7da; border-color:#c0392b; }
+        .kq-timer-wrap.kq-timer-critical .kq-timer { color:#c0392b; }
+        .kq-timer-wrap.kq-timer-done { background:#eee; border-color:#ccc; opacity:.7; }
+        .kq-timer-wrap.kq-timer-done .kq-timer { color:#888; }
     </style>';
 }
 
@@ -1132,10 +1257,16 @@ function spp_kq_render_overview_screen( int $occurrence_id, int $round ) : strin
     <?php endif; ?>
     <div class="kq-action-row">
         <?php if ( empty( $understaffed ) ) : ?>
-        <form method="post" class="kq-inline-form">
+        <form method="post" class="kq-inline-form kq-start-play-form">
             <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
             <input type="hidden" name="spp_kq_action" value="start_play">
             <input type="hidden" name="spp_kq_round" value="<?php echo esc_attr( $round ); ?>">
+            <label class="kq-duration-label">Round length (minutes)<br>
+                <input type="number" name="spp_kq_round_minutes" class="kq-duration-input"
+                       value="<?php echo esc_attr( SPP_KQ_DEFAULT_ROUND_MINUTES ); ?>"
+                       min="<?php echo esc_attr( SPP_KQ_MIN_ROUND_MINUTES ); ?>"
+                       max="<?php echo esc_attr( SPP_KQ_MAX_ROUND_MINUTES ); ?>" step="1" inputmode="numeric">
+            </label>
             <button type="submit" class="kq-btn kq-btn-primary">Start Play</button>
         </form>
         <?php endif; ?>
@@ -1163,7 +1294,7 @@ function spp_kq_render_overview_screen( int $occurrence_id, int $round ) : strin
  * the two must never diverge, same discipline as everywhere else in
  * this codebase.
  */
-function spp_kq_render_in_play_screen( int $occurrence_id, int $round ) : string {
+function spp_kq_render_in_play_screen( int $occurrence_id, int $round, ?int $round_started_at = null, ?int $round_duration_seconds = null ) : string {
     $progress     = spp_kq_get_round_progress( $occurrence_id, $round );
     // Reset is only offered once, before anything real has happened this
     // round (by the state machine, only possible in round 1) -- once any
@@ -1183,6 +1314,16 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round ) : string
     ob_start();
     ?>
     <p class="kq-round-label">Round <?php echo esc_html( $round ); ?> &mdash; In Play</p>
+
+    <?php if ( $round_started_at && $round_duration_seconds ) : ?>
+    <div class="kq-audio-unlock" id="kq-audio-unlock">
+        <button type="button" class="kq-btn kq-btn-secondary" id="kq-audio-unlock-btn">&#128266; Tap to enable sound announcements</button>
+    </div>
+    <div class="kq-timer-wrap" id="kq-timer-wrap">
+        <div class="kq-timer" id="kq-timer">--:--</div>
+        <div class="kq-timer-label" id="kq-timer-label">Time remaining</div>
+    </div>
+    <?php endif; ?>
 
     <div class="kq-status" id="kq-status">
         <span id="kq-status-progress"><?php echo esc_html( "{$progress['reported']} of {$progress['total']} courts reported" ); ?></span>
@@ -1236,6 +1377,137 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round ) : string
             msgEl.textContent = text;
             msgEl.className = 'kq-msg kq-notice ' + (ok ? 'kq-notice-ok' : 'kq-notice-err');
             msgEl.style.display = 'block';
+        }
+
+        // ---------------------------------------------------------------
+        // Match timer + voice announcements (1.10.0). See this file's own
+        // 1.10.0 changelog for the full investigation/design writeup.
+        // roundStartedAt/roundDurationSeconds are null when this round
+        // was started before this feature existed (or any other legacy
+        // row missing them) -- markRoundComplete() below still gets
+        // defined either way (harmless no-op) so the progress-update call
+        // sites further down never need to branch on this.
+        // ---------------------------------------------------------------
+        var roundStartedAt       = <?php echo $round_started_at ? (int) $round_started_at : 'null'; ?>;
+        var roundDurationSeconds = <?php echo $round_duration_seconds ? (int) $round_duration_seconds : 'null'; ?>;
+        var serverNowMs          = <?php echo (int) round( microtime( true ) * 1000 ); ?>;
+
+        var markRoundComplete = function() {}; // overwritten below if a timer is actually running
+
+        if ( roundStartedAt !== null && roundDurationSeconds !== null ) {
+            (function() {
+                var timerEl     = document.getElementById('kq-timer');
+                var timerWrapEl = document.getElementById('kq-timer-wrap');
+                var timerLabelEl = document.getElementById('kq-timer-label');
+                var unlockWrap  = document.getElementById('kq-audio-unlock');
+                var unlockBtn   = document.getElementById('kq-audio-unlock-btn');
+                if (!timerEl) return;
+
+                // Anchor every client to the SAME absolute end instant
+                // (a true epoch), corrected once for THIS client's own
+                // clock skew via the server-now/client-now delta at
+                // render time -- not trusted against Date.now() raw.
+                // This is what makes "same start instant for every
+                // court" hold even though phones actually load this
+                // screen at slightly different real moments.
+                var endEpochMs = (roundStartedAt + roundDurationSeconds) * 1000;
+                var skewMs     = Date.now() - serverNowMs;
+                var localEndMs = endEpochMs + skewMs;
+
+                var audioUnlocked = false;
+                var roundDone      = false;
+                var fired          = {};
+                var timerInterval  = null;
+
+                function speak(text) {
+                    if (!audioUnlocked || !('speechSynthesis' in window)) return;
+                    try {
+                        window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+                    } catch (e) {}
+                }
+
+                if ('speechSynthesis' in window && unlockWrap && unlockBtn) {
+                    unlockBtn.addEventListener('click', function() {
+                        audioUnlocked = true;
+                        unlockWrap.style.display = 'none';
+                        try {
+                            window.speechSynthesis.speak(new SpeechSynthesisUtterance('Sound enabled.'));
+                        } catch (e) {}
+                    });
+                } else if (unlockWrap) {
+                    // No SpeechSynthesis in this browser -- nothing to
+                    // unlock, so don't show a prompt with no effect. The
+                    // visual timer below is completely unaffected either
+                    // way.
+                    unlockWrap.style.display = 'none';
+                }
+
+                // Trigger seconds-remaining thresholds, in the order the
+                // spec calls for. 120/60 are each skipped entirely when
+                // the round's own total duration never actually reached
+                // that mark (e.g. a 1-minute round never had "2 minutes
+                // remaining" to announce) -- everything from 10 down to 0
+                // always applies since every round is at least 60 seconds
+                // (SPP_KQ_MIN_ROUND_MINUTES).
+                var triggers = [120, 60, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0].filter(function(t) {
+                    return roundDurationSeconds > t;
+                });
+
+                function announceIfDue(remainingSeconds) {
+                    triggers.forEach(function(t) {
+                        if (fired[t]) return;
+                        if (remainingSeconds <= t) {
+                            fired[t] = true;
+                            if (t === 120) speak('Two minutes remaining.');
+                            else if (t === 60) speak('One minute remaining.');
+                            else speak(String(t));
+                        }
+                    });
+                    if (remainingSeconds <= 0 && !fired.final) {
+                        fired.final = true;
+                        speak('Finish rally and stop play.');
+                    }
+                }
+
+                function formatTime(totalSeconds) {
+                    var m = Math.floor(totalSeconds / 60);
+                    var s = totalSeconds % 60;
+                    return m + ':' + (s < 10 ? '0' : '') + s;
+                }
+
+                function tick() {
+                    if (roundDone) return;
+                    var remainingSeconds = Math.max(0, Math.round((localEndMs - Date.now()) / 1000));
+
+                    timerEl.textContent = formatTime(remainingSeconds);
+                    if (timerWrapEl) {
+                        timerWrapEl.classList.toggle('kq-timer-warn', remainingSeconds <= 60 && remainingSeconds > 10);
+                        timerWrapEl.classList.toggle('kq-timer-critical', remainingSeconds <= 10);
+                    }
+
+                    announceIfDue(remainingSeconds);
+                }
+
+                tick();
+                timerInterval = setInterval(tick, 250);
+
+                // Exposed to the existing progress-update code (score
+                // save + poll, below) so the timer can freeze/grey once
+                // every court has reported -- the timer itself never
+                // reacts to an individual court submission on its own
+                // (per spec: keeps running through early submissions).
+                markRoundComplete = function() {
+                    if (roundDone) return;
+                    roundDone = true;
+                    if (timerInterval) clearInterval(timerInterval);
+                    if (timerWrapEl) {
+                        timerWrapEl.classList.add('kq-timer-done');
+                        timerWrapEl.classList.remove('kq-timer-warn', 'kq-timer-critical');
+                    }
+                    if (timerLabelEl) timerLabelEl.textContent = 'All courts reported';
+                    if (unlockWrap) unlockWrap.style.display = 'none';
+                };
+            })();
         }
 
         // One wiring pass per court card -- each card owns its own pair
@@ -1315,6 +1587,7 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round ) : string
                             savedTag.style.display = 'inline';
                         }
                         if (progressEl) progressEl.textContent = res.data.reported + ' of ' + res.data.total + ' courts reported';
+                        if (res.data.total > 0 && res.data.reported === res.data.total) markRoundComplete();
                     })
                     .catch(function() {
                         saveBtn.disabled = false;
@@ -1342,6 +1615,7 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round ) : string
                         return;
                     }
                     if (progressEl) progressEl.textContent = d.reported + ' of ' + d.total + ' courts reported';
+                    if (d.total > 0 && d.reported === d.total) markRoundComplete();
                 })
                 .catch(function() {});
         }
@@ -1481,7 +1755,12 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date, ?st
             return ( ! $r['won'] && $r['error'] ) ? $r['error'] : '';
 
         case 'start_play':
-            $r = spp_kq_transition_start_play( $occurrence_id, $round );
+            // 1.10.0: facilitator-set match-timer length, locked in for
+            // the round the instant this transition wins -- see
+            // spp_kq_transition_start_play()'s own docblock
+            // (inc/spp-kq-live.php).
+            $round_minutes = spp_kq_sanitize_round_minutes( $_POST['spp_kq_round_minutes'] ?? null );
+            $r = spp_kq_transition_start_play( $occurrence_id, $round, $round_minutes * MINUTE_IN_SECONDS );
             return ( ! $r['won'] && $r['error'] ) ? $r['error'] : '';
 
         case 'end_event':
@@ -1715,7 +1994,7 @@ function spp_kq_live_shortcode() : string {
                 break;
 
             case 'in_play':
-                echo spp_kq_render_in_play_screen( $occurrence_id, $round );
+                echo spp_kq_render_in_play_screen( $occurrence_id, $round, $state['round_started_at'], $state['round_duration_seconds'] );
                 break;
 
             case 'complete':

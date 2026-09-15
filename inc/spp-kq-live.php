@@ -1,8 +1,32 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Live Event Runner
-   Version: 1.2.0
+   Version: 1.3.0
    Date: 2026-09-15
+
+   Changes from 1.2.0 (match timer with voice announcements -- see the
+   conversation this was built from for the full spec; the timer UI/JS
+   and the duration input live in inc/spp-kq-screens.php, see that
+   file's own changelog):
+   - spp_kq_transition_start_play() now takes a third parameter,
+     $duration_seconds, and folds round_duration_seconds/
+     round_started_at into the SAME atomic organizing->in_play UPDATE
+     (schema 1.6.0, inc/spp-kq-schema.php) -- both are written exactly
+     once per round, at the exact instant the transition actually wins
+     the compare-and-swap, so a duplicate/rejected Start Play attempt
+     (round already started by another near-simultaneous request)
+     never overwrites an already-running round's timer. round_started_at
+     is current_time('timestamp', true) -- a true Unix/GMT epoch, NOT
+     the local-wall-clock-as-UTC domain this file's own date gates use
+     elsewhere -- see schema 1.6.0's own changelog for why that
+     distinction matters here specifically (every consumer of this
+     value is JS Date.now() math on the client, which is always a real
+     UTC epoch).
+   - spp_kq_get_event_state() now also selects round_duration_seconds/
+     round_started_at, additively -- every existing caller destructures
+     only the keys it already used ('phase'/'current_round'), so this
+     is a no-op for all of them; the in-play screen render path is the
+     only new consumer.
 
    Changes from 1.1.0 (race-condition fix -- audited and confirmed via
    live reproduction against a synthetic occurrence on production, same
@@ -208,7 +232,7 @@ function spp_kq_get_event_state( int $occurrence_id ) : ?array {
     global $wpdb;
     $table = spp_kq_events_table();
     $row = $wpdb->get_row( $wpdb->prepare(
-        "SELECT current_round, phase FROM {$table} WHERE occurrence_id = %d",
+        "SELECT current_round, phase, round_duration_seconds, round_started_at FROM {$table} WHERE occurrence_id = %d",
         $occurrence_id
     ), ARRAY_A );
     return $row ?: null;
@@ -443,8 +467,18 @@ function spp_kq_transition_start_round1( int $occurrence_id ) : array {
  * facilitator can never accidentally start play with a court short a
  * player instead of using Roster Adjust or Cancel Court to resolve it
  * first.
+ *
+ * $duration_seconds (1.3.0): the facilitator-set match-timer length for
+ * THIS round, locked in the instant this transition wins -- written
+ * into round_duration_seconds/round_started_at in the same atomic
+ * UPDATE as the phase flip itself, so a rejected/duplicate attempt
+ * (round already started elsewhere) can never clobber a genuinely
+ * already-running round's timer. round_started_at is a true Unix/GMT
+ * epoch (current_time('timestamp', true)) -- see schema 1.6.0's own
+ * changelog for why that's deliberately NOT this file's usual
+ * local-wall-clock-as-UTC current_time() domain.
  */
-function spp_kq_transition_start_play( int $occurrence_id, int $expected_round ) : array {
+function spp_kq_transition_start_play( int $occurrence_id, int $expected_round, int $duration_seconds ) : array {
     global $wpdb;
 
     $understaffed = spp_kq_get_understaffed_courts( $occurrence_id, $expected_round );
@@ -456,12 +490,13 @@ function spp_kq_transition_start_play( int $occurrence_id, int $expected_round )
     }
 
     $events_table = spp_kq_events_table();
+    $started_at   = current_time( 'timestamp', true );
 
     $affected = $wpdb->query( $wpdb->prepare(
         "UPDATE {$events_table}
-         SET phase = 'in_play'
+         SET phase = 'in_play', round_duration_seconds = %d, round_started_at = %d
          WHERE occurrence_id = %d AND current_round = %d AND phase = 'organizing'",
-        $occurrence_id, $expected_round
+        $duration_seconds, $started_at, $occurrence_id, $expected_round
     ) );
 
     return array( 'won' => ( (int) $affected === 1 ), 'error' => null );

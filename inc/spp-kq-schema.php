@@ -1,8 +1,34 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Live Event Schema
-   Version: 1.5.0
+   Version: 1.6.0
    Date: 2026-09-15
+
+   Changes from 1.5.0 (match timer with voice announcements -- see the
+   conversation this was built from for the full spec; the actual
+   rendering/JS lives in inc/spp-kq-screens.php, see that file's own
+   changelog):
+   - spp_kq_events gains `round_duration_seconds` and `round_started_at`
+     (live ALTER -- same dbDelta ADD COLUMN case as `cancelled`/
+     `client_ts` in 1.3.0/1.4.0, no new migration technique needed).
+     Both are set ONCE, atomically, in the exact same UPDATE that flips
+     phase organizing -> in_play (spp_kq_transition_start_play(),
+     inc/spp-kq-live.php) -- never touched again until the next
+     Start Play locks in the next round's own values. round_started_at
+     is a true Unix (GMT) epoch, NOT the "local wall-clock time read as
+     if it were UTC" domain the rest of this feature's date/time gates
+     use (spp_kq_get_occurrence_start_timestamp() and friends,
+     inc/spp-kq-screens.php) -- those exist to compare against DATETIME
+     strings using current_time()'s own quirky domain; this value only
+     ever gets compared against JS Date.now(), which is always a real
+     UTC epoch, so using WP's true-GMT current_time('timestamp', true)
+     here (not current_time('timestamp')) is the correct, deliberately
+     different choice -- mixing the two domains would silently misalign
+     every client's countdown by the site's UTC offset.
+     round_duration_seconds is nullable/zero-able by design: a round
+     that was never started via this feature (shouldn't happen going
+     forward, but defensive for any row already mid-flight at deploy
+     time) simply renders no timer at all rather than guessing.
 
    Changes from 1.4.0 (race-condition fix -- see inc/spp-kq-live.php's
    own 1.2.0 changelog for the full incident and fix writeup; same
@@ -180,7 +206,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'SPP_KQ_DB_VERSION', '1.5.0' );
+define( 'SPP_KQ_DB_VERSION', '1.6.0' );
 
 /**
  * Create (or, on a later run, no-op/upgrade) the three spp_kq_*
@@ -204,10 +230,12 @@ function spp_kq_create_tables() {
 
     // ── Events ────────────────────────────────────────────────────────────
     dbDelta( "CREATE TABLE {$p}spp_kq_events (
-        occurrence_id  INT UNSIGNED NOT NULL,
-        current_round  SMALLINT UNSIGNED NOT NULL DEFAULT 0,
-        phase          ENUM('not_started','organizing','in_play','complete','cancelled') NOT NULL DEFAULT 'not_started',
-        updated_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        occurrence_id          INT UNSIGNED NOT NULL,
+        current_round          SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+        phase                  ENUM('not_started','organizing','in_play','complete','cancelled') NOT NULL DEFAULT 'not_started',
+        round_duration_seconds SMALLINT UNSIGNED DEFAULT NULL,
+        round_started_at       BIGINT UNSIGNED DEFAULT NULL,
+        updated_at             DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         PRIMARY KEY (occurrence_id)
     ) {$charset};" );
 
