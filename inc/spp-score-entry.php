@@ -14,8 +14,54 @@
  * - Available only while spp_schedule_published = 1.
  * - Paper score sheets + Score Scanner remain the verification layer.
  *
- * Version: 1.4.0
- * Date:    2026-09-07
+ * Version: 1.5.0
+ * Date:    2026-09-15
+ *
+ * Changes from 1.4.0:
+ *   - BUG FIX (silent lost-update race, reported live): a player entered a
+ *     score, pressed Reset, re-entered a corrected score, pressed Save --
+ *     and the correction silently didn't persist, no error shown. Root
+ *     cause confirmed by reproducing the exact mechanism with two genuinely
+ *     concurrent requests: the handler had no concept of request order, only
+ *     write-COMPLETION order. Save/Reset for a round is a plain
+ *     read-nothing, write-blind UPDATE with no version/lock/timestamp guard,
+ *     and the client had no way to cancel or ignore a superseded in-flight
+ *     request either (Reset is a separate button from Save, not gated by
+ *     Save's own disabled state, so a slow original Save and a fast
+ *     corrected Save-after-Reset can both be in flight at once). Whichever
+ *     request's UPDATE happened to land LAST at the DB won, regardless of
+ *     which one the player actually sent last -- and both requests report
+ *     {success:true} independently, so nothing ever surfaces as an error.
+ *     A fresh page load "fixed" it only because it guaranteed no leftover
+ *     in-flight request remained to race the next save against.
+ *     Fix: every Save/Reset request now carries a client-submitted
+ *     timestamp (client_ts = Date.now()). The AJAX handler tracks the
+ *     highest client_ts accepted per group+round (transient,
+ *     spp_se_ts_{group}_{round}, 1hr TTL) and refuses to write if an
+ *     incoming request's client_ts is older than one already accepted --
+ *     enforcing "most recently SUBMITTED wins" (the documented intent, see
+ *     file header) instead of "most recently COMPLETED wins". A superseded
+ *     request still returns success (nothing is actually wrong from the
+ *     player's point of view -- a newer entry already saved) but now also
+ *     returns the current true round_scores/status so a stale response
+ *     can't paint stale data over a newer save either.
+ *   - CLEANUP: removed the `UPDATE Schedules SET Score = ...` statements
+ *     from both the save and reset paths. Score is a VIRTUAL GENERATED
+ *     column (confirmed via SHOW CREATE TABLE on both prod and staging --
+ *     `GENERATED ALWAYS AS (...) VIRTUAL`); MySQL unconditionally rejects
+ *     any manual write to a generated column, so these statements have
+ *     been failing silently on every single save/reset since this file's
+ *     inception, wasting a query each time. Harmless in practice only
+ *     because the failure is a total no-op and Score auto-recomputes
+ *     correctly from Game1-5 on its own -- but dead, misleading code.
+ *     NOTE (separate, not fixed here -- DB schema, not PHP): staging's
+ *     Score generation expression is `Game1+Game2+Game3+Game4+Game5`
+ *     (no COALESCE), while production's is
+ *     `coalesce(Game1,0)+coalesce(Game2,0)+...` -- the two DBs have
+ *     drifted. On staging, Score goes NULL the moment any round is
+ *     unplayed; on production it correctly treats an unplayed round as 0.
+ *     Flagging for awareness; propose an ALTER TABLE on staging to match
+ *     prod's formula before trusting Score-based totals there.
  *
  * Changes from 1.3.1:
  *   - SECURITY FIX (Tier 2 access-control audit, item 6): $is_admin
@@ -355,6 +401,30 @@ function spp_score_entry_shortcode() {
             });
         }
 
+        // Refresh every round's "Current: Blue X -- Red Y" line from fresh
+        // server data. Called after every Save/Reset response (including a
+        // superseded one) so the UI always reflects the true current DB
+        // state instead of whatever this particular request assumed.
+        function applyRoundScores(round_scores) {
+            if (!round_scores) return;
+            document.querySelectorAll('.se-round').forEach(function(rEl) {
+                var rnd = parseInt(rEl.dataset.round);
+                var rs = round_scores[rnd];
+                if (!rs) return;
+                var cur = rEl.querySelector('.se-current');
+                if (rs.blue !== null && rs.red !== null) {
+                    if (!cur) {
+                        cur = document.createElement('div');
+                        cur.className = 'se-current';
+                        rEl.appendChild(cur);
+                    }
+                    cur.textContent = 'Current: Blue ' + rs.blue + ' -- Red ' + rs.red;
+                } else if (cur) {
+                    cur.textContent = '';
+                }
+            });
+        }
+
         document.querySelectorAll('.se-round').forEach(function(roundEl) {
             var loser    = null;
             var teams    = roundEl.querySelectorAll('.se-team');
@@ -399,35 +469,22 @@ function spp_score_entry_shortcode() {
                 data.append('winner', winner);
                 data.append('loser_score', input.value);
                 data.append('group_id', groupId);
+                // Submission-order marker -- see v1.5.0 changelog above.
+                // Lets the server refuse a write from a request that was
+                // sent before one it already accepted, even if this one's
+                // response happens to land first.
+                data.append('client_ts', Date.now());
 
                 fetch(ajaxurl, { method: 'POST', body: data, credentials: 'same-origin' })
                     .then(function(r){ return r.json(); })
                     .then(function(res) {
                         saveBtn.textContent = 'Save';
-                        saveBtn.disabled = false;
+                        saveBtn.disabled = !(loser && input.value !== '' && parseInt(input.value) >= 0);
                         if (res.success) {
                             savedTag.style.display = 'inline';
                             showMsg(res.data.message, true);
                             updateStatus(res.data.status);
-                            // Refresh ALL round "Current:" displays from fresh server data
-                            if (res.data.round_scores) {
-                                document.querySelectorAll('.se-round').forEach(function(rEl) {
-                                    var rnd = parseInt(rEl.dataset.round);
-                                    var rs = res.data.round_scores[rnd];
-                                    if (!rs) return;
-                                    var cur = rEl.querySelector('.se-current');
-                                    if (rs.blue !== null && rs.red !== null) {
-                                        if (!cur) {
-                                            cur = document.createElement('div');
-                                            cur.className = 'se-current';
-                                            rEl.appendChild(cur);
-                                        }
-                                        cur.textContent = 'Current: Blue ' + rs.blue + ' -- Red ' + rs.red;
-                                    } else if (cur) {
-                                        cur.textContent = '';
-                                    }
-                                });
-                            }
+                            applyRoundScores(res.data.round_scores);
                         } else {
                             showMsg(res.data || 'Save failed', false);
                         }
@@ -451,6 +508,7 @@ function spp_score_entry_shortcode() {
                 data.append('winner', 'reset');
                 data.append('loser_score', '0');
                 data.append('group_id', groupId);
+                data.append('client_ts', Date.now());
 
                 fetch(ajaxurl, { method: 'POST', body: data, credentials: 'same-origin' })
                     .then(function(r){ return r.json(); })
@@ -458,18 +516,27 @@ function spp_score_entry_shortcode() {
                         resetBtn.textContent = 'Reset';
                         resetBtn.disabled = false;
                         if (res.success) {
-                            savedTag.style.display = 'none';
                             showMsg(res.data.message, true);
-                            var cur = roundEl.querySelector('.se-current');
-                            if (cur) cur.textContent = '';
-                            teams.forEach(function(t){
-                                t.classList.remove('se-loser');
-                                t.classList.remove('se-auto-winner');
-                            });
-                            input.value = '';
-                            loser = null;
-                            saveBtn.disabled = true;
                             updateStatus(res.data.status);
+                            applyRoundScores(res.data.round_scores);
+                            // applied === false means: this Reset lost the
+                            // submission-order race to a newer Save/Reset
+                            // that already landed for this round (see
+                            // v1.5.0 changelog). Don't blank the form --
+                            // that newer entry is the real current state,
+                            // shown above by applyRoundScores() instead.
+                            if (res.data.applied !== false) {
+                                savedTag.style.display = 'none';
+                                var cur = roundEl.querySelector('.se-current');
+                                if (cur) cur.textContent = '';
+                                teams.forEach(function(t){
+                                    t.classList.remove('se-loser');
+                                    t.classList.remove('se-auto-winner');
+                                });
+                                input.value = '';
+                                loser = null;
+                                saveBtn.disabled = true;
+                            }
                         } else {
                             showMsg(res.data || 'Reset failed', false);
                         }
@@ -485,6 +552,23 @@ function spp_score_entry_shortcode() {
     </script>
     <?php
     return ob_get_clean();
+}
+
+// ── Helper: build the "Current: Blue X -- Red Y" map for every round ────────
+
+function spp_se_round_scores( array $fresh_players, array $pairings ) : array {
+    $round_scores = array();
+    foreach ( $pairings as $i => $r2 ) {
+        $rnd  = $i + 1;
+        $gcol = 'Game' . $rnd;
+        $bv   = isset( $fresh_players[ $r2['blue'][0] ] ) ? $fresh_players[ $r2['blue'][0] ][ $gcol ] : null;
+        $rv   = isset( $fresh_players[ $r2['red'][0] ]  ) ? $fresh_players[ $r2['red'][0] ][ $gcol ]  : null;
+        $round_scores[ $rnd ] = array(
+            'blue' => ( $bv !== null && $bv !== '' ) ? (int) $bv : null,
+            'red'  => ( $rv !== null && $rv !== '' ) ? (int) $rv : null,
+        );
+    }
+    return $round_scores;
 }
 
 // ── AJAX: save or reset one round's scores ───────────────────────────────────
@@ -547,6 +631,44 @@ add_action( 'wp_ajax_spp_player_score_entry', function() {
     $r        = $pairings[ $round - 1 ];
     $game_col = 'Game' . $round;
 
+    // ── Submission-order guard (v1.5.0) ─────────────────────────────────────
+    // Fixes the reported "correction silently didn't persist" bug: without
+    // this, two overlapping requests for the same group+round (a slow
+    // original Save still in flight when a Reset + corrected Save go out)
+    // let whichever UPDATE physically landed LAST at the DB win, regardless
+    // of which one the player actually sent last -- see v1.5.0 changelog
+    // above for the reproduced mechanism. client_ts is the browser's
+    // Date.now() at the moment the player clicked Save/Reset, so it reflects
+    // submission order even when network/server latency scrambles
+    // completion order. Old clients that don't send it (cache lag) get no
+    // guard, same as before -- never worse than pre-fix behavior.
+    $client_ts = intval( $_POST['client_ts'] ?? 0 );
+    $seq_key   = "spp_se_ts_{$group_id}_{$round}";
+    $last_ts   = (int) get_transient( $seq_key );
+
+    if ( $client_ts > 0 && $last_ts > 0 && $client_ts < $last_ts ) {
+        // A newer Save/Reset for this exact round was already accepted
+        // while this request was in flight. Applying this one now would
+        // silently overwrite it with stale data -- the original bug. Do
+        // nothing to the row; just hand back the current true state so the
+        // UI can't show stale data either.
+        $fresh = $wpdb->get_results( $wpdb->prepare(
+            "SELECT user_id, Game1, Game2, Game3, Game4, Game5
+             FROM Schedules WHERE group_id = %d ORDER BY Rank",
+            $group_id
+        ), ARRAY_A );
+        wp_send_json_success( array(
+            'message'      => 'A newer entry for this round was already saved.',
+            'applied'      => false,
+            'status'       => spp_se_group_status( $group_id ),
+            'round_scores' => spp_se_round_scores( $fresh, $pairings ),
+        ) );
+    }
+
+    if ( $client_ts > 0 ) {
+        set_transient( $seq_key, max( $client_ts, $last_ts ), HOUR_IN_SECONDS );
+    }
+
     // ── Handle reset ─────────────────────────────────────────────────────────
     if ( $winner === 'reset' ) {
         foreach ( array_merge( $r['blue'], $r['red'] ) as $pos ) {
@@ -556,20 +678,23 @@ add_action( 'wp_ajax_spp_player_score_entry', function() {
                 "UPDATE Schedules SET {$game_col} = NULL WHERE user_id = %d",
                 $uid
             ) );
-            $wpdb->query( $wpdb->prepare(
-                "UPDATE Schedules
-                 SET Score = COALESCE(IF(Game1>=0,Game1,0),0) + COALESCE(IF(Game2>=0,Game2,0),0)
-                           + COALESCE(IF(Game3>=0,Game3,0),0) + COALESCE(IF(Game4>=0,Game4,0),0)
-                           + COALESCE(IF(Game5>=0,Game5,0),0)
-                 WHERE user_id = %d",
-                $uid
-            ) );
+            // Score is a VIRTUAL GENERATED column (see v1.5.0 changelog --
+            // confirmed via SHOW CREATE TABLE) and recomputes itself; a
+            // manual UPDATE...SET Score=... here would be rejected by MySQL
+            // on every call, so it's not done.
         }
+        $fresh = $wpdb->get_results( $wpdb->prepare(
+            "SELECT user_id, Game1, Game2, Game3, Game4, Game5
+             FROM Schedules WHERE group_id = %d ORDER BY Rank",
+            $group_id
+        ), ARRAY_A );
         wp_send_json_success( array(
-            'message' => "Round {$round} cleared.",
-            'blue'    => '',
-            'red'     => '',
-            'status'  => spp_se_group_status( $group_id ),
+            'message'      => "Round {$round} cleared.",
+            'applied'      => true,
+            'blue'         => '',
+            'red'          => '',
+            'status'       => spp_se_group_status( $group_id ),
+            'round_scores' => spp_se_round_scores( $fresh, $pairings ),
         ) );
     }
 
@@ -589,14 +714,7 @@ add_action( 'wp_ajax_spp_player_score_entry', function() {
                 "UPDATE Schedules SET {$game_col} = %d WHERE user_id = %d",
                 $score, $uid
             ) );
-            $wpdb->query( $wpdb->prepare(
-                "UPDATE Schedules
-                 SET Score = COALESCE(IF(Game1>=0,Game1,0),0) + COALESCE(IF(Game2>=0,Game2,0),0)
-                           + COALESCE(IF(Game3>=0,Game3,0),0) + COALESCE(IF(Game4>=0,Game4,0),0)
-                           + COALESCE(IF(Game5>=0,Game5,0),0)
-                 WHERE user_id = %d",
-                $uid
-            ) );
+            // Score is VIRTUAL GENERATED -- see note above; no manual write.
         }
     };
 
@@ -610,17 +728,7 @@ add_action( 'wp_ajax_spp_player_score_entry', function() {
         $group_id
     ), ARRAY_A );
 
-    $round_scores = array();
-    foreach ( $pairings as $i => $r2 ) {
-        $rnd  = $i + 1;
-        $gcol = 'Game' . $rnd;
-        $bv   = isset( $fresh_players[ $r2['blue'][0] ] ) ? $fresh_players[ $r2['blue'][0] ][ $gcol ] : null;
-        $rv   = isset( $fresh_players[ $r2['red'][0] ]  ) ? $fresh_players[ $r2['red'][0] ][ $gcol ]  : null;
-        $round_scores[ $rnd ] = array(
-            'blue' => ( $bv !== null && $bv !== '' ) ? (int) $bv : null,
-            'red'  => ( $rv !== null && $rv !== '' ) ? (int) $rv : null,
-        );
-    }
+    $round_scores = spp_se_round_scores( $fresh_players, $pairings );
 
     wp_send_json_success( array(
         'message'      => "Round {$round} saved: Blue {$blue_score} -- Red {$red_score}.",
