@@ -1,8 +1,117 @@
 <?php
 /* =========================================================
    Shared Report Table Renderer
-   Version: 1.7.0
-   Date: 2026-09-13
+   Version: 1.9.0
+   Date: 2026-09-16
+
+   Changes from 1.8.0 (the 1.8.0 scrollLeft=0 fix did not resolve the
+   mobile-portrait bug for every report -- confirmed via real-device-
+   width testing, not assumption, that this was never a scroll-position
+   bug in the first place):
+   Root cause, confirmed directly against the three real live pages at a
+   390px viewport (Ladder Players Master List, Ranks & Ratings, and
+   Membership list, the last of which was never actually broken): the
+   Divi column wrapping [spp_report] is a flex-direction:column flex
+   container, and PAGE-LEVEL (not just table-internal) horizontal
+   overflow occurs specifically on any page whose column has
+   align-items:center in its own Divi settings, which is a per-page Divi
+   configuration choice, not something in this file. align-items:center
+   means the DIVI MODULE WRAPPER around [spp_report]'s output (a div
+   carrying Divi's common .et_pb_module class -- Code module, Text
+   module, whatever the page uses -- NOT .spp-report-table itself, which
+   sits one level further in) doesn't stretch to the column's actual
+   available width -- it shrinks to its own content's natural
+   (max-content) width instead and gets centered, so a table wider than
+   the viewport overflows the viewport EQUALLY on both the left and
+   right, which is what a visitor actually saw: the whole page
+   rubber-banding/shifting, not just the table's own intended internal
+   scrollbar (.spp-report-table-scroll's overflow-x:auto, added in
+   1.5.0, never even gets a chance to act, since the overflow happens
+   one level up, at that module wrapper). Membership's column has no
+   align-items override (default: stretch) and was never affected --
+   confirmed this is why the 1.8.0 fix "worked" there and nowhere else:
+   there was nothing to fix on that page. FIXED: a new
+   .et_pb_module:has(.spp-report-table) rule forces align-self:stretch
+   !important on that module wrapper -- confirmed by direct testing that
+   setting align-self on .spp-report-table itself has NO effect (it is
+   not itself a flex item of the column, so align-self on it is simply
+   ignored); :has() is what lets this file reach an ancestor it doesn't
+   control the class name of, without needing to know which Divi module
+   type or per-instance class (et_pb_code_2, et_pb_text_3, etc. are
+   unique per module, not reusable selectors) any given page happens to
+   use. .spp-report-table also keeps its own (currently redundant)
+   align-self:stretch, cheap insurance for the hypothetical case where it
+   IS itself a direct flex item on some future page structure. Verified
+   via direct DOM measurement on all three real pages at 390px that the
+   :has() rule fully eliminates the page-level overflow (body scrollWidth
+   back down to the viewport width on all three) while preserving the
+   table's own internal horizontal scroll for genuinely wide tables
+   (confirmed .spp-report-table-scroll still reports its full unclipped
+   scrollWidth after the fix, so a real device can still swipe to see
+   every column). This is a no-op for any page whose column isn't a flex
+   container at all (desktop, or any non-flex layout) and a no-op for a
+   page whose column already stretches (Membership) -- it only changes
+   behavior for the specific align-items:center case that was actually
+   broken. :has() requires a modern browser (broadly supported since
+   2023 -- Chrome 105+, Safari 15.4+, Firefox 121+); no fallback is
+   provided for older engines, consistent with this being a
+   members-facing site with no stated legacy-browser requirement. The
+   1.8.0 scrollLeft=0 script is left in place, unchanged: it still
+   guards against a genuine scroll-anchor quirk if one is ever found on
+   some browser, and costs nothing now that it's no longer doing the
+   load-bearing work here.
+
+   Changes from 1.7.0 (mobile-portrait bug -- a horizontally-scrollable
+   report table rendered already scrolled away from the left edge on
+   load, truncating the leftmost column(s) until the visitor manually
+   scrolled back; confirmed across multiple reports, so a shared-
+   renderer issue, not one report's data):
+
+   INVESTIGATED, ruled out (not just assumed) before landing on a fix:
+     - RTL direction: this file has no direction/dir declaration of its
+       own, and the theme's <html> tag uses core's own
+       language_attributes(), which only ever emits dir="rtl" for a
+       genuinely RTL site locale -- confirmed this site's locale is
+       English, so dir="ltr" is what actually renders. Not the cause
+       here, though a defensive `direction: ltr` was still added to
+       .spp-report-table-scroll below (zero cost, guards against any
+       future/unexpected inherited RTL from elsewhere).
+     - Flex/grid reversal: .spp-report-table-scroll itself is a plain
+       block (not flex/grid); its flex siblings/ancestors (.spp-report-
+       controls, .spp-report-pagination, .spp-report-inner) use normal
+       (never reversed) flex-direction and never justify-content:
+       flex-end -- nothing biases layout toward the right edge.
+     - Sortable column headers: plain <a> tags inside <th>, no
+       absolute positioning or forced width -- nothing here creates
+       asymmetric intrinsic width.
+   Given none of the above reproduced the bug on inspection, and this
+   is fundamentally a runtime browser rendering behavior (a known class
+   of quirk where a shrink-to-fit -- width:fit-content -- overflow-x:
+   auto container, whose own width computation and its content's
+   overflow are interdependent, can end up with an inconsistent
+   initial scroll anchor on some mobile browsers) that can't be fully
+   confirmed via static code reading alone without a real device to
+   observe, the fix targets the OBSERVABLE requirement directly rather
+   than a specific unverified mechanism: a small script now explicitly
+   forces scrollLeft back to 0 on every .spp-report-table-scroll box,
+   both immediately (this script tag sits right after the table's own
+   markup, so the table already exists in the DOM when a non-deferred
+   script here runs) and again on DOMContentLoaded as a second,
+   guaranteed-after-layout attempt -- this is the standard, widely-used
+   remedy for exactly this class of bug regardless of which browser-
+   specific mechanism actually triggers it, and runs unconditionally
+   for every report (not gated behind $can_edit the way the existing
+   inline-editing script is), since the bug affects every report
+   equally. .spp-report-table-scroll's own width:fit-content sizing
+   (1.x, see that rule's own comment) is UNCHANGED -- it serves a real,
+   separate purpose (the narrow-table case) and removing/altering it
+   was not attempted given no way to verify the effect on a real mobile
+   browser here; forcing scrollLeft is a strictly additive, zero-risk
+   fix on top of the existing sizing behavior. Desktop/wide-viewport
+   rendering is unaffected (a table that already fits has no scroll
+   overflow at all, so resetting scrollLeft to 0 there is a no-op), and
+   nothing here touches the separate, already-responsive KQ scoreboard
+   card layout (spp-kq-history.php's own markup, not this renderer).
 
    Changes from 1.6.1:
    - BUG FIX: a report with zero rows previously skipped the entire
@@ -445,6 +554,36 @@ function spp_render_report_table( array $columns, array $rows, array $args = arr
             font-family: Arial, sans-serif;
             font-size: var(--spp-report-font-size);
             max-width: 100%;
+            /* 1.9.0: covers the case (unconfirmed on any real page today,
+               but cheap to guard against) where .spp-report-table itself
+               ends up as the direct flex item of a flex-direction:column
+               ancestor -- see the :has() rule just below for the actual
+               real-world case this file's 1.9.0 changelog describes
+               (a Divi module wrapper, one level further up, is the real
+               flex item on every live page tested). align-self only
+               affects an element that IS itself a flex item, so this is
+               a genuine no-op everywhere else. */
+            align-self: stretch;
+        }
+        /* 1.9.0: the actual fix for the page-level mobile-portrait
+           overflow described in this file's 1.9.0 changelog. Divi wraps
+           whatever module embeds [spp_report] (Code module, Text module,
+           etc.) in a div carrying the common .et_pb_module class, and
+           THAT wrapper -- not .spp-report-table itself -- is the real
+           flex item when the page's column is a flex-direction:column
+           container (confirmed via direct measurement on the three real
+           report pages). :has() lets this file force that ancestor to
+           stretch without needing to know or match any page-specific
+           Divi module class name (et_pb_code_2, et_pb_text_3, etc. are
+           unique per module instance, not reusable selectors) -- this
+           rule works for any current or future page embedding
+           [spp_report] inside any Divi module type, not just Code
+           modules. !important guards against the per-page align-items
+           this is specifically overriding; harmless/no-op wherever the
+           ancestor already stretches (Membership) or isn't a flex
+           container at all (desktop, or non-flex layouts). */
+        .et_pb_module:has(.spp-report-table) {
+            align-self: stretch !important;
         }
         .spp-report-table .spp-report-controls {
             display: flex;
@@ -471,6 +610,14 @@ function spp_render_report_table( array $columns, array $rows, array $args = arr
         .spp-report-table-scroll {
             overflow-x: auto;
             -webkit-overflow-scrolling: touch;
+            /* 1.8.0: defensive only -- this site is never RTL (confirmed
+               via core's own language_attributes(), see this file's own
+               1.8.0 changelog), so this isn't the fix for the mobile
+               scroll-position bug that changelog describes, but pinning
+               direction explicitly here costs nothing and guards
+               against any future/unexpected inherited RTL affecting
+               which edge this box's overflow-x:auto scroll starts at. */
+            direction: ltr;
             /* width:fit-content -- shrink this box to the table's own
                rendered width instead of always stretching to fill
                whatever container it's given (a block element's default).
@@ -879,6 +1026,41 @@ function spp_render_report_table( array $columns, array $rows, array $args = arr
             <?php endif; ?>
         </div>
     </div>
+
+    <script>
+    (function () {
+        'use strict';
+
+        // 1.8.0 mobile-portrait fix -- see this file's own 1.8.0
+        // changelog for the investigation. Runs for EVERY report
+        // (unlike the $can_edit-gated script below), since the bug
+        // affects every report equally. Forces scrollLeft back to 0 on
+        // load rather than depending on identifying the exact browser
+        // mechanism that defaults it elsewhere -- a no-op on a table
+        // that already fits (desktop/wide viewports), and harmless to
+        // call twice (both calls just re-assert the same value).
+        function sppResetReportScroll() {
+            document.querySelectorAll('.spp-report-table-scroll').forEach(function (box) {
+                box.scrollLeft = 0;
+            });
+        }
+
+        // Run immediately -- this script tag sits right after the
+        // table's own markup, so the table already exists in the DOM
+        // by the time a synchronous, non-deferred script here executes
+        // (the browser parses top-to-bottom). Run again on
+        // DOMContentLoaded (or right away if that has already passed)
+        // as a second, guaranteed-after-layout attempt, in case the
+        // immediate call above ran before the browser had actually
+        // finished computing this element's own overflow/scroll width.
+        sppResetReportScroll();
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', sppResetReportScroll);
+        } else {
+            sppResetReportScroll();
+        }
+    }());
+    </script>
 
     <?php if ( $can_edit ) : ?>
     <script>
