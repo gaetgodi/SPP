@@ -1,8 +1,37 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — KQ-Specific Roster Adjust
-   Version: 1.1.0
-   Date: 2026-09-14
+   Version: 1.2.0
+   Date: 2026-09-17
+
+   Changes from 1.1.0 (Guest registrant, for a non-member filling in at a
+   short-handed event -- reviewed/approved same day, needed for a live
+   event that morning):
+   - New spp_kq_roster_add_guest(): creates a real, lightweight WP user
+     (no usable password, role => '' so zero capabilities, display name
+     = whatever was typed), flags it spp_kq_guest=1 in usermeta, then
+     hands off to spp_kq_roster_add() -- the EXACT same add-to-registrant
+     path a real member's Add form already uses. No parallel/duplicate
+     registration logic; court draw, movement, scoring, and permanent
+     history all work completely unmodified from here since they already
+     just operate on a user_id.
+   - spp_kq_roster_add() itself now also accepts a spp_kq_guest=1 user_id
+     (previously required a membership-table row) -- one added OR check,
+     nothing else about that function changed.
+   - New "Add a Guest" form on the Roster Adjust screen (?kq_view=roster,
+     phase 'not_started' only, same as the existing Add/Remove forms),
+     name-only -- posts 'roster_add_guest' (new case in spp_kq_handle_
+     post_actions(), inc/spp-kq-screens.php), same nonce/phase-gate
+     discipline as 'roster_add'/'roster_remove'.
+   - Guests are deliberately NOT added to the membership table -- see
+     spp_kq_player_name()'s (inc/spp-kq-screens.php, 1.19.0) new guest
+     fallback for how their typed name still displays correctly
+     everywhere without one. The only two places that need to know a
+     player is a guest at all: Club Rating publish (spp_kq_build_club_
+     rating_games(), inc/spp-kq-club-rating.php 1.2.0 -- skips the whole
+     game, not just the guest's side) and the recap email (spp_kq_send_
+     recap_emails(), inc/spp-kq-history.php 1.8.0 -- never sent, no real
+     address exists).
 
    Changes from 1.0.0:
    - spp_kq_render_roster_screen() (?kq_view=roster) now branches on
@@ -118,7 +147,12 @@ function spp_kq_roster_add( int $occurrence_id, int $user_id ) : array {
     $is_member = (bool) $wpdb->get_var( $wpdb->prepare(
         "SELECT COUNT(*) FROM membership WHERE user_id = %d", $user_id
     ) );
-    if ( ! $is_member ) {
+    // Guests (spp_kq_roster_add_guest() below) are real WP users but
+    // deliberately have no membership-table row -- accepted here too so
+    // that function can reuse this same add path rather than duplicate
+    // its INSERT/UPDATE into gl_registrations.
+    $is_guest = (bool) get_user_meta( $user_id, 'spp_kq_guest', true );
+    if ( ! $is_member && ! $is_guest ) {
         return array( 'success' => false, 'error' => 'Not a recognized member.' );
     }
 
@@ -146,6 +180,56 @@ function spp_kq_roster_add( int $occurrence_id, int $user_id ) : array {
     }
 
     return array( 'success' => true, 'error' => null );
+}
+
+/**
+ * Create a real, lightweight, no-login WP user for a non-member filling
+ * in at a short-handed event, flag it spp_kq_guest=1 in usermeta, then
+ * add it to this occurrence's registrant list via spp_kq_roster_add()
+ * ABOVE -- the exact same INSERT/UPDATE path a real member's Add form
+ * uses, no parallel/duplicate registration logic. Everything downstream
+ * of that call (court draw, movement, scoring, permanent history)
+ * already just operates on a user_id and needs no guest-awareness of
+ * its own; only Club Rating (spp_kq_build_club_rating_games(), inc/
+ * spp-kq-club-rating.php) and the recap email (spp_kq_send_recap_
+ * emails(), inc/spp-kq-history.php) explicitly skip anyone flagged this
+ * way.
+ *
+ * No usable password (wp_generate_password() output is hashed then
+ * discarded -- nobody, including this code, ever holds it in the
+ * clear), no role at all (role => '' -- zero WordPress capabilities,
+ * not even 'read'), so a guest cannot log in or access anything. Not
+ * added to the membership table on purpose -- see spp_kq_player_name()'s
+ * (inc/spp-kq-screens.php) guest fallback for how their typed name still
+ * displays everywhere without one.
+ *
+ * @return array ['success'=>bool, 'error'=>?string]
+ */
+function spp_kq_roster_add_guest( int $occurrence_id, string $name ) : array {
+    $name = trim( sanitize_text_field( $name ) );
+    if ( $name === '' ) {
+        return array( 'success' => false, 'error' => 'Please enter the guest\'s name.' );
+    }
+
+    $token = wp_generate_password( 12, false, false );
+
+    $user_id = wp_insert_user( array(
+        'user_login'   => 'kq_guest_' . $token,
+        'user_email'   => 'kq-guest-' . $token . '@pickleballstouffville.ca',
+        'user_pass'    => wp_generate_password( 64, true, true ),
+        'display_name' => $name,
+        'nickname'     => $name,
+        'first_name'   => $name,
+        'role'         => '',
+    ) );
+
+    if ( is_wp_error( $user_id ) ) {
+        return array( 'success' => false, 'error' => 'Could not create guest: ' . $user_id->get_error_message() );
+    }
+
+    update_user_meta( $user_id, 'spp_kq_guest', 1 );
+
+    return spp_kq_roster_add( $occurrence_id, (int) $user_id );
 }
 
 /**
@@ -285,6 +369,16 @@ function spp_kq_render_roster_screen( int $occurrence_id ) : string {
             <?php endforeach; ?>
         </select>
         <button type="submit" class="kq-btn kq-btn-primary" style="margin-top:8px;">Add</button>
+    </form>
+
+    <h3 class="kq-picker-section-heading">Add a Guest</h3>
+    <p class="kq-hint">For a non-member filling in at a short-handed event. Creates a no-login account -- games count normally, but never affect Club Ratings and never get a recap email.</p>
+    <form method="post" class="kq-inline-form">
+        <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
+        <input type="hidden" name="spp_kq_action" value="roster_add_guest">
+        <input type="text" name="spp_kq_guest_name" placeholder="Guest's name" required maxlength="60"
+               style="padding:6px 10px;border:1px solid #ddd;border-radius:4px;width:280px;">
+        <button type="submit" class="kq-btn kq-btn-primary" style="margin-top:8px;">Add Guest</button>
     </form>
 
     <script>

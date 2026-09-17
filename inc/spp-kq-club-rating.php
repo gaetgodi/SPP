@@ -1,8 +1,18 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Club Rating Integration
-   Version: 1.1.0
-   Date: 2026-09-14
+   Version: 1.2.0
+   Date: 2026-09-17
+
+   Changes from 1.1.0 (Guest registrant -- see inc/spp-kq-roster.php's
+   own changelog for the full feature): spp_kq_build_club_rating_games()
+   now skips the WHOLE game (not just the guest's side) for any court
+   whose 4 players include one flagged spp_kq_guest=1 in usermeta --
+   checked right after the existing 2v2-shape validation, same "count
+   and report, don't silently drop" posture as that check's own
+   $skipped_courts. New $skipped_guest_courts in the return array,
+   surfaced in spp_kq_maybe_publish_to_club_ratings()'s own notice text
+   alongside the existing "couldn't be matched 2v2" note.
 
    Changes from 1.0.0:
    - spp_kq_build_club_rating_games()'s score query now also checks
@@ -125,6 +135,7 @@ function spp_kq_build_club_rating_games( int $occurrence_id ) : array {
 
     $games = array();
     $skipped_courts = 0;
+    $skipped_guest_courts = 0;
 
     foreach ( $score_rows as $sr ) {
         $sides = $wpdb->get_results( $wpdb->prepare(
@@ -145,6 +156,22 @@ function spp_kq_build_club_rating_games( int $occurrence_id ) : array {
         // ladder's own "unreconstructed" bucket in its own Step 1.
         if ( count( $red ) !== 2 || count( $black ) !== 2 ) {
             $skipped_courts++;
+            continue;
+        }
+
+        // Guests (spp_kq_roster_add_guest(), inc/spp-kq-roster.php) must
+        // never produce or affect a Club Rating -- skip the WHOLE game
+        // rather than just the guest's side, so the real players' result
+        // is never fed into the rating engine missing a player.
+        $has_guest = false;
+        foreach ( array_merge( $red, $black ) as $uid ) {
+            if ( get_user_meta( $uid, 'spp_kq_guest', true ) ) {
+                $has_guest = true;
+                break;
+            }
+        }
+        if ( $has_guest ) {
+            $skipped_guest_courts++;
             continue;
         }
 
@@ -177,7 +204,7 @@ function spp_kq_build_club_rating_games( int $occurrence_id ) : array {
         }
     }
 
-    return array( 'games' => $games, 'rank_by_user' => $rank_by_user, 'skipped_courts' => $skipped_courts );
+    return array( 'games' => $games, 'rank_by_user' => $rank_by_user, 'skipped_courts' => $skipped_courts, 'skipped_guest_courts' => $skipped_guest_courts );
 }
 
 /**
@@ -219,6 +246,9 @@ function spp_kq_maybe_publish_to_club_ratings( int $occurrence_id, string $event
 
     $skip_note = $built['skipped_courts'] > 0
         ? " ({$built['skipped_courts']} court(s) skipped -- couldn't be matched 2v2)"
+        : '';
+    $skip_note .= $built['skipped_guest_courts'] > 0
+        ? " ({$built['skipped_guest_courts']} court(s) skipped -- included a guest)"
         : '';
     $republish_note = $r['rolled_back_count'] > 0 ? ' (re-published: prior contribution rolled back first.)' : '';
 

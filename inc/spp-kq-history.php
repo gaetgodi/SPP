@@ -1,8 +1,18 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Permanent History, Live Scoreboard, Recap Email
-   Version: 1.7.0
-   Date: 2026-09-15
+   Version: 1.8.0
+   Date: 2026-09-17
+
+   Changes from 1.7.0 (Guest registrant -- see inc/spp-kq-roster.php's
+   own changelog for the full feature): spp_kq_send_recap_emails() now
+   filters out any user_id flagged spp_kq_guest=1 in usermeta before the
+   membership lookup, so a guest is never sent a recap (no real email
+   address exists for them). Permanent history archival (spp_kq_archive_
+   event_history() and everything it calls) is untouched on purpose --
+   a guest's games are real record-keeping and still archive normally;
+   their name displays via spp_kq_player_name()'s own guest fallback
+   (inc/spp-kq-screens.php 1.19.0), no membership-table row needed.
 
    Changes from 1.6.0 (decouple the Submit Photo prompt from the
    Club-Rating launch-date gate -- see the conversation this was built
@@ -745,6 +755,18 @@ function spp_kq_send_recap_emails( array $scoreboard, string $event_date, string
         }
     }
     $user_ids = array_keys( $user_ids );
+    if ( empty( $user_ids ) ) {
+        return array();
+    }
+
+    // Guests (spp_kq_roster_add_guest(), inc/spp-kq-roster.php) have no
+    // real email address -- never attempt to send them a recap.
+    // Belt-and-suspenders: the membership lookup below wouldn't return a
+    // row for them anyway (guests are deliberately not in that table),
+    // but this makes the skip explicit rather than incidental.
+    $user_ids = array_values( array_filter( $user_ids, function( $uid ) {
+        return ! get_user_meta( $uid, 'spp_kq_guest', true );
+    } ) );
     if ( empty( $user_ids ) ) {
         return array();
     }

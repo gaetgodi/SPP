@@ -1,8 +1,21 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Screens
-   Version: 1.18.0
-   Date: 2026-09-15
+   Version: 1.19.0
+   Date: 2026-09-17
+
+   Changes from 1.18.0 (Guest registrant -- see inc/spp-kq-roster.php's
+   own changelog for the full feature): spp_kq_player_name() now falls
+   back to the WP display name (set at creation, spp_kq_roster_add_
+   guest()) for any user_id flagged spp_kq_guest=1 in usermeta, instead
+   of the generic "Member #id" placeholder -- guests have no membership-
+   table row by design, since every other name lookup in this feature
+   (live screens, roster, scoreboard, permanent history) already funnels
+   through this one function. The placeholder remains the fallback for
+   everyone else (a real signal something's wrong, per this codebase's
+   "Data integrity -- be suspicious" convention). New 'roster_add_guest'
+   case in spp_kq_handle_post_actions() below, same access/phase gate as
+   the existing 'roster_add'/'roster_remove' cases.
 
    Changes from 1.17.0 (fix the embedded Submit Photo form's assets
    never loading, and its init logic never running when injected via
@@ -1027,7 +1040,21 @@ function spp_kq_count_unclaimed( int $occurrence_id, int $round_number ) : int {
 
 function spp_kq_player_name( ?string $first, ?string $last, int $user_id ) : string {
     $name = trim( ( $first ?? '' ) . ' ' . ( $last ?? '' ) );
-    return $name !== '' ? $name : "Member #{$user_id}";
+    if ( $name !== '' ) {
+        return $name;
+    }
+    // Guests (spp_kq_roster_add_guest(), inc/spp-kq-roster.php) are real
+    // WP users with NO membership-table row by design -- show the name
+    // typed at creation instead of the generic placeholder below, which
+    // stays reserved for a genuine data problem (a real, non-guest user
+    // somehow missing from membership).
+    if ( get_user_meta( $user_id, 'spp_kq_guest', true ) ) {
+        $user = get_userdata( $user_id );
+        if ( $user && $user->display_name !== '' ) {
+            return $user->display_name;
+        }
+    }
+    return "Member #{$user_id}";
 }
 
 /**
@@ -2753,6 +2780,20 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date, ?st
                 ? spp_kq_roster_add( $occurrence_id, $roster_user_id )
                 : spp_kq_roster_remove( $occurrence_id, $roster_user_id );
             return $roster_result['success'] ? '' : ( $roster_result['error'] ?? '' );
+
+        case 'roster_add_guest':
+            // Same gate/phase re-check as 'roster_add' just above -- see
+            // spp_kq_roster_add_guest()'s own docblock (inc/spp-kq-
+            // roster.php) for what this actually does (creates a real,
+            // no-login WP user, then adds it via spp_kq_roster_add()
+            // itself, no parallel registration logic).
+            $roster_state2 = spp_kq_get_event_state( $occurrence_id );
+            if ( ! $roster_state2 || $roster_state2['phase'] !== 'not_started' ) {
+                return 'The roster can only be adjusted before Round 1 starts.';
+            }
+            $guest_name   = isset( $_POST['spp_kq_guest_name'] ) ? sanitize_text_field( wp_unslash( $_POST['spp_kq_guest_name'] ) ) : '';
+            $guest_result = spp_kq_roster_add_guest( $occurrence_id, $guest_name );
+            return $guest_result['success'] ? '' : ( $guest_result['error'] ?? '' );
 
         case 'checkin_mark':
         case 'checkin_unmark':
