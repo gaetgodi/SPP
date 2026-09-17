@@ -1095,7 +1095,15 @@ function spp_kq_get_not_yet_drawn( int $occurrence_id ) : array {
 
     $out = array();
     foreach ( $remaining_ids as $uid ) {
-        $out[] = array( 'user_id' => $uid, 'name' => $by_id[ $uid ] ?? "Member #{$uid}" );
+        // 1.19.1 BUG FIX: the membership-table query above naturally never
+        // returns a row for a guest (no membership row by design), so
+        // $by_id[$uid] was always missing for one and this fell straight to
+        // the bare "Member #{id}" placeholder -- never gave spp_kq_player_
+        // name() a chance to apply its guest fallback. Routing the miss
+        // through that function instead preserves the exact same behavior
+        // for a genuine missing-membership-row bug (still "Member #{id}"),
+        // while a guest now resolves to their typed name.
+        $out[] = array( 'user_id' => $uid, 'name' => $by_id[ $uid ] ?? spp_kq_player_name( null, null, $uid ) );
     }
     return $out;
 }
@@ -1155,7 +1163,7 @@ function spp_kq_get_round_court_view( int $occurrence_id, int $round_number ) : 
     }
 
     $rows = $wpdb->get_results( $wpdb->prepare(
-        "SELECT a.court_name, a.team_color, m.first_name, m.last_name
+        "SELECT a.court_name, a.team_color, a.user_id, m.first_name, m.last_name
          FROM {$table} a
          LEFT JOIN membership m ON m.user_id = a.user_id
          WHERE a.occurrence_id = %d AND a.round_number = %d AND a.user_id IS NOT NULL
@@ -1165,7 +1173,13 @@ function spp_kq_get_round_court_view( int $occurrence_id, int $round_number ) : 
 
     foreach ( $rows as $r ) {
         if ( ! isset( $out[ $r['court_name'] ] ) ) continue;
-        $out[ $r['court_name'] ][ $r['team_color'] ][] = spp_kq_player_name( $r['first_name'], $r['last_name'], 0 );
+        // 1.19.1 BUG FIX: this used to hardcode 0 for spp_kq_player_name()'s
+        // user_id param (never SELECTed a.user_id at all) -- harmless for a
+        // real member (name always resolved from first_name/last_name), but
+        // a guest has neither, so spp_kq_player_name() fell through to its
+        // usermeta-driven guest-fallback check, which looked up user_id=0
+        // instead of the real player and failed, printing "Member #0".
+        $out[ $r['court_name'] ][ $r['team_color'] ][] = spp_kq_player_name( $r['first_name'], $r['last_name'], (int) $r['user_id'] );
     }
     return $out;
 }
@@ -1194,7 +1208,7 @@ function spp_kq_get_final_winner_names( int $occurrence_id, int $round_number ) 
     $winning_color = ( (int) $score['red_score'] > (int) $score['black_score'] ) ? 'red' : 'black';
 
     $rows = $wpdb->get_results( $wpdb->prepare(
-        "SELECT m.first_name, m.last_name FROM {$assignments_table} a
+        "SELECT a.user_id, m.first_name, m.last_name FROM {$assignments_table} a
          LEFT JOIN membership m ON m.user_id = a.user_id
          WHERE a.occurrence_id = %d AND a.round_number = %d AND a.court_name = 'Aces' AND a.team_color = %s",
         $occurrence_id, $round_number, $winning_color
@@ -1202,7 +1216,9 @@ function spp_kq_get_final_winner_names( int $occurrence_id, int $round_number ) 
 
     if ( empty( $rows ) ) return null;
 
-    $names = array_map( fn( $r ) => spp_kq_player_name( $r['first_name'], $r['last_name'], 0 ), $rows );
+    // 1.19.1 BUG FIX: same hardcoded-0 bug as spp_kq_get_round_court_view()
+    // just above -- see that function's own inline comment.
+    $names = array_map( fn( $r ) => spp_kq_player_name( $r['first_name'], $r['last_name'], (int) $r['user_id'] ), $rows );
     return implode( ' & ', $names );
 }
 
