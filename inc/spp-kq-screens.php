@@ -1,8 +1,23 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Screens
-   Version: 1.23.0
+   Version: 1.24.0
    Date: 2026-09-17
+
+   Changes from 1.23.0: spp_kq_handle_post_actions()'s 'end_event'/
+   'cancel_event' cases now call spp_kq_finalize_event_history_and_
+   recap() FIRST, before spp_kq_maybe_publish_to_club_ratings()/spp_kq_
+   update_format_rankings() -- previously last. Required by inc/spp-kq-
+   format-ranking.php's own 1.2.0 rework: it now reads a player's final
+   court from spp_kq_history (needed uniformly, since its new tie-break
+   levels look up OTHER players' past events from that same table too),
+   not the live spp_kq_scores/spp_kq_assignments tables, so spp_kq_
+   history must already hold THIS occurrence's rows by the time it
+   runs. Club Rating is unaffected by the reorder either way (its own
+   spp_kq_build_club_rating_games() has always read the live tables,
+   never spp_kq_history). Notice-text concatenation order in the
+   returned string is unchanged (rating, then format, then history) --
+   only the EXECUTION order changed, not what the facilitator reads.
 
    Changes from 1.22.0: spp_kq_handle_post_actions()'s 'end_event'/
    'cancel_event' cases now also call spp_kq_update_format_rankings()
@@ -2852,12 +2867,34 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date, ?st
             if ( ! $r['won'] ) {
                 return '';
             }
+            // 1.24.0: permanent history archive (spp_kq_history) now runs
+            // FIRST, before Club Rating/format rankings -- spp_kq_get_
+            // final_courts() (inc/spp-kq-format-ranking.php) reads a
+            // player's final court from spp_kq_history, not the live
+            // spp_kq_scores/spp_kq_assignments tables, so that table must
+            // already hold THIS occurrence's rows by the time format
+            // rankings run. Club Rating is unaffected by this reordering
+            // either way (spp_kq_build_club_rating_games() has always
+            // read the live tables, never spp_kq_history). Same trigger
+            // point/pre-launch guard for all three either way; only the
+            // ORDER changed, not what runs. 'cancel_event' below calls
+            // all three this exact same way -- any round that had
+            // already reported before a cancellation is still real data,
+            // worth archiving/rating/ranking exactly as if the event had
+            // ended normally.
+            $history_notice = spp_kq_finalize_event_history_and_recap( $occurrence_id, $event_date );
             // Stage 4: automatic Club Rating publish on a successful
             // transition only -- spp_kq_maybe_publish_to_club_ratings()
             // (inc/spp-kq-club-rating.php) owns the pre-launch date guard
             // and the source ('ace'/'queen') resolution; this dispatcher
             // has no rating-engine knowledge of its own.
             $rating_result = spp_kq_maybe_publish_to_club_ratings( $occurrence_id, $event_date );
+            // Ace/Queen of the Courts format rankings (inc/spp-kq-format-
+            // ranking.php) -- same trigger point and pre-launch guard as
+            // the Club Rating publish just above, but a completely
+            // separate, independent-decay-average concern of its own;
+            // see that file's own header for the full design.
+            $format_result = spp_kq_update_format_rankings( $occurrence_id, $event_date );
             // 1.19.0: membership/Master/Masterlist{year}/Membershiplist{year}
             // are wholesale-rebuilt snapshot tables (spp_create_membership_
             // table(), inc/spp-create-membership-table.php) that pivot
@@ -2876,23 +2913,9 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date, ?st
             // full-table-rebuild cost the ladder's own pipeline already
             // accepts synchronously today (spp-apply-override-to-results-
             // table.php).
-            // Ace/Queen of the Courts format rankings (inc/spp-kq-format-
-            // ranking.php) -- same trigger point and pre-launch guard as
-            // the Club Rating publish just above, but a completely
-            // separate, independent-decay-average concern of its own;
-            // see that file's own header for the full design.
-            $format_result = spp_kq_update_format_rankings( $occurrence_id, $event_date );
             if ( $rating_result['published'] || $format_result['updated'] ) {
                 spp_create_membership_table();
             }
-            // Permanent history archive (spp_kq_history) + per-player
-            // recap email -- same trigger point as the rating publish
-            // above, same pre-launch guard (inc/spp-kq-history.php reuses
-            // SPP_KQ_CLUB_RATING_LAUNCH_DATE, doesn't duplicate it).
-            // 'cancel_event' below calls this exact same way -- any round
-            // that had already reported before a cancellation is still
-            // real data, worth archiving/recapping.
-            $history_notice = spp_kq_finalize_event_history_and_recap( $occurrence_id, $event_date );
             return trim( $rating_result['notice'] . ( $format_result['notice'] !== '' ? ' ' . $format_result['notice'] : '' ) . ( $history_notice !== '' ? ' ' . $history_notice : '' ) );
 
         case 'cancel_event':
@@ -2900,19 +2923,20 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date, ?st
             if ( ! $r['won'] ) {
                 return '';
             }
-            // Same trigger point and same call pattern as 'end_event'
-            // above -- any round that had already reported before
-            // cancellation is still real data, worth archiving/recapping
-            // exactly as if the event had ended normally. See
-            // inc/spp-kq-history.php's own header: cancel_event and
-            // end_event both trigger this, differing only in which CAS
-            // transition got them here.
+            // Same trigger point, same call pattern, same ORDER as
+            // 'end_event' above (see that case's own 1.24.0 comment for
+            // why history archival now runs first) -- any round that had
+            // already reported before a cancellation is still real data,
+            // worth archiving/rating/ranking exactly as if the event had
+            // ended normally. See inc/spp-kq-history.php's own header:
+            // cancel_event and end_event both trigger this, differing
+            // only in which CAS transition got them here.
+            $history_notice = spp_kq_finalize_event_history_and_recap( $occurrence_id, $event_date );
             $rating_result = spp_kq_maybe_publish_to_club_ratings( $occurrence_id, $event_date );
             $format_result = spp_kq_update_format_rankings( $occurrence_id, $event_date );
             if ( $rating_result['published'] || $format_result['updated'] ) {
                 spp_create_membership_table();
             }
-            $history_notice = spp_kq_finalize_event_history_and_recap( $occurrence_id, $event_date );
             return trim( $rating_result['notice'] . ( $format_result['notice'] !== '' ? ' ' . $format_result['notice'] : '' ) . ( $history_notice !== '' ? ' ' . $history_notice : '' ) );
 
         case 'complete_draw_randomly':
