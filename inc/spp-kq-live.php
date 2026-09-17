@@ -1,8 +1,24 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Live Event Runner
-   Version: 1.6.0
-   Date: 2026-09-15
+   Version: 1.7.0
+   Date: 2026-09-17
+
+   Changes from 1.6.0 (fix Full Scoreboard / Event Detail court display
+   order): new spp_kq_order_courts_for_display() -- re-keys a court-
+   named array into spp_kq_master_court_hierarchy()'s fixed order
+   (Aces, Kings, Queens, Jacks), for DISPLAY only. Used by inc/spp-kq-
+   history.php's spp_kq_get_full_scoreboard()/spp_kq_get_history_
+   scoreboard(), which previously built their court-keyed arrays purely
+   from SQL row order ("ORDER BY court_name ASC", i.e. alphabetical:
+   Aces, Jacks, Kings, Queens) -- unlike spp_kq_get_round_court_view()
+   (inc/spp-kq-screens.php), which already pre-seeded its keys from
+   spp_kq_determine_courts_order() and was always correct. Movement/CAS/
+   scoring untouched -- spp_kq_determine_courts_order() and
+   spp_kq_master_court_hierarchy() itself, the actual source of court
+   RANK for winner-moves-up/loser-moves-down, are unchanged; this new
+   function is never called from anywhere in inc/spp-kq-movement.php or
+   the transition/CAS code in this file.
 
    Changes from 1.5.0 ("Complete Allocation Randomly" at the round-1
    draw -- see the conversation this was built from for the full spec):
@@ -313,6 +329,34 @@ const SPP_KQ_COURTS_REST_SECONDS = 120;
  */
 function spp_kq_master_court_hierarchy() : array {
     return array( 'Aces', 'Kings', 'Queens', 'Jacks' );
+}
+
+/**
+ * Re-key an array whose top-level keys are court names into this same
+ * fixed hierarchy order -- DISPLAY only, never used by movement/CAS/
+ * scoring, which already get their court order from spp_kq_determine_
+ * courts_order() (itself built from this same hierarchy) rather than
+ * from anything this function touches. Introduced because a few read
+ * paths (spp_kq_get_full_scoreboard()/spp_kq_get_history_scoreboard(),
+ * inc/spp-kq-history.php) build their court-keyed array purely from
+ * SQL row order (previously "ORDER BY court_name ASC", i.e.
+ * alphabetical: Aces, Jacks, Kings, Queens) instead of pre-seeding keys
+ * from the hierarchy the way spp_kq_get_round_court_view() (inc/spp-kq-
+ * screens.php) already does -- this gives those callers the same fixed
+ * display order from one shared definition instead of each
+ * reimplementing it. Any key not in the hierarchy (shouldn't happen --
+ * courts are a fixed, closed set) is appended at the end, unordered,
+ * rather than silently dropped.
+ */
+function spp_kq_order_courts_for_display( array $by_court ) : array {
+    $ordered = array();
+    foreach ( spp_kq_master_court_hierarchy() as $court ) {
+        if ( array_key_exists( $court, $by_court ) ) {
+            $ordered[ $court ] = $by_court[ $court ];
+            unset( $by_court[ $court ] );
+        }
+    }
+    return $ordered + $by_court;
 }
 
 /**

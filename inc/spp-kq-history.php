@@ -1,8 +1,29 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Permanent History, Live Scoreboard, Recap Email
-   Version: 1.8.0
+   Version: 1.9.0
    Date: 2026-09-17
+
+   Changes from 1.8.0 (fix court display order -- was alphabetical, now
+   the fixed Aces/Kings/Queens/Jacks hierarchy everywhere courts are
+   shown): spp_kq_get_full_scoreboard() and spp_kq_get_history_
+   scoreboard() now run their per-round court-keyed array through the
+   new spp_kq_order_courts_for_display() (inc/spp-kq-live.php 1.7.0,
+   built from spp_kq_master_court_hierarchy() -- one shared definition,
+   not duplicated) before returning -- both previously left their
+   court order exactly as SQL's "ORDER BY court_name ASC" produced it
+   (alphabetical). Fixes the live Full Scoreboard screen AND the
+   historical Event Detail view in one place, since both share this
+   same spp_kq_render_scoreboard_markup() renderer, which does no
+   ordering of its own. spp_report_kq_history() (the flat kq_history
+   report, below) fixed separately -- its row order IS its display
+   order (no court-keyed grouping to re-key), so its own SQL ORDER BY
+   now uses a FIELD(court_name, ...) clause built from that same
+   spp_kq_master_court_hierarchy() instead of court_name ASC.
+   DISPLAY ONLY: spp_kq_archive_event_history()'s own write path (what
+   actually lands in spp_kq_history) and every recap-email/Club-Rating
+   consumer are unchanged -- this only reorders what's already been
+   read, never what's stored or how it's computed.
 
    Changes from 1.7.0 (Guest registrant -- see inc/spp-kq-roster.php's
    own changelog for the full feature): spp_kq_send_recap_emails() now
@@ -263,6 +284,9 @@ function spp_kq_get_full_scoreboard( int $occurrence_id ) : array {
             'name'    => spp_kq_player_name( $r['first_name'], $r['last_name'], (int) $r['user_id'] ),
         );
     }
+    foreach ( $out as $round => $courts ) {
+        $out[ $round ] = spp_kq_order_courts_for_display( $courts );
+    }
     return $out;
 }
 
@@ -316,6 +340,9 @@ function spp_kq_get_history_scoreboard( string $source, string $event_date ) : a
             'user_id' => (int) $r['user_id'],
             'name'    => spp_kq_player_name( $r['first_name'], $r['last_name'], (int) $r['user_id'] ),
         );
+    }
+    foreach ( $out as $round => $courts ) {
+        $out[ $round ] = spp_kq_order_courts_for_display( $courts );
     }
     return $out;
 }
@@ -880,13 +907,26 @@ function spp_report_kq_history() {
     global $wpdb;
     $table = spp_kq_history_table();
 
+    // Court order within the SQL itself (not a PHP-side re-sort, unlike
+    // spp_kq_get_full_scoreboard()/spp_kq_get_history_scoreboard() above)
+    // -- this report's row order IS its display order (flat table, no
+    // court-keyed grouping to re-key), and this function's own stable-
+    // usort convention (see this function's docblock/1.1.0 changelog)
+    // depends on the SQL pre-ordering courts correctly within each
+    // round. FIELD() clause built from spp_kq_master_court_hierarchy()
+    // (inc/spp-kq-live.php) -- same single shared definition as the
+    // PHP-side re-sort above, not a second hardcoded copy of the order.
+    $court_field_sql = 'FIELD(h.court_name, ' . implode( ', ', array_map(
+        fn( $c ) => "'" . esc_sql( $c ) . "'", spp_kq_master_court_hierarchy()
+    ) ) . ')';
+
     $rows = $wpdb->get_results(
         "SELECT h.occurrence_id, h.round_number, h.court_name, h.team_color, h.user_id,
                 h.red_score, h.black_score, h.event_date, h.source,
                 m.first_name, m.last_name
          FROM {$table} h
          LEFT JOIN membership m ON m.user_id = h.user_id
-         ORDER BY h.event_date DESC, h.round_number ASC, h.court_name ASC, h.team_color ASC",
+         ORDER BY h.event_date DESC, h.round_number ASC, {$court_field_sql} ASC, h.team_color ASC",
         ARRAY_A
     );
 
