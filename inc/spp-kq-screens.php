@@ -1,8 +1,77 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Screens
-   Version: 1.20.0
+   Version: 1.21.0
    Date: 2026-09-17
+
+   Changes from 1.20.0 -- two fixes to the live event flow, reviewed and
+   approved together:
+
+   PART A (fold View Full Scoreboard into the persistent AJAX app): the
+   persistent-page/fragment-swap architecture (organizing/in_play only --
+   see spp_kq_render_live_app()'s own docblock) covered announce-courts,
+   rest-countdown, Start Play, and in-play, but View Full Scoreboard was
+   still a separate real page navigation (?kq_view=scoreboard) -- Back or
+   a mid-game refresh reset the browser's audio-unlock state, exactly
+   the problem the whole AJAX rebuild existed to eliminate. New
+   spp_kq_render_scoreboard_fragment() (same live data as spp_kq_render_
+   full_scoreboard_screen(), plus an in-fragment "Back to game" link)
+   and its own wp_ajax_spp_kq_render_scoreboard_fragment endpoint, both
+   wired into spp_kq_render_live_app()'s bootstrap script: the persistent
+   "View Full Scoreboard"/"Back" link (spp_kq_render_scoreboard_link(),
+   now id="kq-scoreboard-link") is intercepted there and swaps the
+   scoreboard into #kq-live-app instead of navigating; "Back to game"
+   (both the top link and the in-fragment one) just calls the existing
+   SppKqLiveApp.refreshNow() (swapFragment()) -- which now also resets
+   the link's own label/href, the one place #kq-live-app's content ever
+   becomes "the real live screen" again, whoever triggered it. No
+   suppression added for poll()'s own unconditional swap-on-signature-
+   mismatch -- if the real phase/round changes while the scoreboard is
+   showing, the outer poll still swaps it away to the new real screen,
+   same as it would for any other fragment; confirmed live (see below).
+   The standalone ?kq_view=scoreboard page/route and [spp_kq_event_
+   detail] (a completely separate function/data source, inc/spp-kq-
+   history.php) are both untouched.
+
+   PART B (in-play screen didn't show partially-reported scores): a
+   device that loaded the in-play screen before a given court reported
+   never saw that court's real score appear, even after it was reported
+   by another device -- only the aggregate "N of M reported" line ever
+   updated live (window.SppKqLiveApp.onProgress). Root cause confirmed
+   by reading wp_ajax_spp_kq_poll_status's own response shape: it never
+   carried per-court values at all, only the count. Fixed: that endpoint
+   now also returns 'scores' (every court with both red_score/black_
+   score non-NULL this round, spp_kq_get_round_scores(), inc/spp-kq-
+   live.php) alongside the existing reported/total; poll() passes it
+   through to onProgress(reported, total, scores); spp_kq_render_in_
+   play_screen()'s own onProgress handler now also updates each
+   reported court's own input values + "Saved" tag directly (skipping
+   an input the visitor is actively focused on, so a live correction in
+   progress is never clobbered) -- a lightweight DOM update, no full
+   fragment swap, so the running timer/audio are never disturbed for a
+   same-phase/same-round score arriving from elsewhere.
+
+   LIVE-TESTED (not just read/reasoned about), occurrence 118 (pre-
+   launch sandbox -- today's real live event, 265, never touched):
+   drove round 1 to in_play with 2 courts, submitted one court's score
+   from a SEPARATE server-side call (simulating another device) while a
+   real logged-in browser tab sat on the in-play screen the whole time --
+   confirmed that court's real score and the "Saved" tag appeared via
+   the next poll tick alone, no reload (a `window.__marker` set before
+   the submission was still present after). Confirmed the scoreboard
+   link/fragment round-trip (enter -> Back to game) preserves a second
+   marker, the timer's own countdown (continuous across the swap, not
+   reset), and the audio-unlock banner staying dismissed (no re-prompt).
+   Then, while still showing the scoreboard fragment, completed the
+   round's second court score from the server -- confirmed the outer
+   poll detected the real phase/round change and auto-swapped #kq-live-
+   app to the correct new "Round 2 -- Ready to play" screen on its own,
+   with the toggle link correctly reset to "View Full Scoreboard" --
+   also exercising Part B's "all-reported -> transition" path in the
+   same pass. Zero console errors throughout. [spp_kq_event_detail]
+   (a real, separate page) loaded and rendered normally, confirming no
+   shared-code interference. Occurrence 118 restored to its original
+   not_started resting state afterward.
 
    Changes from 1.19.1 (restrict Full Reset to pre-launch-date test/
    sandbox occurrences only -- urgent same-day fix, a real live event
@@ -2543,8 +2612,37 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round, ?int $rou
         // changed enough to warrant a full fragment swap. A structural
         // change (round actually advancing) swaps this whole fragment
         // out instead, which is what used to be this poll's own reload.
-        window.SppKqLiveApp.onProgress = function(reported, total) {
+        // Part B (1.20.0): 'scores' -- every court that HAS fully
+        // reported this round, from wp_ajax_spp_kq_poll_status's own
+        // extended payload (inc/spp-kq-screens.php) -- paints each
+        // reported court's REAL values on THIS device, even though this
+        // device never submitted them (the earlier version only ever
+        // updated the aggregate "N of M reported" line here; a court's
+        // own score cells never appeared/refreshed until this device's
+        // OWN save-button click resolved, or a full fragment swap
+        // happened to occur for an unrelated reason -- root cause: the
+        // poll payload simply never carried per-court values at all).
+        window.SppKqLiveApp.onProgress = function(reported, total, scores) {
             if (progressEl) progressEl.textContent = reported + ' of ' + total + ' courts reported';
+            if (scores) {
+                scores.forEach(function(s) {
+                    document.querySelectorAll('.kq-court-card').forEach(function(card) {
+                        if (card.dataset.court !== s.court_name) return;
+                        var redInput   = card.querySelector('.kq-court-red-input');
+                        var blackInput = card.querySelector('.kq-court-black-input');
+                        var savedTag   = card.querySelector('.kq-saved');
+                        // Don't clobber an input the visitor is actively
+                        // typing into right now (e.g. correcting an
+                        // already-reported score) -- server authority
+                        // still wins the moment they save, same as the
+                        // save handler's own "applied === false"
+                        // reconciliation just above.
+                        if (redInput && document.activeElement !== redInput) redInput.value = s.red_score;
+                        if (blackInput && document.activeElement !== blackInput) blackInput.value = s.black_score;
+                        if (savedTag) savedTag.style.display = 'inline';
+                    });
+                });
+            }
             if (total > 0 && reported === total) markRoundComplete();
         };
     })();
@@ -3046,6 +3144,15 @@ function spp_kq_render_live_app( int $occurrence_id, array $state ) : string {
         var ajaxUrl = <?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>;
         var nonce   = <?php echo wp_json_encode( wp_create_nonce( 'spp_kq_live_action' ) ); ?>;
         var occ     = <?php echo (int) $occurrence_id; ?>;
+        // Part A (1.20.0): the persistent "View Full Scoreboard" / "Back"
+        // toggle link (spp_kq_render_scoreboard_link(), rendered once,
+        // statically, OUTSIDE #kq-live-app -- same placement as this
+        // shell itself) -- href values for both its states, precomputed
+        // server-side exactly like that function computes them, so JS
+        // never has to reconstruct query-string logic of its own.
+        var scoreboardLink    = document.getElementById('kq-scoreboard-link');
+        var scoreboardViewUrl = <?php echo wp_json_encode( esc_url( add_query_arg( 'kq_view', 'scoreboard' ) ) ); ?>;
+        var scoreboardBackUrl = <?php echo wp_json_encode( esc_url( remove_query_arg( 'kq_view' ) ) ); ?>;
 
         function executeScripts(container) {
             var scripts = container.querySelectorAll('script');
@@ -3120,8 +3227,76 @@ function spp_kq_render_live_app( int $occurrence_id, array $state ) : string {
                     lastSignature = signatureOf(res.data);
                     appEl.innerHTML = res.data.html;
                     executeScripts(appEl);
+                    // Part A (1.20.0): a swapFragment() call always lands
+                    // on the actual live-phase content, never the
+                    // scoreboard -- reset the toggle link's label/href
+                    // unconditionally here, the one place #kq-live-app's
+                    // content ever becomes "the real live screen" again,
+                    // whether poll(), submitAction(), or the scoreboard
+                    // fragment's own "Back to game" link (which just
+                    // calls this same function) triggered it. A no-op
+                    // when the link isn't even on the page (not_started/
+                    // complete/cancelled -- see spp_kq_render_scoreboard_
+                    // link()'s own docblock) or was already showing
+                    // "View Full Scoreboard".
+                    if (scoreboardLink) {
+                        scoreboardLink.textContent = 'View Full Scoreboard';
+                        scoreboardLink.setAttribute('href', scoreboardViewUrl);
+                    }
                 })
                 .catch(function() { swapping = false; });
+        }
+
+        // Part A (1.20.0): fetches the scoreboard AS A FRAGMENT (see
+        // spp_kq_render_scoreboard_fragment(), inc/spp-kq-screens.php)
+        // and swaps it into #kq-live-app -- same cleanup-before-swap
+        // discipline as swapFragment() just above (a stale onProgress/
+        // cleanup hook from whatever WAS showing must not keep firing
+        // against DOM this swap just removed), but deliberately does
+        // NOT touch lastSignature: the scoreboard is a client-side
+        // overlay on top of whatever the real structural state is, not
+        // itself a structural state poll() should ever compare against.
+        function showScoreboard() {
+            if (swapping) return;
+            swapping = true;
+            var data = new FormData();
+            data.append('action', 'spp_kq_render_scoreboard_fragment');
+            data.append('nonce', nonce);
+            data.append('occ', occ);
+            fetch(ajaxUrl, { method: 'POST', body: data, credentials: 'same-origin' })
+                .then(function(r) { return r.json(); })
+                .then(function(res) {
+                    swapping = false;
+                    if (!res.success) return;
+                    var appEl = document.getElementById('kq-live-app');
+                    if (!appEl) return;
+                    if (SppKqLiveApp.cleanup) SppKqLiveApp.cleanup();
+                    SppKqLiveApp.onProgress = null;
+                    SppKqLiveApp.cleanup = null;
+                    appEl.innerHTML = res.data.html;
+                    executeScripts(appEl);
+                    if (scoreboardLink) {
+                        scoreboardLink.textContent = '« Back';
+                        scoreboardLink.setAttribute('href', scoreboardBackUrl);
+                    }
+                })
+                .catch(function() { swapping = false; });
+        }
+
+        // The persistent link toggles based on its OWN current label
+        // (source of truth for "am I currently viewing the scoreboard"
+        // from this script's point of view -- no separate boolean to
+        // drift out of sync with it) -- real navigation prevented in
+        // favor of the in-app swap either direction.
+        if (scoreboardLink) {
+            scoreboardLink.addEventListener('click', function(e) {
+                e.preventDefault();
+                if (scoreboardLink.textContent.indexOf('Back') !== -1) {
+                    swapFragment();
+                } else {
+                    showScoreboard();
+                }
+            });
         }
 
         // Submits a REAL <form> (same hidden nonce/action/round inputs
@@ -3166,7 +3341,7 @@ function spp_kq_render_live_app( int $occurrence_id, array $state ) : string {
             });
         }
 
-        window.SppKqLiveApp = { refreshNow: swapFragment, wireAjaxForm: wireAjaxForm, onProgress: null, cleanup: null };
+        window.SppKqLiveApp = { refreshNow: swapFragment, wireAjaxForm: wireAjaxForm, showScoreboard: showScoreboard, onProgress: null, cleanup: null };
 
         var lastSignature = <?php echo wp_json_encode( $initial_signature ); ?>;
 
@@ -3208,7 +3383,17 @@ function spp_kq_render_live_app( int $occurrence_id, array $state ) : string {
                         lastSignature = sig;
                         swapFragment();
                     } else if (SppKqLiveApp.onProgress) {
-                        SppKqLiveApp.onProgress(d.reported, d.total);
+                        // Part B (1.20.0): d.scores -- each court that HAS
+                        // reported this round, with its actual red/black
+                        // score (see wp_ajax_spp_kq_poll_status's own
+                        // docblock) -- lets the in-play screen's onProgress
+                        // handler paint a partially-reported round's real
+                        // values on a device that didn't submit them,
+                        // not just the aggregate count. Not present on
+                        // every phase's own onProgress signature (only the
+                        // in-play screen registers one that uses it) --
+                        // harmless to always pass.
+                        SppKqLiveApp.onProgress(d.reported, d.total, d.scores);
                     }
 
                     // Terminal -- nothing can change server-side past
@@ -3385,6 +3570,41 @@ function spp_kq_render_full_scoreboard_screen( int $occurrence_id ) : string {
 }
 
 /**
+ * Scoreboard AS A FRAGMENT for the persistent app (Part A, 1.20.0) --
+ * same live data/markup as spp_kq_render_full_scoreboard_screen() just
+ * above (the standalone ?kq_view=scoreboard page this supplements for
+ * AJAX-swap purposes; that page/route is completely unchanged and is
+ * still what a non-JS visitor's <a href> points at, and still what
+ * loads on a genuine fresh page request), plus a "Back to game" link
+ * that calls SppKqLiveApp.refreshNow() -- the exact same function
+ * poll()/submitAction() already use to swap in the real current live
+ * fragment -- rather than a browser Back button or a real navigation,
+ * so audio/timer/polling state survives exactly like every other
+ * fragment transition already does. Fetched by wp_ajax_spp_kq_render_
+ * scoreboard_fragment below; wired up from spp_kq_render_live_app()'s
+ * own bootstrap script, which is the only place window.SppKqLiveApp
+ * exists (organizing/in_play only) -- see that function's own docblock.
+ */
+function spp_kq_render_scoreboard_fragment( int $occurrence_id ) : string {
+    ob_start();
+    ?>
+    <p class="kq-hint"><a href="#" id="kq-back-to-game-link">&laquo; Back to game</a></p>
+    <?php echo spp_kq_render_full_scoreboard_screen( $occurrence_id ); ?>
+    <script>
+    (function() {
+        var backLink = document.getElementById('kq-back-to-game-link');
+        if (!backLink) return;
+        backLink.addEventListener('click', function(e) {
+            e.preventDefault();
+            if (window.SppKqLiveApp && SppKqLiveApp.refreshNow) SppKqLiveApp.refreshNow();
+        });
+    })();
+    </script>
+    <?php
+    return ob_get_clean();
+}
+
+/**
  * "View Full Scoreboard" / "&laquo; Back" toggle link -- rendered once
  * in the main dispatcher, same placement pattern as
  * spp_kq_render_full_reset() (present regardless of which phase-driven
@@ -3392,6 +3612,16 @@ function spp_kq_render_full_scoreboard_screen( int $occurrence_id ) : string {
  * exists (spp_kq_has_any_recorded_score()) -- nothing to show before
  * that. Always shown once already viewing the scoreboard, so there's
  * always a way back.
+ *
+ * 1.20.0: id="kq-scoreboard-link" added so spp_kq_render_live_app()'s
+ * own bootstrap script (organizing/in_play only -- the only phases that
+ * actually run the persistent AJAX app) can find and intercept this
+ * link's click to swap the scoreboard in as another fragment instead of
+ * navigating -- see that function's own docblock. This function itself
+ * is otherwise UNCHANGED: $viewing_scoreboard is still real server-side
+ * state (?kq_view=scoreboard), so the href/label rendered here remain
+ * the correct plain-navigation fallback for a non-JS visitor, and the
+ * initial page-load state JS then takes over from.
  */
 function spp_kq_render_scoreboard_link( int $occurrence_id, bool $viewing_scoreboard ) : string {
     if ( ! $viewing_scoreboard && ! spp_kq_has_any_recorded_score( $occurrence_id ) ) {
@@ -3401,7 +3631,7 @@ function spp_kq_render_scoreboard_link( int $occurrence_id, bool $viewing_scoreb
         ? remove_query_arg( 'kq_view' )
         : add_query_arg( 'kq_view', 'scoreboard' );
     $label = $viewing_scoreboard ? '&laquo; Back' : 'View Full Scoreboard';
-    return '<p class="kq-hint"><a href="' . esc_url( $url ) . '">' . $label . '</a></p>';
+    return '<p class="kq-hint"><a id="kq-scoreboard-link" href="' . esc_url( $url ) . '">' . $label . '</a></p>';
 }
 
 /**
@@ -3515,8 +3745,7 @@ add_action( 'wp_ajax_spp_kq_submit_score', function() {
 // AJAX: lightweight status poll (Stage 3) -- lets the in-play screen
 // update its "N of M reported" line live and detect a round advance
 // without a full reload, while staying well short of real-time push.
-// Read-only, no access restriction beyond being logged in: the count
-// alone identifies no one's score.
+// Read-only, no access restriction beyond being logged in.
 //
 // 1.16.0: no longer carries redirect_url -- the post-completion Submit
 // Photo prompt is embedded directly on the Complete/Cancelled screen
@@ -3526,6 +3755,17 @@ add_action( 'wp_ajax_spp_kq_submit_score', function() {
 // way it picks up any other structural change -- a normal fragment
 // swap (see spp_kq_render_live_app()'s own script) -- since that
 // screen IS the correct destination now, not a link off of it.
+//
+// 1.20.0 (Part B): now also carries 'scores' -- every court that HAS
+// fully reported this round (both red_score/black_score non-NULL), so
+// a device watching the in-play screen that did NOT submit a given
+// court's score still sees its real value without a reload, not just
+// the aggregate "N of M reported" count -- see spp_kq_render_in_play_
+// screen()'s own onProgress handler for what does with it. This is the
+// exact same data already rendered directly into that screen's own
+// initial HTML (spp_kq_get_round_scores(), inc/spp-kq-live.php) for
+// anyone with access to it -- not a new exposure, just now also kept
+// live without a full fragment swap.
 // =============================================================
 
 add_action( 'wp_ajax_spp_kq_poll_status', function() {
@@ -3544,13 +3784,24 @@ add_action( 'wp_ajax_spp_kq_poll_status', function() {
         wp_send_json_error( 'Occurrence not found.' );
     }
 
-    $progress = spp_kq_get_round_progress( $occurrence_id, (int) $state['current_round'] );
+    $round    = (int) $state['current_round'];
+    $progress = spp_kq_get_round_progress( $occurrence_id, $round );
+
+    // Only fully-reported courts (both scores non-NULL) -- matches
+    // $progress['reported']'s own definition exactly (spp_kq_get_round_
+    // progress(), inc/spp-kq-live.php), so the two can never disagree
+    // about which courts count as "reported".
+    $scores = array_values( array_filter(
+        spp_kq_get_round_scores( $occurrence_id, $round ),
+        fn( $s ) => $s['red_score'] !== null && $s['black_score'] !== null
+    ) );
 
     wp_send_json_success( array(
         'phase'               => $state['phase'],
-        'current_round'       => (int) $state['current_round'],
+        'current_round'       => $round,
         'reported'            => $progress['reported'],
         'total'               => $progress['total'],
+        'scores'              => $scores,
         // 1.13.0: lets a device detect a DIFFERENT device pressing
         // "Ready -- Announce Courts" -- null until that happens, same
         // nullable-epoch shape as round_started_at. 1.14.0: also part
@@ -3606,6 +3857,36 @@ add_action( 'wp_ajax_spp_kq_render_fragment', function() {
         'current_round'       => $state ? (int) $state['current_round'] : null,
         'courts_announced_at' => ( $state && $state['courts_announced_at'] !== null ) ? (int) $state['courts_announced_at'] : null,
     ) );
+} );
+
+/**
+ * Returns the scoreboard fragment (Part A, 1.20.0) -- same access/nonce
+ * discipline as wp_ajax_spp_kq_render_fragment just above, and used the
+ * same way (fetched by spp_kq_render_live_app()'s own bootstrap script,
+ * swapped into #kq-live-app in place of the phase-driven fragment). No
+ * phase/current_round/courts_announced_at in the response -- unlike
+ * that endpoint, this one is never used to update lastSignature; the
+ * scoreboard is a client-side overlay on top of whatever the real
+ * structural state is, not itself a structural state. If that real
+ * state changes while the scoreboard is showing (a round actually
+ * advancing), the outer poll's own unconditional swapFragment() call on
+ * a signature mismatch still fires exactly as it would for any other
+ * fragment and replaces the scoreboard with the new real screen -- see
+ * spp_kq_render_live_app()'s own docblock; deliberately no special-
+ * casing to suppress that while viewing the scoreboard.
+ */
+add_action( 'wp_ajax_spp_kq_render_scoreboard_fragment', function() {
+    if ( ! spp_kq_can_facilitate() ) {
+        wp_send_json_error( 'Not authorized' );
+    }
+    check_ajax_referer( 'spp_kq_live_action', 'nonce' );
+
+    $occurrence_id = isset( $_POST['occ'] ) ? absint( $_POST['occ'] ) : 0;
+    if ( ! $occurrence_id ) {
+        wp_send_json_error( 'Missing parameters.' );
+    }
+
+    wp_send_json_success( array( 'html' => spp_kq_render_scoreboard_fragment( $occurrence_id ) ) );
 } );
 
 /**
