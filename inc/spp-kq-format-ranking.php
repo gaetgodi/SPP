@@ -1,20 +1,60 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Format Rankings
-   Version: 1.0.0
+   Version: 1.1.1
    Date: 2026-09-17
+
+   Changes from 1.1.0 (BUG FIX, found while re-testing the 1.1.0
+   change against real data): spp_kq_update_format_rankings()/spp_kq_
+   recompute_format_ranks() now write spp_kq_{source}_avg/rank via
+   update_user_meta() instead of raw $wpdb->query() DELETE+INSERT.
+   Confirmed directly on this site's own Redis-backed persistent object
+   cache: a raw SQL write leaves get_user_meta() returning a STALE
+   cached value indefinitely for that key -- and a LATER delete_user_
+   meta() call can't self-heal it either, since it finds nothing left
+   to delete (the raw SQL already removed the row) and skips its own
+   cache invalidation as a result. The raw-SQL pattern was copied from
+   spp_crt_process_event_ratings()'s own STEP 5 (spp_glicko_rating) --
+   but that precedent never reads its OLD value back via get_user_meta()
+   at all (its "old" state comes from club_rating_state, a plain custom
+   table, always read via raw SQL); this file's whole EMA design
+   depends on get_user_meta() correctly seeing the last write, so it
+   needed the API that actually keeps the cache honest. See spp_kq_
+   update_format_rankings()'s own inline comment for the full story.
 
    PURPOSE:
    Two independent, decay-weighted moving-average rankings -- one for
-   Ace of the Courts, one for Queen of the Courts -- based on the court
-   each player ENDS an event on (Aces=4 down to Jacks=1, spp_kq_court_
-   value(), inc/spp-kq-live.php). Deliberately separate from Club
-   Rating (inc/spp-kq-club-rating.php, inc/spp-update-club-ratings.php):
-   that's a Glicko-2 skill rating derived from actual game results
-   across BOTH ladder and KQ; this is a simple, KQ-only "where do you
-   typically finish" trend per format, and the two never influence each
-   other -- an Ace result never touches a player's Queen average or
-   vice versa.
+   Ace of the Courts, one for Queen of the Courts -- based on each
+   player's HYPOTHETICAL next-round court after their actual final
+   result (Aces=4 down to Jacks=1, spp_kq_court_value(), inc/spp-kq-
+   live.php). Deliberately separate from Club Rating (inc/spp-kq-club-
+   rating.php, inc/spp-update-club-ratings.php): that's a Glicko-2
+   skill rating derived from actual game results across BOTH ladder and
+   KQ; this is a simple, KQ-only "where do you typically finish" trend
+   per format, and the two never influence each other -- an Ace result
+   never touches a player's Queen average or vice versa.
+
+   Changes from 1.0.0 (real ranking discrepancy investigated same day:
+   Gaetan expected Kathleen Castillo above Sol Boada in Queen Rank for
+   occurrence 265 -- both finished on Aces, but Kathleen WON her final
+   game and Sol LOST his, and 1.0.0 scored strictly by final court, so
+   the winner and loser of the very same last game got an IDENTICAL
+   score. Root cause: the loser hadn't actually been relegated yet --
+   that only happens at the start of a round that, for a player's last
+   round, never comes): spp_kq_get_final_courts() renamed to spp_kq_
+   get_hypothetical_next_courts() and rewritten to feed each player's
+   actual final round through spp_kq_compute_next_round() (inc/spp-kq-
+   movement.php) -- the SAME real movement/clamping logic the event
+   itself already uses for real round-to-round advancement, reused
+   as-is rather than reimplemented. A winner's hypothetical court is one
+   court UP (clamped at Aces -- a winner already on top stays there); a
+   loser's is one court DOWN (clamped at Jacks). This naturally splits
+   a shared final court into "would rise" vs "would fall" based on the
+   real result, resolving both the win/loss blindness and most same-
+   court ties in one change. Scores by the same court-value scale as
+   before (Aces=4..Jacks=1) -- only WHICH court is scored changed, not
+   the value scale, the average/rank storage mechanism, the decay
+   constant, the tie-break rule, or guest exclusion.
 
    STORAGE, matching the ladder's own established Rank convention
    exactly (spp-copy-ranks-to-user-profile.php: plain usermeta,
@@ -57,15 +97,33 @@
    same reason Club Rating has one: a sandbox/test event must never
    move a real player's format ranking.
 
-   "FINAL COURT": the court from the LAST round that actually has a
-   reported score for that player (both red_score/black_score non-NULL,
-   cancelled=0) -- NOT necessarily the literal highest round_number
-   they have an assignment row for. A round that never got played (the
-   event ended before it was scored -- e.g. occurrence 265's real
-   round 7 today, assigned by movement but never reported) reflects a
-   placement decision, not a result; using the last PLAYED round is
-   both the more defensible reading of "ends an event on" and avoids
-   ever crediting a court nobody actually finished a game on.
+   "HYPOTHETICAL NEXT COURT": spp_kq_get_hypothetical_next_courts()
+   starts from each player's real FINAL round -- the LAST round that
+   actually has a reported score for them (both red_score/black_score
+   non-NULL, cancelled=0), NOT necessarily the literal highest
+   round_number they have an assignment row for. A round that never got
+   played (the event ended before it was scored -- e.g. occurrence
+   265's real round 7 today, assigned by movement but never reported)
+   reflects a placement decision, not a result, so it's never used as
+   anyone's final round. That final round's COMPLETE data (every active
+   court, all decisive, non-cancelled scores) is then run through
+   spp_kq_compute_next_round() to get the court their actual win/loss
+   would have sent them to. Grouped by each player's own final round
+   number (usually the same round for everyone, but can differ if one
+   specific court was cancelled partway through while others kept
+   going) -- one spp_kq_compute_next_round() call per distinct final
+   round. A round that can't be validated by that function (e.g. a
+   cancelled/incomplete court within it) skips every player whose final
+   round that is, rather than guessing -- same "skip and count" posture
+   as spp_kq_build_club_rating_games()'s own shape-mismatch handling
+   (inc/spp-kq-club-rating.php). History is passed to spp_kq_compute_
+   next_round() as an empty array on purpose: that function only needs
+   real partnership history to choose which TWO of the four incoming
+   players end up partnered together at the destination court (avoiding
+   a repeat partnership) -- this file only reads which COURT each
+   player's pair was sent to, never who they'd be paired with, so that
+   choice doesn't matter here and querying real history would be pure
+   waste.
 
    GUESTS: excluded entirely, before anything else runs for them --
    spp_kq_guest usermeta, same flag/check as Club Rating's own
@@ -118,17 +176,16 @@ function spp_kq_update_format_rankings( int $occurrence_id, string $event_date )
         return array( 'notice' => '', 'updated' => false ); // not a recognized Ace/Queen occurrence
     }
 
-    $final_courts = spp_kq_get_final_courts( $occurrence_id );
-    if ( empty( $final_courts ) ) {
+    $final = spp_kq_get_hypothetical_next_courts( $occurrence_id );
+    $hypothetical_courts = $final['courts'];
+    if ( empty( $hypothetical_courts ) ) {
         return array( 'notice' => '', 'updated' => false ); // nothing reported at all this event
     }
 
-    global $wpdb;
-    $usermeta  = $wpdb->prefix . 'usermeta';
     $avg_key   = "spp_kq_{$source}_avg";
     $updated_count = 0;
 
-    foreach ( $final_courts as $user_id => $court_name ) {
+    foreach ( $hypothetical_courts as $user_id => $court_name ) {
         // Guests are excluded entirely -- never tracked, never given an
         // average, never appear in either ranking. See file header.
         if ( get_user_meta( $user_id, 'spp_kq_guest', true ) ) {
@@ -144,8 +201,23 @@ function spp_kq_update_format_rankings( int $occurrence_id, string $event_date )
             ? (float) $value
             : ( SPP_KQ_FORMAT_RANK_DECAY_ALPHA * $value ) + ( ( 1 - SPP_KQ_FORMAT_RANK_DECAY_ALPHA ) * (float) $old_avg_raw );
 
-        $wpdb->query( $wpdb->prepare( "DELETE FROM {$usermeta} WHERE user_id=%d AND meta_key=%s", $user_id, $avg_key ) );
-        $wpdb->query( $wpdb->prepare( "INSERT INTO {$usermeta} (user_id, meta_key, meta_value) VALUES (%d, %s, %f)", $user_id, $avg_key, $new_avg ) );
+        // 1.1.1 BUG FIX: this used to be raw $wpdb->query() DELETE+INSERT
+        // (matching spp_crt_process_event_ratings()'s own STEP 5
+        // precedent for spp_glicko_rating) -- but THAT precedent never
+        // reads its old value back via get_user_meta() at all (its "old"
+        // state comes from club_rating_state, a plain custom table, read
+        // via raw SQL every time); THIS function's whole design depends
+        // on get_user_meta() correctly seeing what was last written, for
+        // the incremental EMA blend above. Confirmed directly, on this
+        // site's own Redis-backed persistent object cache: a raw SQL
+        // write leaves get_user_meta() returning a STALE cached value
+        // indefinitely -- even a LATER delete_user_meta() call can't
+        // self-heal it, since it finds nothing to delete (the raw SQL
+        // already removed the row) and skips the cache invalidation as a
+        // result. update_user_meta() is the correct tool for a value
+        // that gets read back via get_user_meta() later -- it invalidates
+        // the cache as part of the same write, every time.
+        update_user_meta( $user_id, $avg_key, $new_avg );
         $updated_count++;
     }
 
@@ -155,28 +227,35 @@ function spp_kq_update_format_rankings( int $occurrence_id, string $event_date )
 
     spp_kq_recompute_format_ranks( $source );
 
+    $skip_note = $final['skipped_players'] > 0
+        ? " ({$final['skipped_players']} player(s) skipped -- their final round couldn't be validated)"
+        : '';
+
     return array(
         'notice'  => sprintf(
-            'Format rankings updated: %d player(s)\' %s of the Courts average.',
-            $updated_count, $source === 'ace' ? 'Ace' : 'Queen'
+            'Format rankings updated: %d player(s)\' %s of the Courts average%s.',
+            $updated_count, $source === 'ace' ? 'Ace' : 'Queen', $skip_note
         ),
         'updated' => true,
     );
 }
 
 /**
- * Every player's LAST PLAYED (reported, non-cancelled) court for this
- * occurrence -- see this file's own "FINAL COURT" header note for why
- * this is round_number MAX among REPORTED rounds, not the literal
- * highest round_number a player has an assignment row for. Same JOIN
- * shape spp_kq_get_full_scoreboard() (inc/spp-kq-history.php) and
- * spp_kq_build_club_rating_games() (inc/spp-kq-club-rating.php) already
- * use for "a court that was genuinely played".
+ * Every player's HYPOTHETICAL next-round court -- see this file's own
+ * "HYPOTHETICAL NEXT COURT" header note for the full design/reasoning.
  *
- * @return array user_id => court_name.
+ * @return array ['courts' => user_id => hypothetical court_name,
+ *                'skipped_players' => int count skipped because their
+ *                final round couldn't be validated].
  */
-function spp_kq_get_final_courts( int $occurrence_id ) : array {
+function spp_kq_get_hypothetical_next_courts( int $occurrence_id ) : array {
     global $wpdb;
+
+    // Step 1: each player's own real final (last reported, non-
+    // cancelled) round + court -- same JOIN shape spp_kq_get_full_
+    // scoreboard() (inc/spp-kq-history.php) and spp_kq_build_club_
+    // rating_games() (inc/spp-kq-club-rating.php) already use for "a
+    // court that was genuinely played".
     $rows = $wpdb->get_results( $wpdb->prepare(
         "SELECT a.user_id, a.round_number, a.court_name
          FROM " . spp_kq_assignments_table() . " a
@@ -188,14 +267,69 @@ function spp_kq_get_final_courts( int $occurrence_id ) : array {
         $occurrence_id
     ), ARRAY_A );
 
-    $final = array();
+    $raw_final = array(); // user_id => final round_number
     foreach ( $rows as $r ) {
         $uid = (int) $r['user_id'];
-        if ( ! isset( $final[ $uid ] ) ) { // first row per user_id wins, thanks to round_number DESC
-            $final[ $uid ] = $r['court_name'];
+        if ( ! isset( $raw_final[ $uid ] ) ) { // first row per user_id wins, thanks to round_number DESC
+            $raw_final[ $uid ] = (int) $r['round_number'];
         }
     }
-    return $final;
+    if ( empty( $raw_final ) ) {
+        return array( 'courts' => array(), 'skipped_players' => 0 );
+    }
+
+    // Step 2: group players by their own final round number -- usually
+    // everyone shares the same one, but a court cancelled partway
+    // through the event for just them can make it differ.
+    $by_round = array();
+    foreach ( $raw_final as $uid => $round_number ) {
+        $by_round[ $round_number ][] = $uid;
+    }
+
+    $courts_order = spp_kq_determine_courts_order( $occurrence_id );
+    $hypothetical = array();
+    $skipped_players = 0;
+
+    // Step 3: one spp_kq_compute_next_round() call per distinct final
+    // round -- that function needs a COMPLETE round (every active
+    // court, clean 2v2, decisive non-cancelled score) to run at all.
+    foreach ( $by_round as $round_number => $uids_this_round ) {
+        $assignments = $wpdb->get_results( $wpdb->prepare(
+            "SELECT user_id, court_name, team_color FROM " . spp_kq_assignments_table() . "
+             WHERE occurrence_id = %d AND round_number = %d AND user_id IS NOT NULL",
+            $occurrence_id, $round_number
+        ), ARRAY_A );
+        $scores = $wpdb->get_results( $wpdb->prepare(
+            "SELECT court_name, red_score, black_score FROM " . spp_kq_scores_table() . "
+             WHERE occurrence_id = %d AND round_number = %d AND cancelled = 0",
+            $occurrence_id, $round_number
+        ), ARRAY_A );
+
+        try {
+            $next = spp_kq_compute_next_round( $courts_order, $assignments, $scores, array() );
+        } catch ( SPP_KQ_Movement_Error $e ) {
+            // Can't validate this round (e.g. a cancelled/incomplete
+            // court within it) -- skip everyone whose final round this
+            // is, rather than guessing at their hypothetical court.
+            $skipped_players += count( $uids_this_round );
+            continue;
+        }
+
+        $dest_by_uid = array();
+        foreach ( $next as $row ) {
+            $dest_by_uid[ (int) $row['user_id'] ] = $row['court_name'];
+        }
+
+        foreach ( $uids_this_round as $uid ) {
+            if ( isset( $dest_by_uid[ $uid ] ) ) {
+                $hypothetical[ $uid ] = $dest_by_uid[ $uid ];
+            } else {
+                $skipped_players++; // defensive -- shouldn't happen, every uid here was IN this round's own validated assignments
+            }
+        }
+    }
+
+    return array( 'courts' => $hypothetical, 'skipped_players' => $skipped_players );
 }
 
 /**
@@ -263,8 +397,13 @@ function spp_kq_recompute_format_ranks( string $source ) : void {
     // with no current_ranks entry yet), then assigns sequential 1..N.
     $new_ranks = rankUsersWithTies( $scores, $current_ranks );
 
+    // update_user_meta(), not raw SQL -- see spp_kq_update_format_
+    // rankings()'s own 1.1.1 bug-fix comment for why (this key isn't
+    // currently read back via get_user_meta() anywhere, but keeping
+    // both this and spp_kq_{source}_avg on the same safe convention
+    // avoids planting the same stale-cache trap for whatever reads it
+    // via that API next).
     foreach ( $new_ranks as $user_id => $rank ) {
-        $wpdb->query( $wpdb->prepare( "DELETE FROM {$usermeta} WHERE user_id=%d AND meta_key=%s", $user_id, $rank_key ) );
-        $wpdb->query( $wpdb->prepare( "INSERT INTO {$usermeta} (user_id, meta_key, meta_value) VALUES (%d, %s, %d)", $user_id, $rank_key, $rank ) );
+        update_user_meta( $user_id, $rank_key, $rank );
     }
 }
