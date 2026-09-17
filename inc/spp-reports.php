@@ -1,8 +1,16 @@
 <?php
 /* =========================================================
    Report Registry
-   Version: 1.9.0
-   Date: 2026-09-13
+   Version: 1.10.0
+   Date: 2026-09-17
+
+   Changes from 1.9.0:
+   - spp_report_ladder_ratings() ("Ranks & Ratings") gains two new
+     sortable columns, Ace Rank / Queen Rank, sourced from membership.
+     KQAceRank/KQQueenRank (inc/spp-create-membership-table.php 1.5.0,
+     itself pivoted from the new spp_kq_{ace,queen}_rank usermeta --
+     see inc/spp-kq-format-ranking.php for the full ranking system).
+     Existing columns/WHERE ClubRating > 0 filter unchanged.
 
    Changes from 1.8.0:
    - Added kq_history: reads the new spp_kq_history table (inc/spp-kq-
@@ -356,7 +364,7 @@ function spp_report_ladder_ratings() {
     global $wpdb;
 
     $rows = $wpdb->get_results(
-        "SELECT Rank, ClubRating, RatingGames, DUPR, Ladder, first_name, last_name
+        "SELECT Rank, ClubRating, RatingGames, DUPR, KQAceRank, KQQueenRank, Ladder, first_name, last_name
          FROM membership
          WHERE ClubRating > 0",
         ARRAY_A
@@ -367,6 +375,12 @@ function spp_report_ladder_ratings() {
         array( 'key' => 'ClubRating', 'label' => 'SPP Rating', 'sortable' => true ),
         array( 'key' => 'RatingGames', 'label' => 'Games', 'sortable' => true ),
         array( 'key' => 'DUPR',       'label' => 'DUPR',        'sortable' => true ),
+        // Ace/Queen of the Courts format rankings (inc/spp-kq-format-
+        // ranking.php) -- NULL for anyone who's never had a KQ event in
+        // that format count toward it, rendered blank same as any other
+        // NULL column here.
+        array( 'key' => 'KQAceRank',   'label' => 'Ace Rank',   'sortable' => true ),
+        array( 'key' => 'KQQueenRank', 'label' => 'Queen Rank', 'sortable' => true ),
         array( 'key' => 'Ladder',       'label' => 'Ladder',        'sortable' => true ),
         array( 'key' => 'first_name', 'label' => 'First Name',  'sortable' => true ),
         array( 'key' => 'last_name',  'label' => 'Last Name',   'sortable' => true ),

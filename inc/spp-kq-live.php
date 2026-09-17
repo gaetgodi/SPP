@@ -1,8 +1,14 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Live Event Runner
-   Version: 1.7.0
+   Version: 1.8.0
    Date: 2026-09-17
+
+   Changes from 1.7.0: new spp_kq_court_value() -- a court's fixed point
+   value (Aces=4 down to Jacks=1) for the new format-ranking system
+   (inc/spp-kq-format-ranking.php), derived from spp_kq_master_court_
+   hierarchy() so it can never drift out of sync with the actual court
+   rank order. Pure lookup, no other behavior change.
 
    Changes from 1.6.0 (fix Full Scoreboard / Event Detail court display
    order): new spp_kq_order_courts_for_display() -- re-keys a court-
@@ -357,6 +363,20 @@ function spp_kq_order_courts_for_display( array $by_court ) : array {
         }
     }
     return $ordered + $by_court;
+}
+
+/**
+ * A court's fixed point value for the format-ranking system (inc/spp-
+ * kq-format-ranking.php) -- Aces (top court) = 4 down to Jacks (bottom
+ * court) = 1, derived from this same master hierarchy so the value
+ * scale can never drift out of sync with the actual court rank order.
+ * Null for an unrecognized court name (shouldn't happen -- courts are a
+ * fixed, closed set) rather than guessing a value.
+ */
+function spp_kq_court_value( string $court_name ) : ?int {
+    $hierarchy = spp_kq_master_court_hierarchy();
+    $index = array_search( $court_name, $hierarchy, true );
+    return $index === false ? null : ( count( $hierarchy ) - $index );
 }
 
 /**

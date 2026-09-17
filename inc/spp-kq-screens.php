@@ -1,8 +1,23 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Screens
-   Version: 1.22.0
+   Version: 1.23.0
    Date: 2026-09-17
+
+   Changes from 1.22.0: spp_kq_handle_post_actions()'s 'end_event'/
+   'cancel_event' cases now also call spp_kq_update_format_rankings()
+   (inc/spp-kq-format-ranking.php, new this same day) right alongside
+   the existing Club Rating publish call -- same trigger point, same
+   pre-launch-date guard, a completely separate/independent concern of
+   its own (see that file's own header for the full design: two
+   decay-weighted per-format averages, Ace and Queen, based on the
+   court a player ends an event on). The membership-table-rebuild
+   condition now also fires on $format_result['updated'], not just
+   Club Rating's own 'published' flag, so a KQ event that updates format
+   rankings but (hypothetically) not Club Ratings still gets its new
+   ranks propagated into membership/Master. Notice text concatenation
+   extended to include the format-ranking notice alongside the existing
+   rating/history ones.
 
    Changes from 1.21.0: spp_kq_handle_post_actions()'s 'end_event'/
    'cancel_event' cases now call spp_create_membership_table() (inc/
@@ -2861,7 +2876,13 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date, ?st
             // full-table-rebuild cost the ladder's own pipeline already
             // accepts synchronously today (spp-apply-override-to-results-
             // table.php).
-            if ( $rating_result['published'] ) {
+            // Ace/Queen of the Courts format rankings (inc/spp-kq-format-
+            // ranking.php) -- same trigger point and pre-launch guard as
+            // the Club Rating publish just above, but a completely
+            // separate, independent-decay-average concern of its own;
+            // see that file's own header for the full design.
+            $format_result = spp_kq_update_format_rankings( $occurrence_id, $event_date );
+            if ( $rating_result['published'] || $format_result['updated'] ) {
                 spp_create_membership_table();
             }
             // Permanent history archive (spp_kq_history) + per-player
@@ -2872,7 +2893,7 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date, ?st
             // that had already reported before a cancellation is still
             // real data, worth archiving/recapping.
             $history_notice = spp_kq_finalize_event_history_and_recap( $occurrence_id, $event_date );
-            return trim( $rating_result['notice'] . ( $history_notice !== '' ? ' ' . $history_notice : '' ) );
+            return trim( $rating_result['notice'] . ( $format_result['notice'] !== '' ? ' ' . $format_result['notice'] : '' ) . ( $history_notice !== '' ? ' ' . $history_notice : '' ) );
 
         case 'cancel_event':
             $r = spp_kq_transition_cancel_event( $occurrence_id, $round );
@@ -2887,11 +2908,12 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date, ?st
             // end_event both trigger this, differing only in which CAS
             // transition got them here.
             $rating_result = spp_kq_maybe_publish_to_club_ratings( $occurrence_id, $event_date );
-            if ( $rating_result['published'] ) {
+            $format_result = spp_kq_update_format_rankings( $occurrence_id, $event_date );
+            if ( $rating_result['published'] || $format_result['updated'] ) {
                 spp_create_membership_table();
             }
             $history_notice = spp_kq_finalize_event_history_and_recap( $occurrence_id, $event_date );
-            return trim( $rating_result['notice'] . ( $history_notice !== '' ? ' ' . $history_notice : '' ) );
+            return trim( $rating_result['notice'] . ( $format_result['notice'] !== '' ? ' ' . $format_result['notice'] : '' ) . ( $history_notice !== '' ? ' ' . $history_notice : '' ) );
 
         case 'complete_draw_randomly':
             // 1.17.0 -- see spp_kq_complete_draw_randomly()'s own

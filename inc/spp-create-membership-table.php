@@ -1,10 +1,25 @@
 <?php
 /* =========================================================
    Create Membership Table
-   Version: 1.4.0
-   Date: 2026-09-07
+   Version: 1.5.0
+   Date: 2026-09-17
    Based on: Code Manager snippet "Create membership table" (CM102),
    version 1.1
+
+   Changes from 1.4.0:
+   - Added two new pivot columns, following the exact same ClubRating/
+     DUPR precedent (1.3.0 below, same exact-match reasoning -- these
+     are new, single-purpose usermeta keys with no sibling-key collision
+     risk): KQAceRank (meta_key = 'spp_kq_ace_rank') and KQQueenRank
+     (meta_key = 'spp_kq_queen_rank') -- the Ace/Queen of the Courts
+     format-ranking system's displayed sequential rank position (inc/
+     spp-kq-format-ranking.php, new this same day). Propagated to all
+     four downstream tables (Master/Masterlist{year}/membership/
+     Membershiplist{year}), same as every other rating-like column here.
+     NULL for anyone who's never had a KQ event in that format count
+     toward it (including every real ladder-only member) -- no default,
+     no zero, so the Ranks & Ratings report can tell "never played" apart
+     from an actual rank position.
 
    Changes from 1.3.0:
    - SECURITY FIX (Tier 1 access-control audit), by explicit decision,
@@ -227,6 +242,8 @@ function spp_create_membership_table() {
                 MAX(CASE WHEN meta_key = 'spp_glicko_rating'  THEN meta_value END) AS ClubRating,
                 MAX(CASE WHEN meta_key = 'spp_glicko_rating_games'  THEN meta_value END) AS RatingGames,
                 MAX(CASE WHEN meta_key = 'spp_dupr_rating'  THEN meta_value END) AS DUPR,
+                MAX(CASE WHEN meta_key = 'spp_kq_ace_rank'  THEN meta_value END) AS KQAceRank,
+                MAX(CASE WHEN meta_key = 'spp_kq_queen_rank'  THEN meta_value END) AS KQQueenRank,
                 MAX(CASE WHEN meta_key LIKE '%Expiry%'  THEN meta_value END) AS Expiry,
                 MAX(CASE WHEN meta_key LIKE 'YrEndDt'   THEN meta_value END) AS YrEndDt
             FROM {$umetatable}
@@ -251,7 +268,7 @@ function spp_create_membership_table() {
         CREATE TABLE {$master} AS
         SELECT t.Rank, t.user_id, t.first_name, t.last_name,
                t.user_phone, t.travel, t.user_email,
-               t.Ladder, t.Rating, t.ClubRating, t.RatingGames, t.DUPR, m.Tag
+               t.Ladder, t.Rating, t.ClubRating, t.RatingGames, t.DUPR, t.KQAceRank, t.KQQueenRank, m.Tag
         FROM tmp t
         INNER JOIN MembershipTags m ON t.user_id = m.user_id
         WHERE t.Rank <> 0 AND t.Ladder = 'Yes'
@@ -267,7 +284,7 @@ function spp_create_membership_table() {
         CREATE TABLE {$masterY} AS
         SELECT t.Rank, t.user_id, t.first_name, t.last_name,
                t.user_phone, t.travel, t.user_email,
-               t.Ladder, t.Rating, t.ClubRating, t.RatingGames, t.DUPR, m.Tag
+               t.Ladder, t.Rating, t.ClubRating, t.RatingGames, t.DUPR, t.KQAceRank, t.KQQueenRank, m.Tag
         FROM tmp t
         INNER JOIN MembershipTags m ON t.user_id = m.user_id
         WHERE t.Rank <> 0 AND t.Ladder = 'Yes'
@@ -283,7 +300,7 @@ function spp_create_membership_table() {
         CREATE TABLE {$membership} AS
         SELECT t.Rank, t.user_id, t.first_name, t.last_name,
                t.user_phone, t.travel, t.user_email,
-               t.Ladder, t.PCO, t.Rating, t.ClubRating, t.RatingGames, t.DUPR, m.Tag
+               t.Ladder, t.PCO, t.Rating, t.ClubRating, t.RatingGames, t.DUPR, t.KQAceRank, t.KQQueenRank, m.Tag
         FROM tmp t
         LEFT JOIN MembershipTags m ON t.user_id = m.user_id
         ORDER BY last_name
@@ -300,7 +317,7 @@ function spp_create_membership_table() {
         CREATE TABLE {$membershipY} AS
         SELECT t.Rank, t.user_id, t.first_name, t.last_name,
                t.user_phone, t.travel, t.user_email,
-               t.Ladder, t.PCO, t.Rating, t.ClubRating, t.RatingGames, t.DUPR, m.Tag
+               t.Ladder, t.PCO, t.Rating, t.ClubRating, t.RatingGames, t.DUPR, t.KQAceRank, t.KQQueenRank, m.Tag
         FROM tmp t
         LEFT JOIN MembershipTags m ON t.user_id = m.user_id
         ORDER BY last_name
