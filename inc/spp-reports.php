@@ -1,8 +1,39 @@
 <?php
 /* =========================================================
    Report Registry
-   Version: 1.10.0
+   Version: 1.11.0
    Date: 2026-09-17
+
+   Changes from 1.10.0:
+   - Added 3 new registry entries -- ladder_ratings_only, queen_ratings,
+     ace_ratings -- each a filtered/sorted subset of
+     spp_report_ladder_ratings()'s own data (membership table, same 9
+     columns: Rank, ClubRating, RatingGames, DUPR, KQAceRank, KQQueenRank,
+     Ladder, first_name, last_name). NOT related to the differently-named
+     'results' registry entry/spp_report_results() -- that function
+     queries the Results table (RankOverride/RankCalc_Shadow internal
+     ranking mechanics) and is gated to spp_is_admin_or_editor(); these 3
+     reuse ladder_ratings' query/columns/gating instead (confirmed with
+     Gaetan before implementing, since the two are easy to conflate by
+     name -- "Ranks & Ratings" is ladder_ratings' page title, not
+     'results'). Same access level as ladder_ratings: no per-report
+     capability check, just the shortcode's blanket is_user_logged_in()
+     floor -- these are member-facing rank views, not the admin-only
+     internal-mechanics class of report.
+     - ladder_ratings_only: WHERE Ladder = 'Yes' (same flag master_list
+       already filters on), default_sort Rank ASC.
+     - queen_ratings: WHERE KQQueenRank IS NOT NULL, default_sort
+       KQQueenRank ASC. KQQueenRank is pivoted from its own usermeta
+       (spp_kq_queen_rank, inc/spp-create-membership-table.php) independent
+       of ClubRating, so this deliberately does NOT also require
+       ClubRating > 0 the way ladder_ratings' own query does -- a
+       Queen-only player with no ladder ClubRating still belongs here.
+     - ace_ratings: same reasoning, WHERE KQAceRank IS NOT NULL,
+       default_sort KQAceRank ASC. Expected to render zero rows until an
+       Ace-format KQ event has actually been processed into KQAceRank --
+       spp_render_report_table() already renders headers-only (not a bare
+       "No results." message) for an empty report, so that's a real empty
+       state, not a broken one.
 
    Changes from 1.9.0:
    - spp_report_ladder_ratings() ("Ranks & Ratings") gains two new
@@ -273,6 +304,9 @@ defined( 'ABSPATH' ) || exit;
  */
 $GLOBALS['spp_report_registry'] = array(
     'ladder_ratings'       => 'spp_report_ladder_ratings',
+    'ladder_ratings_only'  => 'spp_report_ladder_ratings_only',
+    'queen_ratings'        => 'spp_report_queen_ratings',
+    'ace_ratings'          => 'spp_report_ace_ratings',
     'membership'           => 'spp_report_membership',
     'master_list'          => 'spp_report_master',
     'results'              => 'spp_report_results',
@@ -390,6 +424,123 @@ function spp_report_ladder_ratings() {
         'columns'      => $columns,
         'rows'         => $rows,
         'default_sort' => array( 'column' => 'ClubRating', 'direction' => 'DESC' ),
+    );
+}
+
+/**
+ * Ladder Ratings, filtered to active-ladder members only: same columns/
+ * source as spp_report_ladder_ratings(), WHERE Ladder = 'Yes' (same flag
+ * spp_report_master() already filters on), sorted ascending by Rank.
+ * Same access level as spp_report_ladder_ratings() -- no per-report
+ * capability check beyond the shortcode's blanket is_user_logged_in()
+ * floor.
+ */
+function spp_report_ladder_ratings_only() {
+    global $wpdb;
+
+    $rows = $wpdb->get_results(
+        "SELECT Rank, ClubRating, RatingGames, DUPR, KQAceRank, KQQueenRank, Ladder, first_name, last_name
+         FROM membership
+         WHERE Ladder = 'Yes'",
+        ARRAY_A
+    );
+
+    $columns = array(
+        array( 'key' => 'Rank',       'label' => 'Rank',        'sortable' => true ),
+        array( 'key' => 'ClubRating', 'label' => 'SPP Rating', 'sortable' => true ),
+        array( 'key' => 'RatingGames', 'label' => 'Games', 'sortable' => true ),
+        array( 'key' => 'DUPR',       'label' => 'DUPR',        'sortable' => true ),
+        array( 'key' => 'KQAceRank',   'label' => 'Ace Rank',   'sortable' => true ),
+        array( 'key' => 'KQQueenRank', 'label' => 'Queen Rank', 'sortable' => true ),
+        array( 'key' => 'Ladder',       'label' => 'Ladder',        'sortable' => true ),
+        array( 'key' => 'first_name', 'label' => 'First Name',  'sortable' => true ),
+        array( 'key' => 'last_name',  'label' => 'Last Name',   'sortable' => true ),
+    );
+
+    return array(
+        'columns'      => $columns,
+        'rows'         => $rows,
+        'default_sort' => array( 'column' => 'Rank', 'direction' => 'ASC' ),
+    );
+}
+
+/**
+ * Queen of the Courts format ranking: same columns/source as
+ * spp_report_ladder_ratings(), filtered to members with a real
+ * (non-NULL) KQQueenRank, sorted ascending by that rank. Deliberately
+ * does NOT also require ClubRating > 0 -- KQQueenRank is pivoted from
+ * its own usermeta (spp_kq_queen_rank, inc/spp-create-membership-
+ * table.php) independent of ladder ClubRating, so a Queen-only player
+ * with no ladder rating still belongs here. Same access level as
+ * spp_report_ladder_ratings() -- no per-report capability check beyond
+ * the shortcode's blanket is_user_logged_in() floor.
+ */
+function spp_report_queen_ratings() {
+    global $wpdb;
+
+    $rows = $wpdb->get_results(
+        "SELECT Rank, ClubRating, RatingGames, DUPR, KQAceRank, KQQueenRank, Ladder, first_name, last_name
+         FROM membership
+         WHERE KQQueenRank IS NOT NULL",
+        ARRAY_A
+    );
+
+    $columns = array(
+        array( 'key' => 'Rank',       'label' => 'Rank',        'sortable' => true ),
+        array( 'key' => 'ClubRating', 'label' => 'SPP Rating', 'sortable' => true ),
+        array( 'key' => 'RatingGames', 'label' => 'Games', 'sortable' => true ),
+        array( 'key' => 'DUPR',       'label' => 'DUPR',        'sortable' => true ),
+        array( 'key' => 'KQAceRank',   'label' => 'Ace Rank',   'sortable' => true ),
+        array( 'key' => 'KQQueenRank', 'label' => 'Queen Rank', 'sortable' => true ),
+        array( 'key' => 'Ladder',       'label' => 'Ladder',        'sortable' => true ),
+        array( 'key' => 'first_name', 'label' => 'First Name',  'sortable' => true ),
+        array( 'key' => 'last_name',  'label' => 'Last Name',   'sortable' => true ),
+    );
+
+    return array(
+        'columns'      => $columns,
+        'rows'         => $rows,
+        'default_sort' => array( 'column' => 'KQQueenRank', 'direction' => 'ASC' ),
+    );
+}
+
+/**
+ * Ace of the Courts format ranking: same columns/source as
+ * spp_report_ladder_ratings(), filtered to members with a real
+ * (non-NULL) KQAceRank, sorted ascending by that rank. Same
+ * ClubRating-independence reasoning as spp_report_queen_ratings() above.
+ * Same access level as spp_report_ladder_ratings() -- no per-report
+ * capability check beyond the shortcode's blanket is_user_logged_in()
+ * floor. Expected to render zero rows (headers still shown, per
+ * spp_render_report_table()'s empty-report handling) until an
+ * Ace-format KQ event has been processed into KQAceRank.
+ */
+function spp_report_ace_ratings() {
+    global $wpdb;
+
+    $rows = $wpdb->get_results(
+        "SELECT Rank, ClubRating, RatingGames, DUPR, KQAceRank, KQQueenRank, Ladder, first_name, last_name
+         FROM membership
+         WHERE KQAceRank IS NOT NULL",
+        ARRAY_A
+    );
+
+    $columns = array(
+        array( 'key' => 'Rank',       'label' => 'Rank',        'sortable' => true ),
+        array( 'key' => 'ClubRating', 'label' => 'SPP Rating', 'sortable' => true ),
+        array( 'key' => 'RatingGames', 'label' => 'Games', 'sortable' => true ),
+        array( 'key' => 'DUPR',       'label' => 'DUPR',        'sortable' => true ),
+        array( 'key' => 'KQAceRank',   'label' => 'Ace Rank',   'sortable' => true ),
+        array( 'key' => 'KQQueenRank', 'label' => 'Queen Rank', 'sortable' => true ),
+        array( 'key' => 'Ladder',       'label' => 'Ladder',        'sortable' => true ),
+        array( 'key' => 'first_name', 'label' => 'First Name',  'sortable' => true ),
+        array( 'key' => 'last_name',  'label' => 'Last Name',   'sortable' => true ),
+    );
+
+    return array(
+        'columns'      => $columns,
+        'rows'         => $rows,
+        'default_sort' => array( 'column' => 'KQAceRank', 'direction' => 'ASC' ),
     );
 }
 
