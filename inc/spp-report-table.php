@@ -1,8 +1,31 @@
 <?php
 /* =========================================================
    Shared Report Table Renderer
-   Version: 1.10.0
+   Version: 1.10.1
    Date: 2026-09-17
+
+   Changes from 1.10.0 (CSS-only fix: restore desktop horizontal centering
+   of the whole widget -- controls bar + table + pagination -- without
+   reintroducing the 1.10.0 mobile-overflow fix): 1.10.0's
+   .et_pb_module:has(.spp-report-table){align-self:stretch!important} rule
+   correctly forced the Divi module wrapper to always fill its column's
+   full width, fixing a real mobile bug (a content-sized module box
+   centered by the column's own align-items:center used to hang equally
+   off both edges of a narrow viewport when the table was wider than the
+   screen). Side effect: on a WIDE viewport, that same column-level
+   align-items:center used to visually center the widget for free, via
+   the (pre-1.10.0) content-sized module box -- once the module always
+   stretches full-width, there's no longer a content-sized box for the
+   column to center, so the widget sat flush-left instead. Fixed by
+   moving the centering onto .spp-report-inner itself (the actual
+   width:fit-content box wrapping the controls bar, table-scroll box, and
+   pagination footer as one unit) via margin:0 auto -- see that rule's
+   own comment below for why this doesn't reopen the mobile case: capped
+   at max-width:100%, this box has no free space to center within once
+   it's as wide as its (now always full-width) container, so auto-margin
+   centering and the 1.10.0 overflow fix simply don't interact. No
+   changes to sort-toggle direction, pagination, or partial-score-display
+   logic -- CSS only.
 
    Changes from 1.9.0 (BUG FIX: sortable column headers didn't toggle
    direction on repeated clicks for any report configured with
@@ -707,6 +730,26 @@ function spp_render_report_table( array $columns, array $rows, array $args = arr
         .spp-report-table .spp-report-inner {
             width: fit-content;
             max-width: 100%;
+            /* 1.10.1: restores desktop centering that the 1.10.0
+               align-self:stretch fix incidentally removed. Before 1.10.0,
+               centering came for free from the Divi column's own
+               align-items:center acting on the (then content-sized)
+               .et_pb_module wrapper box. Now that wrapper always
+               stretches full-width (needed to fix mobile overflow --
+               see the .et_pb_module:has() rule above), nothing centers
+               this fit-content box within it any more; it defaulted to
+               flush-left. margin:0 auto here re-centers it directly,
+               independent of the module wrapper's own width. On a
+               wide viewport (table narrower than the available column
+               width) this box's width stays fit-content, so auto
+               margins center it as expected. On a narrow/mobile
+               viewport where the table is wider than the viewport,
+               max-width:100% already caps this box at the full
+               available width, so it has no free space to be centered
+               within -- margin:0 auto is then a no-op and the 1.10.0
+               overflow fix (full-width stretch + this box's own
+               overflow-x:auto scrolling) is unaffected. */
+            margin: 0 auto;
         }
         .spp-report-table .spp-report-controls,
         .spp-report-table .spp-report-pagination,
