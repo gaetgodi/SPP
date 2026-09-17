@@ -1,8 +1,25 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Club Rating Integration
-   Version: 1.2.0
+   Version: 1.3.0
    Date: 2026-09-17
+
+   Changes from 1.2.0 (keep membership/Master/Masterlist{year}/
+   Membershiplist{year} in sync with a KQ-driven rating change --
+   investigated same day after a real event's new players correctly
+   got fresh spp_glicko_rating usermeta but membership.ClubRating stayed
+   NULL/stale, root-caused to spp_create_membership_table() -- the
+   snapshot-table rebuild those columns actually come from -- having
+   zero KQ callers, only ladder-pipeline ones): spp_kq_maybe_publish_
+   to_club_ratings() now returns ['notice'=>string, 'published'=>bool]
+   instead of a bare string -- 'published' is true only on the one path
+   where usermeta actually changed ($r['usermeta_written'] true), never
+   on the pre-launch-date/not-ace-or-queen/nothing-reported/aborted/
+   not-enough-established paths, so spp_kq_handle_post_actions()'s
+   'end_event'/'cancel_event' cases (inc/spp-kq-screens.php 1.22.0) can
+   call spp_create_membership_table() only when there's actually
+   something new for it to pick up. Both real callers updated to match
+   this new return shape.
 
    Changes from 1.1.0 (Guest registrant -- see inc/spp-kq-roster.php's
    own changelog for the full feature): spp_kq_build_club_rating_games()
@@ -210,38 +227,58 @@ function spp_kq_build_club_rating_games( int $occurrence_id ) : array {
 /**
  * The single entry point called automatically after a successful
  * 'end_event' or 'cancel_event' transition. Never called any other
- * way. Returns a short plain-text status for the facilitator's
- * notice banner ('' if there's nothing worth saying) -- deliberately
- * plain text, not HTML: spp_kq_render_occurrence_header() renders
- * $notice through esc_html().
+ * way.
+ *
+ * @return array ['notice' => string, 'published' => bool]. 'notice' is
+ *   a short plain-text status for the facilitator's notice banner ('' if
+ *   there's nothing worth saying) -- deliberately plain text, not HTML:
+ *   spp_kq_render_occurrence_header() renders $notice through esc_html().
+ *   'published' is true ONLY in the one case where usermeta (spp_glicko_
+ *   rating/spp_glicko_rating_games) was actually written this call --
+ *   i.e. $r['usermeta_written'] came back true, not merely that
+ *   spp_crt_process_event_ratings() ran at all (it also runs, writing
+ *   only to club_rating_state/club_rating_event_log, on the "not enough
+ *   established players yet" and even the "aborted" paths below, neither
+ *   of which changes what any report reading usermeta would show).
+ *   1.19.0: added so spp_kq_handle_post_actions()'s 'end_event'/
+ *   'cancel_event' cases (inc/spp-kq-screens.php) know precisely when
+ *   it's worth calling spp_create_membership_table() afterward --
+ *   before this, that decision had no signal to key off of beyond
+ *   pattern-matching the notice text, which this avoids entirely.
  */
-function spp_kq_maybe_publish_to_club_ratings( int $occurrence_id, string $event_date ) : string {
+function spp_kq_maybe_publish_to_club_ratings( int $occurrence_id, string $event_date ) : array {
 
     // Hard guard -- checked FIRST, before anything below can touch
     // club_rating_state or club_rating_event_log. See file header:
     // permanent literal cutoff, not "before today".
     if ( $event_date < SPP_KQ_CLUB_RATING_LAUNCH_DATE ) {
-        return '';
+        return array( 'notice' => '', 'published' => false );
     }
 
     $source = spp_kq_category_source( $occurrence_id );
     if ( ! $source ) {
-        return ''; // not a recognized Ace/Queen occurrence -- nothing to do
+        return array( 'notice' => '', 'published' => false ); // not a recognized Ace/Queen occurrence -- nothing to do
     }
 
     $built = spp_kq_build_club_rating_games( $occurrence_id );
     if ( empty( $built['games'] ) ) {
-        return ''; // nothing reported (e.g. a cancelled event with zero kept courts) -- nothing to publish
+        return array( 'notice' => '', 'published' => false ); // nothing reported (e.g. a cancelled event with zero kept courts) -- nothing to publish
     }
 
     $r = spp_crt_process_event_ratings( $built['games'], $built['rank_by_user'], $occurrence_id, $source, false );
 
     if ( $r['aborted'] ) {
-        return 'Club Ratings NOT updated -- this occurrence was already published, and a later event has since built on one of its players\' ratings. Needs a manual look at club_rating_event_log before reprocessing.';
+        return array(
+            'notice'    => 'Club Ratings NOT updated -- this occurrence was already published, and a later event has since built on one of its players\' ratings. Needs a manual look at club_rating_event_log before reprocessing.',
+            'published' => false,
+        );
     }
 
     if ( ! $r['usermeta_written'] ) {
-        return "Club Ratings updated internally for {$r['updated_count']} player(s), but there aren't enough established players yet ({$r['n_established']}) for a stable public scale -- usermeta not written this run.";
+        return array(
+            'notice'    => "Club Ratings updated internally for {$r['updated_count']} player(s), but there aren't enough established players yet ({$r['n_established']}) for a stable public scale -- usermeta not written this run.",
+            'published' => false,
+        );
     }
 
     $skip_note = $built['skipped_courts'] > 0
@@ -252,8 +289,11 @@ function spp_kq_maybe_publish_to_club_ratings( int $occurrence_id, string $event
         : '';
     $republish_note = $r['rolled_back_count'] > 0 ? ' (re-published: prior contribution rolled back first.)' : '';
 
-    return sprintf(
-        'Published to Club Ratings: %d player(s) updated from %d game(s)%s.%s',
-        $r['updated_count'], count( $built['games'] ), $skip_note, $republish_note
+    return array(
+        'notice'    => sprintf(
+            'Published to Club Ratings: %d player(s) updated from %d game(s)%s.%s',
+            $r['updated_count'], count( $built['games'] ), $skip_note, $republish_note
+        ),
+        'published' => true,
     );
 }

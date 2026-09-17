@@ -1,8 +1,21 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Screens
-   Version: 1.21.0
+   Version: 1.22.0
    Date: 2026-09-17
+
+   Changes from 1.21.0: spp_kq_handle_post_actions()'s 'end_event'/
+   'cancel_event' cases now call spp_create_membership_table() (inc/
+   spp-create-membership-table.php) right after spp_kq_maybe_publish_
+   to_club_ratings() (inc/spp-kq-club-rating.php 1.3.0), but ONLY when
+   its new 'published' flag is true -- a KQ-driven rating change used to
+   sit correctly in usermeta but never reach membership.ClubRating (and
+   Master/Masterlist{year}/Membershiplist{year}) until some unrelated
+   ladder action next happened to trigger that rebuild; see spp-kq-club-
+   rating.php's own 1.3.0 changelog for the full root-cause writeup.
+   Same call site the archival/recap sequence already uses; a pre-
+   launch-date/no-games/aborted/not-enough-established run (nothing
+   written to usermeta) never triggers this rebuild.
 
    Changes from 1.20.0 -- two fixes to the live event flow, reviewed and
    approved together:
@@ -2829,7 +2842,28 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date, ?st
             // (inc/spp-kq-club-rating.php) owns the pre-launch date guard
             // and the source ('ace'/'queen') resolution; this dispatcher
             // has no rating-engine knowledge of its own.
-            $rating_notice = spp_kq_maybe_publish_to_club_ratings( $occurrence_id, $event_date );
+            $rating_result = spp_kq_maybe_publish_to_club_ratings( $occurrence_id, $event_date );
+            // 1.19.0: membership/Master/Masterlist{year}/Membershiplist{year}
+            // are wholesale-rebuilt snapshot tables (spp_create_membership_
+            // table(), inc/spp-create-membership-table.php) that pivot
+            // usermeta (spp_glicko_rating et al) into the tables reports
+            // actually read from -- every existing caller of that rebuild
+            // is ladder-pipeline-specific, so a KQ-driven rating change
+            // never used to propagate there until some UNRELATED ladder
+            // action next happened to trigger a rebuild. Only called when
+            // 'published' is true -- usermeta genuinely changed (not the
+            // pre-launch-date/no-games/aborted/not-enough-established
+            // paths, none of which touch usermeta) -- so a sandbox/test
+            // event that correctly skipped publishing never triggers a
+            // rebuild for nothing. Safe to call synchronously here: no
+            // ladder-pipeline-specific assumption in its own implementation
+            // (pure usermeta+users pivot, occurrence-agnostic), same
+            // full-table-rebuild cost the ladder's own pipeline already
+            // accepts synchronously today (spp-apply-override-to-results-
+            // table.php).
+            if ( $rating_result['published'] ) {
+                spp_create_membership_table();
+            }
             // Permanent history archive (spp_kq_history) + per-player
             // recap email -- same trigger point as the rating publish
             // above, same pre-launch guard (inc/spp-kq-history.php reuses
@@ -2838,7 +2872,7 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date, ?st
             // that had already reported before a cancellation is still
             // real data, worth archiving/recapping.
             $history_notice = spp_kq_finalize_event_history_and_recap( $occurrence_id, $event_date );
-            return trim( $rating_notice . ( $history_notice !== '' ? ' ' . $history_notice : '' ) );
+            return trim( $rating_result['notice'] . ( $history_notice !== '' ? ' ' . $history_notice : '' ) );
 
         case 'cancel_event':
             $r = spp_kq_transition_cancel_event( $occurrence_id, $round );
@@ -2852,9 +2886,12 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date, ?st
             // inc/spp-kq-history.php's own header: cancel_event and
             // end_event both trigger this, differing only in which CAS
             // transition got them here.
-            $rating_notice  = spp_kq_maybe_publish_to_club_ratings( $occurrence_id, $event_date );
+            $rating_result = spp_kq_maybe_publish_to_club_ratings( $occurrence_id, $event_date );
+            if ( $rating_result['published'] ) {
+                spp_create_membership_table();
+            }
             $history_notice = spp_kq_finalize_event_history_and_recap( $occurrence_id, $event_date );
-            return trim( $rating_notice . ( $history_notice !== '' ? ' ' . $history_notice : '' ) );
+            return trim( $rating_result['notice'] . ( $history_notice !== '' ? ' ' . $history_notice : '' ) );
 
         case 'complete_draw_randomly':
             // 1.17.0 -- see spp_kq_complete_draw_randomly()'s own
