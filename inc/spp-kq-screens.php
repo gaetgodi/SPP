@@ -1,8 +1,36 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Screens
-   Version: 1.19.0
+   Version: 1.20.0
    Date: 2026-09-17
+
+   Changes from 1.19.1 (restrict Full Reset to pre-launch-date test/
+   sandbox occurrences only -- urgent same-day fix, a real live event
+   was in progress with this button visible/functional on a real
+   occurrence): spp_kq_render_full_reset() now also checks $event_date
+   >= SPP_KQ_CLUB_RATING_LAUNCH_DATE (inc/spp-kq-club-rating.php, the
+   same permanent literal cutoff already used by Club Ratings/history
+   archival/the photo prompt -- reused, not a new "test event" concept)
+   and prints nothing at all for a real event, even to an administrator.
+   The REAL enforcement is the matching check added to spp_kq_handle_
+   post_actions()'s 'full_reset' case -- a crafted/direct POST against a
+   real occurrence is now rejected server-side ("Full Reset is only
+   available for test events.") regardless of what the button's own
+   visibility would have shown. Scoped to Full Reset alone -- Cancel
+   Event, End Event, and every other action are unchanged.
+
+   Changes from 1.19.0 (BUG FIX, see inline comments at spp_kq_get_round_
+   court_view()/spp_kq_get_final_winner_names()/spp_kq_get_not_yet_
+   drawn() -- this changelog entry was missed at the time and is added
+   retroactively here for the record): a KQ guest showed as "Member #0"
+   on the Overview/in-play/Complete screens (spp_kq_get_round_court_
+   view()/spp_kq_get_final_winner_names() hardcoded user_id=0 into
+   spp_kq_player_name() instead of the real value -- never selected
+   a.user_id at all) and as a bare "Member #{id}" on the pre-draw
+   registrant list (spp_kq_get_not_yet_drawn()'s membership-only lookup
+   never gave spp_kq_player_name()'s guest fallback a chance to run).
+   All three now use/derive the real user_id. Not a data-loss bug --
+   spp_kq_assignments held the guest's correct user_id throughout.
 
    Changes from 1.18.0 (Guest registrant -- see inc/spp-kq-roster.php's
    own changelog for the full feature): spp_kq_player_name() now falls
@@ -2764,6 +2792,19 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date, ?st
             if ( ! spp_is_admin() ) {
                 return 'You do not have permission to do that.';
             }
+            // 1.19.0: test/sandbox occurrences ONLY -- same permanent,
+            // literal SPP_KQ_CLUB_RATING_LAUNCH_DATE cutoff already used
+            // by Club Ratings/history archival/the photo prompt (inc/
+            // spp-kq-club-rating.php), reused rather than a new "is this
+            // a test event" concept. Checked here, server-side, as the
+            // REAL enforcement -- spp_kq_render_full_reset() not
+            // printing the button for a real event is belt-and-
+            // suspenders, not the gate; even an administrator (who
+            // passed the check just above) cannot Full Reset a real,
+            // live event via a crafted/direct POST.
+            if ( $event_date >= SPP_KQ_CLUB_RATING_LAUNCH_DATE ) {
+                return 'Full Reset is only available for test events.';
+            }
             spp_kq_full_reset( $occurrence_id );
             // UX fix: a fully successful Full Reset on an occurrence with
             // nothing visible in assignments/scores to clear (e.g. still
@@ -3309,7 +3350,7 @@ function spp_kq_live_shortcode() : string {
         }
     }
 
-    echo spp_kq_render_full_reset( $occurrence_id, $round );
+    echo spp_kq_render_full_reset( $occurrence_id, $round, $occurrence['event_date'] );
 
     echo '</div>';
     return ob_get_clean();
@@ -3372,9 +3413,21 @@ function spp_kq_render_scoreboard_link( int $occurrence_id, bool $viewing_scoreb
  * emits anything, and the real enforcement is the matching check in
  * spp_kq_handle_post_actions()'s 'full_reset' case, not this visibility
  * check alone.
+ *
+ * 1.19.0: also not printed for a REAL event -- $event_date >=
+ * SPP_KQ_CLUB_RATING_LAUNCH_DATE (inc/spp-kq-club-rating.php, the same
+ * permanent literal cutoff Club Ratings/history archival/the photo
+ * prompt already use). Full Reset permanently discards all recorded
+ * data; restricting it to pre-launch test/sandbox occurrences removes
+ * the risk of an administrator accidentally wiping a real, in-progress
+ * event. Same belt-and-suspenders relationship to the POST handler's
+ * own check as the admin gate above -- this is visibility only.
  */
-function spp_kq_render_full_reset( int $occurrence_id, int $round ) : string {
+function spp_kq_render_full_reset( int $occurrence_id, int $round, string $event_date ) : string {
     if ( ! spp_is_admin() ) {
+        return '';
+    }
+    if ( $event_date >= SPP_KQ_CLUB_RATING_LAUNCH_DATE ) {
         return '';
     }
     ob_start();
