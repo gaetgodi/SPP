@@ -1625,24 +1625,27 @@ function spp_kq_render_event_picker() : string {
         ARRAY_A
     );
 
-    // Practice / Test Sandbox: the 4 most recent PAST occurrences,
-    // auto-selected by date (never hand-picked), same category pooling
-    // and cancelled=0 filter as the upcoming list above. event_date <
-    // CURDATE() is a live, self-maintaining boundary -- not a frozen
-    // literal date -- so this set naturally rolls forward on its own as
-    // today's date advances, the same way the upcoming list already
-    // does via event_date >= CURDATE(). Safe to offer to any logged-in
-    // member with zero risk regardless of what happens to it: this
-    // feature didn't exist before this week, so no past occurrence has
-    // ever had any spp_kq_* rows of its own to begin with.
+    // Practice / Test Sandbox: the 4 most recent occurrences dated before
+    // SPP_KQ_CLUB_RATING_LAUNCH_DATE (inc/spp-kq-club-rating.php), same
+    // category pooling and cancelled=0 filter as the upcoming list above.
+    // A rolling "event_date < CURDATE()" boundary was used here originally,
+    // but that incorrectly started including real, live events once their
+    // date passed (first hit: occurrence 265, 2026-09-17). Reusing the
+    // launch-date constant instead matches every other place in this
+    // codebase that already draws the real-vs-test-event line (Club
+    // Rating, history archival, recap emails, the photo prompt, Full
+    // Reset), so there's one consistent definition sitewide.
     $test_rows = $wpdb->get_results(
-        "SELECT v.occurrence_id, v.eff_title, v.event_date, v.eff_event_time,
-                e.current_round, e.phase
-         FROM {$view} v
-         LEFT JOIN {$events_table} e ON e.occurrence_id = v.occurrence_id
-         WHERE v.eff_category_id IN (2,3) AND v.cancelled = 0 AND v.event_date < CURDATE()
-         ORDER BY v.event_date DESC, v.eff_event_time DESC
-         LIMIT 4",
+        $wpdb->prepare(
+            "SELECT v.occurrence_id, v.eff_title, v.event_date, v.eff_event_time,
+                    e.current_round, e.phase
+             FROM {$view} v
+             LEFT JOIN {$events_table} e ON e.occurrence_id = v.occurrence_id
+             WHERE v.eff_category_id IN (2,3) AND v.cancelled = 0 AND v.event_date < %s
+             ORDER BY v.event_date DESC, v.eff_event_time DESC
+             LIMIT 4",
+            SPP_KQ_CLUB_RATING_LAUNCH_DATE
+        ),
         ARRAY_A
     );
 
