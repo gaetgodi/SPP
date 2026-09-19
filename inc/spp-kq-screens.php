@@ -1,8 +1,48 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Screens
-   Version: 1.26.0
+   Version: 1.27.0
    Date: 2026-09-19
+
+   Changes from 1.26.0 -- two changes from real live-event feedback:
+
+   ITEM 1 -- "View Full Scoreboard" is now unconditionally present on
+   every KQ live screen, regardless of whether any scores exist yet.
+   spp_kq_render_scoreboard_link() no longer returns '' when spp_kq_has_
+   any_recorded_score() is false -- that gate was the actual reason it
+   read as "only on some screens (in-play, Overview), missing from the
+   rest-countdown screen between rounds" from the outside: every phase
+   already reaches the one shared call site in spp_kq_live_shortcode()'s
+   dispatcher (unchanged -- still the single place this is echoed,
+   already covering not_started/organizing/in_play alike, plus complete/
+   cancelled's own separate calls), it just rendered nothing until the
+   first score came in. spp_kq_render_full_scoreboard_screen()'s empty-
+   state message (shared by both the standalone ?kq_view=scoreboard page
+   and the folded-in AJAX fragment, spp_kq_render_scoreboard_markup()'s
+   own existing "always show structure, never just blank" empty-state
+   handling) is now "No scores entered yet." (was "No completed rounds
+   yet.") -- this state is commonly reachable now instead of a rare edge
+   case, so it's worded for that. "Back to game"/the 1.26.0 false-
+   reannouncement fix are both untouched and need no changes to keep
+   working from every one of the persistent app's own screens -- neither
+   ever depended on which screen state #kq-live-app currently holds.
+
+   ITEM 2 -- "Skip Wait — Go to Courts" button, round 2+'s automatic
+   rest-countdown screen (spp_kq_render_overview_screen()'s own else
+   branch): lets a facilitator end the SPP_KQ_COURTS_REST_SECONDS wait
+   early once players are ready. New 'skip_rest_countdown' POST action
+   (spp_kq_handle_post_actions() below) calls spp_kq_transition_skip_
+   rest_countdown() (inc/spp-kq-live.php, own docblock has the full CAS-
+   guard writeup) -- moves courts_announced_at EARLIER via LEAST(), never
+   later, which is what makes a double-press or a race against the
+   countdown's own natural completion both safe no-ops rather than
+   needing a separate guard for each. Reuses the EXACT SAME client-side
+   announcement path a real elapsed countdown already takes (tick()'s own
+   courts_announced_at-vs-Date.now() comparison, unchanged) -- moving the
+   one timestamp is the entire fix, no separate "Go to your courts."
+   trigger to keep in sync. Nested inside #kq-rest-timer-wrap
+   deliberately, so it disappears via that element's own existing hide-
+   on-fire logic, real or skipped, with no separate show/hide code.
 
    Changes from 1.25.0 -- three fixes from real live-event testing of
    yesterday's 1.25.0 scoreboard-fold-in/native-Back work:
@@ -2343,6 +2383,27 @@ function spp_kq_render_overview_screen( int $occurrence_id, int $round, ?int $co
         <div class="kq-timer-wrap" id="kq-rest-timer-wrap">
             <div class="kq-timer" id="kq-rest-timer">--:--</div>
             <div class="kq-timer-label" id="kq-rest-timer-label">Next round starts in</div>
+            <?php
+            // 1.27.0: lets a facilitator end this rest period early when
+            // players are ready before the timer naturally elapses --
+            // nested INSIDE #kq-rest-timer-wrap deliberately, so tick()'s
+            // existing restWrapEl.style.display='none' (fired below)
+            // hides this along with the countdown itself the instant
+            // "Go to your courts." fires, real or skipped -- no separate
+            // show/hide logic needed. Harmless no-op on round 1's own
+            // reload (courts_announced_at is already effectively "now"
+            // there -- see spp_kq_transition_skip_rest_countdown()'s own
+            // docblock, inc/spp-kq-live.php) since the countdown resolves
+            // on its own before a human could realistically click this.
+            ?>
+            <p class="kq-hint">Everyone ready early? Skip the rest of the wait.</p>
+            <div class="kq-notice kq-notice-err" id="kq-skip-rest-msg" style="display:none;"></div>
+            <form method="post" class="kq-inline-form kq-skip-rest-form">
+                <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
+                <input type="hidden" name="spp_kq_action" value="skip_rest_countdown">
+                <input type="hidden" name="spp_kq_round" value="<?php echo esc_attr( $round ); ?>">
+                <button type="submit" class="kq-btn kq-btn-secondary">Skip Wait &mdash; Go to Courts</button>
+            </form>
         </div>
 
         <div id="kq-start-play-wrap" style="display:none;">
@@ -2377,6 +2438,12 @@ function spp_kq_render_overview_screen( int $occurrence_id, int $round, ?int $co
         // possibly reach it (the countdown below reveals it well before
         // any real click could land).
         SppKqLiveApp.wireAjaxForm('.kq-start-play-form', 'kq-start-play-msg');
+        // 1.27.0: same AJAX-submit treatment -- see spp_kq_transition_
+        // skip_rest_countdown()'s own docblock (inc/spp-kq-live.php) for
+        // why a plain POST/error response is never actually shown here:
+        // a double-press or a race against the countdown's own natural
+        // completion both resolve to a silent no-op, not an error.
+        SppKqLiveApp.wireAjaxForm('.kq-skip-rest-form', 'kq-skip-rest-msg');
 
         (function() {
             var courtsAnnouncedAt = <?php echo (int) $courts_announced_at; ?>;
@@ -3053,6 +3120,16 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date, ?st
             // (its own courts_announced_at is stamped automatically by
             // spp_kq_transition_advance_round(), inc/spp-kq-live.php).
             $r = spp_kq_transition_announce_courts( $occurrence_id, $round );
+            return ( ! $r['won'] && $r['error'] ) ? $r['error'] : '';
+
+        case 'skip_rest_countdown':
+            // 1.27.0: round 2+'s rest-countdown "Skip Wait" button -- see
+            // spp_kq_transition_skip_rest_countdown()'s own docblock
+            // (inc/spp-kq-live.php) for the full CAS-guard writeup.
+            // 'error' is always null here by design: a double-press or a
+            // race against the countdown's own natural completion both
+            // resolve to a silent no-op, not something worth surfacing.
+            $r = spp_kq_transition_skip_rest_countdown( $occurrence_id, $round );
             return ( ! $r['won'] && $r['error'] ) ? $r['error'] : '';
 
         case 'start_play':
@@ -4009,7 +4086,15 @@ function spp_kq_render_full_scoreboard_screen( int $occurrence_id ) : string {
     ob_start();
     ?>
     <p class="kq-round-label">Full Scoreboard</p>
-    <?php echo spp_kq_render_scoreboard_markup( $scoreboard, 'No completed rounds yet.' ); ?>
+    <?php
+    // 1.27.0: "No scores entered yet." (was "No completed rounds yet.")
+    // -- this message is now reachable from the very first moment a live
+    // occurrence exists (the toggle link above is unconditional, see
+    // spp_kq_render_scoreboard_link()'s own 1.27.0 note), not just a
+    // rare edge case, so it's worded for that: the plain, expected state
+    // of a not-yet-played event, not a "something's missing" read.
+    ?>
+    <?php echo spp_kq_render_scoreboard_markup( $scoreboard, 'No scores entered yet.' ); ?>
     <?php
     return ob_get_clean();
 }
@@ -4061,9 +4146,21 @@ function spp_kq_render_scoreboard_fragment( int $occurrence_id ) : string {
  * "View Full Scoreboard" / "&laquo; Back" toggle link -- rendered once
  * in the main dispatcher, same placement pattern as
  * spp_kq_render_full_reset() (present regardless of which phase-driven
- * screen is showing). Only offered once at least one completed round
- * exists (spp_kq_has_any_recorded_score()) -- nothing to show before
- * that.
+ * screen is showing).
+ *
+ * 1.27.0: unconditional now -- previously returned '' whenever no round
+ * had a recorded score yet (spp_kq_has_any_recorded_score()), which is
+ * why it read as "only on some screens (in-play, Overview)" from the
+ * outside: every phase already reached this call site (see the
+ * dispatcher's own condition just above where this is echoed), it just
+ * rendered nothing until the first score came in. $occurrence_id is now
+ * unused in this function's own body (kept in the signature -- every
+ * call site already passes it, and a per-occurrence scoreboard link is
+ * still the right shape for this function even though it no longer
+ * branches on anything occurrence-specific). spp_kq_render_full_
+ * scoreboard_screen()'s own empty-state message ("No scores entered
+ * yet.") is what a visitor actually sees now on a genuinely score-free
+ * occurrence, rather than the link simply not existing.
  *
  * 1.20.0: id="kq-scoreboard-link" added so spp_kq_render_live_app()'s
  * own bootstrap script (organizing/in_play only -- the only phases that
@@ -4089,9 +4186,6 @@ function spp_kq_render_scoreboard_fragment( int $occurrence_id ) : string {
  * never something the persistent app's JS has to un-render.
  */
 function spp_kq_render_scoreboard_link( int $occurrence_id, bool $viewing_scoreboard ) : string {
-    if ( ! $viewing_scoreboard && ! spp_kq_has_any_recorded_score( $occurrence_id ) ) {
-        return '';
-    }
     $url = $viewing_scoreboard
         ? remove_query_arg( 'kq_view' )
         : add_query_arg( 'kq_view', 'scoreboard' );

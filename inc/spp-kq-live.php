@@ -1,8 +1,17 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Live Event Runner
-   Version: 1.8.0
-   Date: 2026-09-17
+   Version: 1.9.0
+   Date: 2026-09-19
+
+   Changes from 1.8.0: new spp_kq_transition_skip_rest_countdown() --
+   round 2+'s automatic rest-countdown "Skip Wait" button (inc/spp-kq-
+   screens.php's own 1.27.0 changelog has the full feature writeup).
+   CAS-guarded via LEAST( courts_announced_at, now ) rather than a flat
+   overwrite -- see this function's own docblock for why that single
+   property (can only move the timestamp earlier, never later) is what
+   makes a double-press and a race against the countdown's own natural
+   completion both safe no-ops with no separate guard needed for each.
 
    Changes from 1.7.0: new spp_kq_court_value() -- a court's fixed point
    value (Aces=4 down to Jacks=1) for the new format-ranking system
@@ -662,6 +671,55 @@ function spp_kq_transition_announce_courts( int $occurrence_id, int $expected_ro
          SET courts_announced_at = %d
          WHERE occurrence_id = %d AND current_round = %d AND phase = 'organizing' AND courts_announced_at IS NULL",
         $announced_at, $occurrence_id, $expected_round
+    ) );
+
+    return array( 'won' => ( (int) $affected === 1 ), 'error' => null );
+}
+
+/**
+ * Round 2+ only in practice: lets a facilitator end the automatic
+ * SPP_KQ_COURTS_REST_SECONDS rest period early once players are ready,
+ * rather than waiting out the full countdown -- real-world feedback,
+ * 1.27.0. Deliberately reuses courts_announced_at itself as the single
+ * lever: spp_kq_render_overview_screen()'s own client-side countdown
+ * already computes everything purely from that one timestamp vs.
+ * Date.now() (same design the round timer uses, see that function's own
+ * comments), so moving it is the ENTIRE fix -- the exact same "Go to
+ * your courts."/Start-Play-reveal code path a real elapsed countdown
+ * takes fires on its own next 250ms tick, no separate announcement path
+ * to keep in sync.
+ *
+ * CAS GUARD, LEAST() rather than a flat overwrite: this can only ever
+ * move courts_announced_at EARLIER, never later. That single property
+ * is what makes both required races safe without needing a two-step
+ * read-then-write:
+ *   - Double-press (or two devices pressing near-simultaneously): the
+ *     second UPDATE's own "now" is later than the first's already-
+ *     moved value, so LEAST() leaves it unchanged -- MySQL reports 0
+ *     affected rows (no actual value change), 'won' is correctly false,
+ *     and 'error' is null so spp_kq_handle_post_actions() shows nothing
+ *     (a silent no-op, not a confusing error, for what's really just
+ *     "someone already did this").
+ *   - Racing the countdown's own natural completion: if courts_
+ *     announced_at is already in the past by the time this runs, it's
+ *     already <= "now", so LEAST() again leaves it unchanged -- this
+ *     can never DELAY an announcement that already correctly fired.
+ * courts_announced_at IS NOT NULL in the WHERE clause is load-bearing,
+ * not defensive dressing: LEAST() with a NULL operand evaluates to NULL
+ * in MySQL, which would otherwise silently blank out round 1's own
+ * pre-announce state if this were ever mistakenly reachable there.
+ */
+function spp_kq_transition_skip_rest_countdown( int $occurrence_id, int $expected_round ) : array {
+    global $wpdb;
+
+    $events_table = spp_kq_events_table();
+    $now          = current_time( 'timestamp', true );
+
+    $affected = $wpdb->query( $wpdb->prepare(
+        "UPDATE {$events_table}
+         SET courts_announced_at = LEAST( courts_announced_at, %d )
+         WHERE occurrence_id = %d AND current_round = %d AND phase = 'organizing' AND courts_announced_at IS NOT NULL",
+        $now, $occurrence_id, $expected_round
     ) );
 
     return array( 'won' => ( (int) $affected === 1 ), 'error' => null );
