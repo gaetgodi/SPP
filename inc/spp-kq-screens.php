@@ -1,8 +1,76 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Screens
-   Version: 1.24.0
-   Date: 2026-09-17
+   Version: 1.25.0
+   Date: 2026-09-19
+
+   Changes from 1.24.0: (1) spp_kq_render_draw_screen()'s selectPlayer()
+   now auto-scrolls #kq-card-grid into view (smooth, centered) every time
+   a name is tapped -- real-incident fix: on iPhone-width viewports the
+   "Not yet drawn" name list sits above the card grid/revealed-courts
+   sections, which wrap below it, so tapping a name gave no visible sign
+   anything happened unless the visitor already knew to scroll down
+   manually ("I clicked my name and nothing happened" during live play).
+   (2) removed the "Cancel Event" button/form from the
+   in-play screen's action row (spp_kq_render_in_play_screen()) --
+   real-incident fix: a facilitator accidentally pressed it partway
+   through round 1, losing that round's in-progress scores with no way
+   to resume, and had to be recovered by hand. Other, deliberate ways
+   to cancel an event still exist outside this button (see 'cancel_
+   event' in spp_kq_handle_post_actions() below and spp_kq_transition_
+   cancel_event(), inc/spp-kq-live.php -- both left fully intact, since
+   tests/spp-kq-end-cancel-test.php calls spp_kq_transition_cancel_
+   event() directly and nothing else in the UI reaches it now). Once any
+   court has reported a score this round, the in-play action row now
+   renders nothing at all (previously: Cancel Event only) -- the round
+   simply runs to completion; there is no longer an in-UI way to abort
+   a round that's already partly scored, which is the point. Does not
+   touch the cancelled-with-rounds-played history/recap/photo-prompt
+   logic (spp-kq-history.php) -- that remains correct read-only for any
+   past occurrence that was already cancelled before this change.
+   (3) spp_kq_render_live_app()'s scoreboard toggle (showScoreboard()/
+   swapFragment()) now pushes/resolves a same-document history entry
+   instead of never touching history at all -- real-incident fix,
+   mechanism CONFIRMED LIVE on occurrence 118 before changing anything
+   (injected a window marker + a pageshow/persisted listener, drove the
+   scoreboard toggle for real, then called history.back() and diffed):
+   the marker did NOT survive and performance.getEntriesByType(
+   'navigation')[0].type read "back_forward" -- a genuine full document
+   reload, not a bfcache/persisted restore (ruling out the 'pageshow'-
+   based fix the investigation also considered). Because entering the
+   scoreboard never pushed a history entry (the link's own click handler
+   always called e.preventDefault()), the phone's native Back button
+   skipped over this page's one real entry entirely and landed on
+   whatever earlier real page load came before it -- which, freshly
+   reloaded, re-renders THIS occurrence's CURRENT phase (spp_kq_live_
+   shortcode() always reads live state, never what that old entry
+   originally showed) straight back into spp_kq_render_live_app(),
+   recreating SppKqAnnouncer with audioUnlocked reset to false (the "Tap
+   to enable sound" banner reappears) -- a facilitator who instinctively
+   re-taps it (nothing on screen shows the page silently reloaded) then
+   gets a real, audible re-run of whichever fragment's own <script>
+   happens to be current, whose "Go to your courts."/"Start play now."
+   timing is deliberately computed fresh from embedded server timestamps
+   vs. Date.now() every execution (1.13.0's own design) -- sounding like
+   the event is starting over. Fix: showScoreboard() success now calls
+   history.pushState({kqScoreboard:true}, '', scoreboardViewUrl); the
+   scoreboard link's "Back" branch and a new popstate listener both
+   resolve through the same swapFragment() call (one path, can't drift);
+   swapFragment() itself replaceState()s the stale entry away if a REAL
+   transition (poll()/submitAction()) arrives while the scoreboard is
+   still showing, matching the already-live-tested 1.20.0 auto-swap-away
+   behavior. All same-document navigation -- no reload, no lost
+   SppKqAnnouncer/timer state, either direction.
+   (4) spp_kq_render_in_play_screen()'s tick() reverts 1.13.0's own
+   "Start play now." timing choice: it now fires when now >= localStartMs
+   (the same tick that falls through from "Starting in mm:ss" into real
+   round-timer rendering) instead of unconditionally on the screen's very
+   first tick -- real feedback: hearing it right as Start Play is pressed,
+   a full 10 silent seconds before the round's real timer/round_started_at
+   instant actually arrives, read as premature during live play. Only the
+   announcement's timing moved; round_started_at (still stamped
+   SPP_KQ_ROUND_START_DELAY_SECONDS = 10s after the press) and the
+   visual-only "Starting in mm:ss" countdown are both unchanged.
 
    Changes from 1.23.0: spp_kq_handle_post_actions()'s 'end_event'/
    'cancel_event' cases now call spp_kq_finalize_event_history_and_
@@ -910,13 +978,17 @@
    gate, checked once at the top of the shortcode and again in the
    AJAX handler -- nowhere else in this file re-derives or narrows it.
 
-   ACTIONS: Start Round 1 Draw / Start Play / End Event / Cancel Event
-   are plain nonce-protected POST forms with no redirect afterward
-   (same convention as spp-schedule-adjust.php, registration-admin.php,
+   ACTIONS: Start Round 1 Draw / Start Play / End Event are plain
+   nonce-protected POST forms with no redirect afterward (same
+   convention as spp-schedule-adjust.php, registration-admin.php,
    spp-remove-inactive-ladder-users.php elsewhere in this codebase) --
    the page just re-renders whatever screen the new state calls for.
    The card draw is the one AJAX action, matching spp-score-entry.php's
    convention for many-small-taps-with-live-feedback interactions.
+   Cancel Event (same POST-form mechanics, and its dispatcher case/
+   transition function are both still intact) no longer has a UI
+   trigger anywhere in this file as of 1.25.0 -- see that changelog
+   entry above.
    ========================================================= */
 
 defined( 'ABSPATH' ) || exit;
@@ -1915,6 +1987,14 @@ function spp_kq_render_draw_screen( int $occurrence_id ) : string {
             document.querySelectorAll( '.kq-player-btn' ).forEach( function( b ) { b.classList.remove( 'kq-selected' ); } );
             btn.classList.add( 'kq-selected' );
             selectedUid = parseInt( btn.dataset.uid, 10 );
+            // On narrow (iPhone-width) viewports the name list wraps above
+            // the card grid/revealed-courts sections, so tapping a name up
+            // top gives no visible sign anything happened unless the
+            // visitor already knows to scroll down manually -- surface the
+            // next step (the card grid, plus whatever's already revealed)
+            // automatically instead of requiring that.
+            var cardGrid = document.getElementById( 'kq-card-grid' );
+            if ( cardGrid ) cardGrid.scrollIntoView( { behavior: 'smooth', block: 'center' } );
         }
 
         document.getElementById( 'kq-not-drawn-list' ).addEventListener( 'click', function( e ) {
@@ -2306,7 +2386,9 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round, ?int $rou
     $progress     = spp_kq_get_round_progress( $occurrence_id, $round );
     // Reset is only offered once, before anything real has happened this
     // round (by the state machine, only possible in round 1) -- once any
-    // court anywhere has reported, only Cancel Event remains available.
+    // court anywhere has reported, the action row renders nothing (1.25.0:
+    // Cancel Event removed from the UI) and the round simply runs to
+    // completion.
     $scores_exist = spp_kq_has_any_recorded_score( $occurrence_id );
 
     $court_view = spp_kq_get_round_court_view( $occurrence_id, $round );
@@ -2476,43 +2558,45 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round, ?int $rou
                     return m + ':' + (s < 10 ? '0' : '') + s;
                 }
 
-                // 1.13.0 TIMING REVISION: "Start play now." now fires
-                // IMMEDIATELY -- the very first tick this screen ever
-                // runs, unconditionally (once, via fired.start) -- not
-                // at the end of a silent delay the way this morning's
-                // version worked. Every device that loads this screen,
-                // from the earliest possible moment onward, finds
-                // fired.start still false on its own first tick and
-                // announces right away -- exactly the same "fire once on
-                // first tick if not yet fired, even if that first tick
-                // happens to be a little late" precedent every other
-                // trigger in this feature already follows (see
-                // announceIfDue() above: a device that loads mid-round
-                // already retroactively fires whatever threshold it just
-                // missed crossing) -- not a new special case.
-                //
-                // Separately, while now < localStartMs (the
-                // SPP_KQ_ROUND_START_DELAY_SECONDS = 10 window AFTER
-                // that announcement, not before it), show "Starting in
-                // mm:ss" instead of the round timer -- same absolute-
-                // anchor/skew-corrected math as the round timer itself.
-                // The instant that countdown reaches zero, fall through
-                // into the normal round-timer rendering for that same
-                // tick (no extra frame stuck at "Starting in 0:00").
+                // 1.25.0 TIMING REVISION (reverts 1.13.0's own "fires
+                // immediately" change, real-incident feedback -- hearing
+                // "Start play now." right as the button is pressed, 10
+                // full silent seconds before the round's real timer
+                // actually starts, read as premature/wrong live): "Start
+                // play now." now fires the instant now >= localStartMs --
+                // the SAME tick that falls through from the "Starting in
+                // mm:ss" countdown into real round-timer rendering, i.e.
+                // exactly when round_started_at is reached and the match
+                // timer takes over, not 10 seconds before it. Only the
+                // announcement's timing moved; round_started_at itself
+                // (stamped SPP_KQ_ROUND_START_DELAY_SECONDS = 10 seconds
+                // after the Start Play press, inc/spp-kq-live.php) and
+                // the "Starting in mm:ss" VISUAL countdown during that
+                // window are both unchanged -- still no spoken countdown
+                // in between, visual only, exactly as already built. A
+                // device that loads this screen after localStartMs has
+                // already passed (mid-round join/refresh) still finds
+                // fired.start false on its own first tick and announces
+                // right away -- same "fire once on first tick if not yet
+                // fired, even if that tick happens to be a little late"
+                // precedent every other trigger in this feature already
+                // follows (see announceIfDue() above), not a new special
+                // case, just moved to fire on the OTHER side of the
+                // now < localStartMs branch below.
                 function tick() {
                     if (roundDone) return;
                     var now = Date.now();
-
-                    if (!fired.start) {
-                        fired.start = true;
-                        speak('Start play now.');
-                    }
 
                     if (now < localStartMs) {
                         var untilStart = Math.max(0, Math.round((localStartMs - now) / 1000));
                         timerEl.textContent = formatTime(untilStart);
                         if (timerLabelEl) timerLabelEl.textContent = 'Starting in';
                         return;
+                    }
+
+                    if (!fired.start) {
+                        fired.start = true;
+                        speak('Start play now.');
                     }
                     if (timerLabelEl) timerLabelEl.textContent = 'Time remaining';
 
@@ -2694,22 +2778,16 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round, ?int $rou
     })();
     </script>
 
+    <?php if ( ! $scores_exist ) : ?>
     <div class="kq-action-row kq-action-row-right">
-        <?php if ( ! $scores_exist ) : ?>
         <form method="post" class="kq-inline-form" onsubmit="return confirm('Undo Start Play? This keeps the same drawn courts and returns everyone to the Ready to play screen -- nothing is lost, since no scores have been entered yet.');">
             <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
             <input type="hidden" name="spp_kq_action" value="reset_event">
             <input type="hidden" name="spp_kq_round" value="<?php echo esc_attr( $round ); ?>">
             <button type="submit" class="kq-btn kq-btn-secondary">Reset</button>
         </form>
-        <?php endif; ?>
-        <form method="post" class="kq-inline-form" onsubmit="return confirm('Cancel today\'s event? Any court that hasn\'t reported its score yet will lose this round\'s data entirely. Courts that already reported keep their result.');">
-            <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
-            <input type="hidden" name="spp_kq_action" value="cancel_event">
-            <input type="hidden" name="spp_kq_round" value="<?php echo esc_attr( $round ); ?>">
-            <button type="submit" class="kq-btn kq-btn-danger">Cancel Event</button>
-        </form>
     </div>
+    <?php endif; ?>
     <?php
     return ob_get_clean();
 }
@@ -3288,6 +3366,12 @@ function spp_kq_render_live_app( int $occurrence_id, array $state ) : string {
         //      exactly like onProgress is already reset before every
         //      swap.
         var swapping = false;
+        // 1.25.0: true exactly while the scoreboard fragment is the
+        // visible content AND a corresponding history entry is pushed
+        // (see showScoreboard()/the popstate listener below) -- the one
+        // piece of state that lets swapFragment() and popstate agree on
+        // whether there's a pushed entry still needing to be resolved.
+        var scoreboardHistoryPushed = false;
         function swapFragment() {
             if (swapping) return;
             swapping = true;
@@ -3329,6 +3413,22 @@ function spp_kq_render_live_app( int $occurrence_id, array $state ) : string {
                         scoreboardLink.textContent = 'View Full Scoreboard';
                         scoreboardLink.setAttribute('href', scoreboardViewUrl);
                     }
+                    // 1.25.0: a REAL transition (poll()/submitAction())
+                    // can land here while the scoreboard's own history
+                    // entry is still on the stack (live-tested 1.20.0
+                    // scenario: poll() auto-swaps away from the
+                    // scoreboard on its own). We're not navigating here,
+                    // just replacing content, so replaceState -- not
+                    // popstate's swapFragment() call below -- is what
+                    // reconciles the URL bar back to the base URL without
+                    // it, so a LATER native Back press lands on whatever
+                    // was truly before the scoreboard was ever opened,
+                    // not a now-stale, silently-orphaned entry that would
+                    // otherwise refire this same swap for no reason.
+                    if (scoreboardHistoryPushed) {
+                        scoreboardHistoryPushed = false;
+                        history.replaceState(null, '', scoreboardBackUrl);
+                    }
                 })
                 .catch(function() { swapping = false; });
         }
@@ -3365,6 +3465,45 @@ function spp_kq_render_live_app( int $occurrence_id, array $state ) : string {
                         scoreboardLink.textContent = '« Back';
                         scoreboardLink.setAttribute('href', scoreboardBackUrl);
                     }
+                    // 1.25.0: push a same-document history entry so the
+                    // PHONE'S OWN native Back button has something correct
+                    // to land on. Real-incident root cause (confirmed by
+                    // injecting a marker into window and diffing it across
+                    // a live history.back() on occurrence 118, not
+                    // guessed): before this, entering the scoreboard never
+                    // touched history at all (the link's own click handler
+                    // always called e.preventDefault()), so native Back
+                    // skipped over this page's single history entry
+                    // entirely and landed on whatever real page came
+                    // before it -- confirmed to be a genuine full document
+                    // reload (window.__testMarker did NOT survive; Chrome
+                    // reported navigation type "back_forward", not a
+                    // bfcache restore), NOT a frozen/persisted DOM. That
+                    // fresh load re-renders this SAME occurrence's CURRENT
+                    // phase (spp_kq_live_shortcode() always reads live
+                    // state, never what that old entry originally showed)
+                    // straight back into spp_kq_render_live_app() --
+                    // recreating SppKqAnnouncer with audioUnlocked reset
+                    // to false (the "Tap to enable sound" banner
+                    // reappears) and re-running the in-play/overview
+                    // fragment's own <script> from scratch, which computes
+                    // its "Go to your courts."/"Start play now." timing
+                    // purely from embedded server timestamps vs.
+                    // Date.now() (by design, see this function's 1.13.0
+                    // changelog) -- so a facilitator who instinctively
+                    // re-taps that reappeared banner (nothing on screen
+                    // tells them the page silently reloaded underneath
+                    // them) re-triggers a real speak() call for an
+                    // announcement that, from the actual round's point of
+                    // view, already correctly happened once. Pushing this
+                    // entry (and the popstate listener/click-handler
+                    // change below) makes native Back behave exactly like
+                    // the in-app "« Back" link always has: a same-document
+                    // popstate, no reload, no lost SppKqAnnouncer state.
+                    if (!scoreboardHistoryPushed) {
+                        history.pushState({ kqScoreboard: true }, '', scoreboardViewUrl);
+                        scoreboardHistoryPushed = true;
+                    }
                 })
                 .catch(function() { swapping = false; });
         }
@@ -3373,17 +3512,41 @@ function spp_kq_render_live_app( int $occurrence_id, array $state ) : string {
         // (source of truth for "am I currently viewing the scoreboard"
         // from this script's point of view -- no separate boolean to
         // drift out of sync with it) -- real navigation prevented in
-        // favor of the in-app swap either direction.
+        // favor of the in-app swap either direction. 1.25.0: the "Back"
+        // branch now goes through history.back() instead of calling
+        // swapFragment() directly, so the in-app link and the phone's own
+        // native Back button both resolve through the exact same popstate
+        // path below -- one code path, impossible for the two to drift.
         if (scoreboardLink) {
             scoreboardLink.addEventListener('click', function(e) {
                 e.preventDefault();
                 if (scoreboardLink.textContent.indexOf('Back') !== -1) {
-                    swapFragment();
+                    if (scoreboardHistoryPushed) {
+                        history.back();
+                    } else {
+                        swapFragment();
+                    }
                 } else {
                     showScoreboard();
                 }
             });
         }
+
+        // 1.25.0: the ONLY place that resolves the scoreboard's pushed
+        // history entry via an actual back-navigation -- fires for the
+        // phone's own native Back button exactly the same as it does for
+        // the in-app link's history.back() call just above (same-document
+        // navigation, no reload either way). Resetting the flag BEFORE
+        // calling swapFragment() means swapFragment()'s own
+        // scoreboardHistoryPushed check (above) is correctly a no-op
+        // here -- we already arrived via a real back-navigation, so
+        // there's nothing left to replaceState away.
+        window.addEventListener('popstate', function() {
+            if (scoreboardHistoryPushed) {
+                scoreboardHistoryPushed = false;
+                swapFragment();
+            }
+        });
 
         // Submits a REAL <form> (same hidden nonce/action/round inputs
         // every plain-POST action in this feature already renders) via
