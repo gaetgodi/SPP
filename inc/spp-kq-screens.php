@@ -1,8 +1,75 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Screens
-   Version: 1.25.0
+   Version: 1.26.0
    Date: 2026-09-19
+
+   Changes from 1.25.0 -- three fixes from real live-event testing of
+   yesterday's 1.25.0 scoreboard-fold-in/native-Back work:
+
+   BUG 1 -- two "Back" controls appeared at once on the folded-in Full
+   Scoreboard fragment: the top-level "View Full Scoreboard" toggle link
+   (spp_kq_render_scoreboard_link(), outside #kq-live-app, relabeling
+   itself to "« Back" since 1.20.0) alongside spp_kq_render_scoreboard_
+   fragment()'s OWN dedicated "« Back to game" link (added inside the
+   fragment itself, yesterday's spec item 2) -- the two were never
+   reconciled when the second one was added. Fix: the top-level link is
+   now HIDDEN (its parentNode, so no leftover empty <p class="kq-hint">
+   gap) for the entire time the scoreboard is showing, in both
+   showScoreboard() and the click handler it drives -- "Back to game" is
+   now the one and only way back. Restored to visible by swapFragment()
+   the moment #kq-live-app holds real content again. The native-Back/
+   popstate mechanism from yesterday is completely unaffected -- it
+   never depended on which control was visible, only on the pushed
+   history entry.
+
+   BUG 2 -- pressing "Back to game" spoke a false announcement ("Start
+   play now, 1 minute remaining" together, live-tested), even though the
+   round was already in progress and neither was a real threshold being
+   crossed. ROOT CAUSE CONFIRMED (same general class as 1.15.0's
+   duplicate-announcement fix, not guessed): "Back to game"/native Back
+   both resolve through swapFragment(), which re-fetches and re-executes
+   whichever fragment matches CURRENT server state via executeScripts()
+   -- every caller before this always did so for a GENUINE transition
+   (poll() detecting a real signature change, or submitAction() after an
+   action that really changed server state), so a fresh fired={}/
+   fired=false inside that re-executed <script> was always correct:
+   retroactively announcing whatever threshold a device "just" crossed
+   on a genuine first render of new state. "Back to game" broke that
+   assumption -- the round hadn't changed at all, it's a PASSIVE
+   redisplay of already-current state this device already heard
+   announcements for, but the re-executed script has no way to tell the
+   difference on its own. Fix: swapFragment(isTransition) -- default
+   true, preserving poll()/submitAction()'s existing behavior completely
+   unchanged -- sets window.__kqIsTransition immediately before
+   executeScripts() runs. spp_kq_render_in_play_screen()'s tick() and
+   spp_kq_render_overview_screen()'s rest-countdown tick() (the exact
+   same class of bug, found by inspection, fixed the same way, even
+   though only the round timer was reported live) both read it: on a
+   passive redisplay, the round timer silences speak() for JUST its
+   first synchronous tick() (fired[] still marks exactly as it
+   otherwise would, so the visible timer/labels are correct immediately;
+   speak is restored before the interval starts, so anything crossed
+   from the very next tick onward -- including "Start play now." itself,
+   if returned mid-"Starting in" countdown -- still announces completely
+   normally); the rest-countdown, being a single one-shot event rather
+   than a threshold series, just skips its one speak() call outright on
+   a passive redisplay, keeping the visual reveal (hide countdown, show
+   Start Play) unchanged either way, since that's genuinely correct
+   current state, not something being re-announced. SppKqLiveApp.
+   refreshNow is now a wrapper (isTransition=false unconditionally, its
+   one caller is always a passive redisplay) rather than a direct
+   swapFragment alias; the popstate listener passes false for the same
+   reason.
+
+   ITEM 3 -- spp_kq_render_draw_screen()'s card-claim success handler
+   now scrolls #kq-not-drawn-list back into view (smooth, centered) after
+   a successful draw, mirroring yesterday's scroll-to-cards fix in the
+   other direction: real feedback that with enough cards already drawn
+   on screen, a successful claim can leave the player-names list scrolled
+   out of view, with no easy way back to it for the next player. Skipped
+   when the draw just completed (the existing reload makes it moot) or
+   the list is now empty.
 
    Changes from 1.24.0: (1) spp_kq_render_draw_screen()'s selectPlayer()
    now auto-scrolls #kq-card-grid into view (smooth, centered) every time
@@ -2051,6 +2118,21 @@ function spp_kq_render_draw_screen( int $occurrence_id ) : string {
 
                     if ( d.draw_complete ) {
                         window.location.reload();
+                    } else {
+                        // Real feedback, mirrors selectPlayer()'s own
+                        // scroll-to-cards fix from yesterday but in the
+                        // OTHER direction: with enough cards on screen, a
+                        // successful claim can leave the "Not yet drawn"
+                        // list scrolled out of view above the fold, so
+                        // the next player has no easy way to find their
+                        // own name to tap next. Skipped entirely when the
+                        // draw just completed (reload above makes it
+                        // moot) or the list is now empty (nothing left to
+                        // scroll to).
+                        var notDrawnList = document.getElementById( 'kq-not-drawn-list' );
+                        if ( notDrawnList && notDrawnList.children.length > 0 ) {
+                            notDrawnList.scrollIntoView( { behavior: 'smooth', block: 'center' } );
+                        }
                     }
                 } )
                 .catch( function() { showError( 'Network error -- try again.' ); } );
@@ -2316,6 +2398,22 @@ function spp_kq_render_overview_screen( int $occurrence_id, int $round, ?int $co
             var localAnnounceMs = courtsAnnouncedAt * 1000 + (Date.now() - serverNowMs);
             var fired = false;
             var interval = null;
+            // 1.26.0 BUG 2 fix -- same class of bug, same fix, as spp_kq_
+            // render_in_play_screen()'s own 1.26.0 note (see that
+            // function's comment for the full root-cause writeup): this
+            // script also re-executes from scratch on a passive "Back to
+            // game"/native-Back redisplay, with fired starting false
+            // either way -- a device returning after the real rest
+            // countdown already elapsed would otherwise re-speak "Go to
+            // your courts." for an announcement it already heard. Unlike
+            // the round timer, this is a single one-shot event (not a
+            // series of thresholds), so the fix is simpler: just skip the
+            // speak() call itself on a passive redisplay -- the visual
+            // reveal (hiding the countdown, showing Start Play) still
+            // happens exactly as it should either way, since that's
+            // genuinely correct current state, not something being
+            // re-announced.
+            var isPassiveRedisplay = window.__kqIsTransition === false;
 
             function formatTime(totalSeconds) {
                 var m = Math.floor(totalSeconds / 60);
@@ -2334,7 +2432,7 @@ function spp_kq_render_overview_screen( int $occurrence_id, int $round, ?int $co
                 if (!fired) {
                     fired = true;
                     if (interval) clearInterval(interval);
-                    SppKqAnnouncer.speak('Go to your courts.');
+                    if (!isPassiveRedisplay) SppKqAnnouncer.speak('Go to your courts.');
                     if (restWrapEl) restWrapEl.style.display = 'none';
                     if (startPlayWrap) startPlayWrap.style.display = '';
                 }
@@ -2500,6 +2598,26 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round, ?int $rou
                 // just references the already-existing global.
                 var speak = SppKqAnnouncer.speak;
 
+                // 1.26.0 BUG 2 fix (see swapFragment()'s own comment for
+                // the full root-cause writeup, confirmed live): this
+                // script re-executes from scratch on EVERY swap into this
+                // screen, including a passive "Back to game"/native-Back
+                // redisplay of an ALREADY-in-progress round -- fired
+                // below starts empty either way, so without this guard,
+                // tick()'s very first synchronous call would retroactively
+                // re-speak every threshold already crossed (live-tested:
+                // "Start play now, 1 minute remaining" fired together on
+                // a return that had nothing to do with a real round
+                // start). isPassiveRedisplay silences JUST that first
+                // tick's speak() calls -- fired[] still gets marked
+                // exactly as it would otherwise (so the visible timer/
+                // labels are 100% correct immediately), speak is restored
+                // to the real function before the interval starts, so any
+                // threshold genuinely crossed from this point forward
+                // still announces completely normally.
+                var isPassiveRedisplay = window.__kqIsTransition === false;
+                if (isPassiveRedisplay) speak = function() {};
+
                 // Anchor every client to the SAME absolute end instant
                 // (a true epoch), corrected once for THIS client's own
                 // clock skew via the server-now/client-now delta at
@@ -2612,6 +2730,17 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round, ?int $rou
                 }
 
                 tick();
+                // 1.26.0 BUG 2 fix: restore the real speak() now -- only
+                // that one just-completed synchronous tick() call was
+                // ever meant to be silenced (see isPassiveRedisplay's own
+                // comment above). Anything crossed from the very next
+                // tick onward, 250ms later, announces completely
+                // normally either way -- a still-mid-countdown return
+                // (now < localStartMs on this first tick) hasn't marked
+                // fired.start at all yet, so "Start play now." still
+                // fires for real, right on time, when that countdown
+                // itself naturally reaches zero.
+                if (isPassiveRedisplay) speak = SppKqAnnouncer.speak;
                 timerInterval = setInterval(tick, 250);
 
                 // Exposed to the existing progress-update code (score
@@ -3372,7 +3501,34 @@ function spp_kq_render_live_app( int $occurrence_id, array $state ) : string {
         // piece of state that lets swapFragment() and popstate agree on
         // whether there's a pushed entry still needing to be resolved.
         var scoreboardHistoryPushed = false;
-        function swapFragment() {
+        // 1.26.0: BUG 2 fix -- see this file's own 1.26.0 changelog for
+        // the full root-cause writeup (confirmed live, not guessed).
+        // swapFragment()'s whole job is re-fetching+re-executing whatever
+        // fragment matches CURRENT server state, and every caller before
+        // yesterday's "Back to game" link only ever called it for a
+        // GENUINE transition (poll() detecting a real signature change,
+        // or submitAction() after an action that really changed server
+        // state) -- so a fresh fired={}/fired=false inside the fragment's
+        // own re-executed <script> was always correct: retroactively
+        // announcing whatever threshold a device "just" crossed on a
+        // genuine first render of that new state. "Back to game" (and
+        // native Back via popstate below) broke that assumption: the
+        // round hasn't changed at all, it's a PASSIVE redisplay of
+        // already-current state this device already heard announcements
+        // for -- but the swapped-in fragment's script has no way to tell
+        // the difference on its own, so it retroactively (and audibly)
+        // re-announces everything already due ("Start play now, 1 minute
+        // remaining" at once, live-tested). isTransition (default true,
+        // preserving every existing caller's behavior unchanged) lets
+        // THIS call site say which one it is; the flag is read by the
+        // in-play/overview fragments' own scripts (spp_kq_render_in_
+        // play_screen()/spp_kq_render_overview_screen(), each with their
+        // own 1.26.0 note) to silence just their OWN first tick's
+        // speak() calls on a passive redisplay, then behave completely
+        // normally (real announcements for anything crossed from then
+        // on) for the rest of that fragment's life.
+        function swapFragment(isTransition) {
+            if (isTransition === undefined) isTransition = true;
             if (swapping) return;
             swapping = true;
             var data = new FormData();
@@ -3395,6 +3551,10 @@ function spp_kq_render_live_app( int $occurrence_id, array $state ) : string {
                     SppKqLiveApp.onProgress = null;
                     SppKqLiveApp.cleanup = null;
                     lastSignature = signatureOf(res.data);
+                    // 1.26.0: consumed once, immediately, by whichever
+                    // fragment script executeScripts() is about to run --
+                    // see this function's own top-of-function comment.
+                    window.__kqIsTransition = isTransition;
                     appEl.innerHTML = res.data.html;
                     executeScripts(appEl);
                     // Part A (1.20.0): a swapFragment() call always lands
@@ -3409,9 +3569,19 @@ function spp_kq_render_live_app( int $occurrence_id, array $state ) : string {
                     // complete/cancelled -- see spp_kq_render_scoreboard_
                     // link()'s own docblock) or was already showing
                     // "View Full Scoreboard".
+                    // 1.26.0: BUG 1 fix -- see this file's own 1.26.0
+                    // changelog. swapFragment() always lands on the real
+                    // live screen, which already has its OWN "Back to
+                    // game" link (spp_kq_render_scoreboard_fragment() is
+                    // never what's showing once this runs) -- so restore
+                    // BOTH the label/href AND visibility here (parentNode,
+                    // not the <a> itself, so no empty <p class="kq-hint">
+                    // gap is left behind while showScoreboard() below has
+                    // it hidden).
                     if (scoreboardLink) {
                         scoreboardLink.textContent = 'View Full Scoreboard';
                         scoreboardLink.setAttribute('href', scoreboardViewUrl);
+                        scoreboardLink.parentNode.style.display = '';
                     }
                     // 1.25.0: a REAL transition (poll()/submitAction())
                     // can land here while the scoreboard's own history
@@ -3461,9 +3631,27 @@ function spp_kq_render_live_app( int $occurrence_id, array $state ) : string {
                     SppKqLiveApp.cleanup = null;
                     appEl.innerHTML = res.data.html;
                     executeScripts(appEl);
+                    // 1.26.0: BUG 1 fix -- real-incident feedback: two
+                    // "Back" controls appeared at once on the scoreboard
+                    // -- this top-level toggle link relabeling itself to
+                    // "« Back" (pre-1.26.0), AND spp_kq_render_scoreboard_
+                    // fragment()'s OWN "« Back to game" link, rendered
+                    // INSIDE the fragment this same swap just injected via
+                    // appEl.innerHTML above -- both doing the identical
+                    // job. Redundant, not a bug in either link on its
+                    // own: this toggle link predates yesterday's fold-in
+                    // work (1.20.0) and was never updated when the
+                    // fragment grew its own dedicated link (yesterday's
+                    // spec item 2). Fix: HIDE this one entirely (its
+                    // parentNode, so no leftover empty <p class="kq-hint">
+                    // gap) instead of relabeling it -- the in-fragment
+                    // "Back to game" link is now the ONLY way back, and
+                    // this link's only remaining job is being the ENTRY
+                    // point ("View Full Scoreboard") the rest of the
+                    // time. Restored to visible by swapFragment() above
+                    // the moment #kq-live-app holds real content again.
                     if (scoreboardLink) {
-                        scoreboardLink.textContent = '« Back';
-                        scoreboardLink.setAttribute('href', scoreboardBackUrl);
+                        scoreboardLink.parentNode.style.display = 'none';
                     }
                     // 1.25.0: push a same-document history entry so the
                     // PHONE'S OWN native Back button has something correct
@@ -3508,43 +3696,39 @@ function spp_kq_render_live_app( int $occurrence_id, array $state ) : string {
                 .catch(function() { swapping = false; });
         }
 
-        // The persistent link toggles based on its OWN current label
-        // (source of truth for "am I currently viewing the scoreboard"
-        // from this script's point of view -- no separate boolean to
-        // drift out of sync with it) -- real navigation prevented in
-        // favor of the in-app swap either direction. 1.25.0: the "Back"
-        // branch now goes through history.back() instead of calling
-        // swapFragment() directly, so the in-app link and the phone's own
-        // native Back button both resolve through the exact same popstate
-        // path below -- one code path, impossible for the two to drift.
+        // 1.26.0: this link is now ENTRY-ONLY ("View Full Scoreboard") --
+        // it's hidden (see showScoreboard()/swapFragment() above) for the
+        // entire time the scoreboard is showing, since the fragment's own
+        // "Back to game" link is the one and only way back now (BUG 1
+        // fix). Real navigation still prevented in favor of the in-app
+        // swap. The phone's native Back button is handled entirely by the
+        // popstate listener below, independent of this click handler.
         if (scoreboardLink) {
             scoreboardLink.addEventListener('click', function(e) {
                 e.preventDefault();
-                if (scoreboardLink.textContent.indexOf('Back') !== -1) {
-                    if (scoreboardHistoryPushed) {
-                        history.back();
-                    } else {
-                        swapFragment();
-                    }
-                } else {
-                    showScoreboard();
-                }
+                showScoreboard();
             });
         }
 
         // 1.25.0: the ONLY place that resolves the scoreboard's pushed
-        // history entry via an actual back-navigation -- fires for the
-        // phone's own native Back button exactly the same as it does for
-        // the in-app link's history.back() call just above (same-document
-        // navigation, no reload either way). Resetting the flag BEFORE
-        // calling swapFragment() means swapFragment()'s own
-        // scoreboardHistoryPushed check (above) is correctly a no-op
-        // here -- we already arrived via a real back-navigation, so
-        // there's nothing left to replaceState away.
+        // history entry -- fires for the phone's own native Back button
+        // (same-document popstate, no reload). 1.26.0: this is now ALSO
+        // the only remaining caller reached via real back-navigation at
+        // all, since the in-app "Back to game" link (spp_kq_render_
+        // scoreboard_fragment()) calls SppKqLiveApp.refreshNow() directly
+        // rather than history.back() -- doesn't change what this listener
+        // does, only that it's exclusively a native-Back handler now.
+        // Resetting the flag BEFORE calling swapFragment() means
+        // swapFragment()'s own scoreboardHistoryPushed check (above) is
+        // correctly a no-op here -- we already arrived via a real back-
+        // navigation, so there's nothing left to replaceState away.
+        // isTransition=false (BUG 2 fix, see swapFragment()'s own
+        // comment): the round itself never changed, this is a passive
+        // redisplay of already-current state, not a real transition.
         window.addEventListener('popstate', function() {
             if (scoreboardHistoryPushed) {
                 scoreboardHistoryPushed = false;
-                swapFragment();
+                swapFragment(false);
             }
         });
 
@@ -3590,7 +3774,19 @@ function spp_kq_render_live_app( int $occurrence_id, array $state ) : string {
             });
         }
 
-        window.SppKqLiveApp = { refreshNow: swapFragment, wireAjaxForm: wireAjaxForm, showScoreboard: showScoreboard, onProgress: null, cleanup: null };
+        // 1.26.0: refreshNow() is a wrapper, not a direct alias, now --
+        // its one caller (spp_kq_render_scoreboard_fragment()'s "Back to
+        // game" link) is a passive redisplay of already-current state,
+        // never a real transition (BUG 2 fix, see swapFragment()'s own
+        // comment) -- isTransition=false here, unconditionally, is what
+        // that link means every time it's pressed.
+        window.SppKqLiveApp = {
+            refreshNow: function() { swapFragment(false); },
+            wireAjaxForm: wireAjaxForm,
+            showScoreboard: showScoreboard,
+            onProgress: null,
+            cleanup: null
+        };
 
         var lastSignature = <?php echo wp_json_encode( $initial_signature ); ?>;
 
@@ -3833,6 +4029,14 @@ function spp_kq_render_full_scoreboard_screen( int $occurrence_id ) : string {
  * scoreboard_fragment below; wired up from spp_kq_render_live_app()'s
  * own bootstrap script, which is the only place window.SppKqLiveApp
  * exists (organizing/in_play only) -- see that function's own docblock.
+ *
+ * 1.26.0: THE ONLY "back" control while this fragment is showing --
+ * spp_kq_render_scoreboard_link()'s own top-level toggle link (rendered
+ * once, statically, outside #kq-live-app) is now hidden by JS for the
+ * entire time this fragment is up, real-incident fix for two redundant
+ * "Back"/"Back to game" controls appearing at once (that link predates
+ * this fragment's own "Back to game" link by a day and was never
+ * reconciled with it -- see that function's own 1.26.0 docblock note).
  */
 function spp_kq_render_scoreboard_fragment( int $occurrence_id ) : string {
     ob_start();
@@ -3859,8 +4063,7 @@ function spp_kq_render_scoreboard_fragment( int $occurrence_id ) : string {
  * spp_kq_render_full_reset() (present regardless of which phase-driven
  * screen is showing). Only offered once at least one completed round
  * exists (spp_kq_has_any_recorded_score()) -- nothing to show before
- * that. Always shown once already viewing the scoreboard, so there's
- * always a way back.
+ * that.
  *
  * 1.20.0: id="kq-scoreboard-link" added so spp_kq_render_live_app()'s
  * own bootstrap script (organizing/in_play only -- the only phases that
@@ -3871,6 +4074,19 @@ function spp_kq_render_scoreboard_fragment( int $occurrence_id ) : string {
  * state (?kq_view=scoreboard), so the href/label rendered here remain
  * the correct plain-navigation fallback for a non-JS visitor, and the
  * initial page-load state JS then takes over from.
+ *
+ * 1.26.0: on the persistent app, JS now HIDES this link's whole element
+ * the entire time the scoreboard fragment is showing, rather than
+ * relabeling it to "« Back" as before -- spp_kq_render_scoreboard_
+ * fragment() grew its own dedicated "Back to game" link (yesterday's
+ * spec item 2) and the two were never reconciled, so both appeared at
+ * once (real-incident fix). This function's PHP output is unaffected --
+ * $viewing_scoreboard is never true in the persistent-app render path in
+ * the first place (spp_kq_live_shortcode()'s dispatcher renders EITHER
+ * spp_kq_render_full_scoreboard_screen() OR spp_kq_render_live_app(),
+ * never both), so the "« Back" label this function can still produce is
+ * exclusively the non-JS plain-navigation fallback's own correct state,
+ * never something the persistent app's JS has to un-render.
  */
 function spp_kq_render_scoreboard_link( int $occurrence_id, bool $viewing_scoreboard ) : string {
     if ( ! $viewing_scoreboard && ! spp_kq_has_any_recorded_score( $occurrence_id ) ) {
