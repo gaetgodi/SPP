@@ -1,8 +1,57 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Format Rankings
-   Version: 1.2.0
-   Date: 2026-09-17
+   Version: 1.3.0
+   Date: 2026-09-20
+
+   Changes from 1.2.0 (inactivity handling -- reviewed and approved
+   before implementation; per-player, per-format, same independence as
+   everything else in this file: an Ace absence never touches a
+   player's Queen state or vice versa):
+     - Two new usermeta keys alongside the existing spp_kq_{source}_avg/
+       rank, same naming convention: spp_kq_{source}_misses (int,
+       consecutive-event miss counter for that format) and spp_kq_
+       {source}_active (1/0; MISSING is treated as active -- true for
+       every player this feature shipped after, no migration pass
+       needed). Written via update_user_meta()/delete_user_meta() only,
+       same 1.1.1 cache-safety note as the existing keys.
+     - spp_kq_update_format_rankings() no longer early-returns just
+       because zero real participants were archived today -- the new
+       sitewide inactivity pass (spp_kq_apply_format_inactivity() below)
+       must still run for every ABSENT active player even when, say,
+       every attendee today was a guest.
+     - Playing resets the clock: any real (non-guest) participant today
+       gets spp_kq_{source}_misses set to 0 and spp_kq_{source}_active
+       set to 1, unconditionally -- this doubles as the "return from
+       removal" restore path for free, since a removed player's spp_kq_
+       {source}_avg was never touched while they were out (see below),
+       so the existing EMA blend just below naturally blends their new
+       real score against the exact preserved value.
+     - spp_kq_apply_format_inactivity() is the new sitewide pass: for
+       every OTHER player who has ever had an average in this format
+       (spp_kq_get_format_population()) but did NOT play today --
+       increment their miss counter; on misses 1-2 (the grace period),
+       decay their average one step toward the neutral midpoint (2.5)
+       using the SAME alpha=0.2 EMA blend already in place, but ONLY if
+       their average is currently above 2.5 -- an at-or-below-neutral
+       idle player's average is left untouched, per explicit decision;
+       on the 3rd consecutive miss, flip spp_kq_{source}_active to 0
+       (no decay this step -- the average freezes exactly where miss #2
+       left it) and delete_user_meta() their spp_kq_{source}_rank
+       outright so downstream consumers (the membership-table pivot,
+       inc/spp-create-membership-table.php; the ace_ratings/queen_
+       ratings reports, inc/spp-reports.php, both WHERE-filtered on that
+       column being NOT NULL) read them as genuinely unranked rather
+       than stale. A player already inactive is skipped entirely by
+       this pass (no further miss-counting or decay while removed).
+     - spp_kq_recompute_format_ranks() now filters spp_kq_{source}_
+       active === 0 players out before ranking at all -- they get no
+       rank number, and everyone else's contiguous 1..N sequence is
+       computed only over the remaining active population, same as if
+       the removed players didn't exist.
+     - Carries forward indefinitely year to year, same as the base
+       average/rank design -- no season/year boundary logic exists
+       anywhere in this file, and this feature doesn't add any.
 
    Changes from 1.1.1 (reworked the tie-break scheme -- reviewed and
    approved same day as 1.1.0/1.1.1; this REVISES the hypothetical-
@@ -157,6 +206,12 @@ defined( 'ABSPATH' ) || exit;
 const SPP_KQ_FORMAT_RANK_DECAY_ALPHA = 0.2;
 
 /**
+ * 1.3.0 inactivity handling -- see file header's "Changes from 1.2.0".
+ */
+const SPP_KQ_FORMAT_RANK_NEUTRAL = 2.5;
+const SPP_KQ_FORMAT_RANK_REMOVE_AFTER_MISSES = 3;
+
+/**
  * The single entry point, called automatically after a successful
  * 'end_event' or 'cancel_event' transition, AFTER history archival --
  * see this file's own header. Never called any other way.
@@ -180,12 +235,16 @@ function spp_kq_update_format_rankings( int $occurrence_id, string $event_date )
         return array( 'notice' => '', 'updated' => false ); // not a recognized Ace/Queen occurrence
     }
 
+    // 1.3.0: no early-return on empty here any more -- the inactivity
+    // pass below still needs to run for absent active players even when
+    // nothing was archived for today (e.g. every attendee was a guest).
     $final_courts = spp_kq_get_final_courts( $occurrence_id );
-    if ( empty( $final_courts ) ) {
-        return array( 'notice' => '', 'updated' => false ); // nothing archived for this occurrence
-    }
 
-    $avg_key   = "spp_kq_{$source}_avg";
+    $avg_key    = "spp_kq_{$source}_avg";
+    $misses_key = "spp_kq_{$source}_misses";
+    $active_key = "spp_kq_{$source}_active";
+
+    $participants  = array(); // uid => true, today's real (non-guest) players
     $updated_count = 0;
 
     foreach ( $final_courts as $user_id => $court_name ) {
@@ -199,6 +258,8 @@ function spp_kq_update_format_rankings( int $occurrence_id, string $event_date )
             continue; // defensive -- shouldn't happen, courts are a fixed closed set
         }
 
+        $participants[ $user_id ] = true;
+
         $old_avg_raw = get_user_meta( $user_id, $avg_key, true );
         $new_avg = ( $old_avg_raw === '' || $old_avg_raw === false )
             ? (float) $value
@@ -207,22 +268,136 @@ function spp_kq_update_format_rankings( int $occurrence_id, string $event_date )
         // update_user_meta(), not raw SQL -- see file header's 1.1.1
         // cache-safety note.
         update_user_meta( $user_id, $avg_key, $new_avg );
+        // 1.3.0: playing resets the inactivity clock and (re)confirms
+        // active status -- this is also the entire "restore on return"
+        // mechanism, since a removed player's $avg_key above was never
+        // touched while they were out, so the blend just above already
+        // used their exact preserved average. See file header.
+        update_user_meta( $user_id, $misses_key, 0 );
+        update_user_meta( $user_id, $active_key, 1 );
         $updated_count++;
     }
 
-    if ( $updated_count === 0 ) {
-        return array( 'notice' => '', 'updated' => false ); // every player archived for today was a guest
+    // 1.3.0: sitewide inactivity pass over everyone who has EVER had an
+    // average in this format but did NOT play today. See file header.
+    $inactivity = spp_kq_apply_format_inactivity( $source, $participants );
+
+    if ( $updated_count === 0 && ! $inactivity['changed'] ) {
+        return array( 'notice' => '', 'updated' => false );
     }
 
     spp_kq_recompute_format_ranks( $source );
 
+    $label = $source === 'ace' ? 'Ace' : 'Queen';
+    $notice_parts = array();
+    if ( $updated_count > 0 ) {
+        $notice_parts[] = sprintf( '%d player(s)\' %s of the Courts average', $updated_count, $label );
+    }
+    if ( $inactivity['removed'] > 0 ) {
+        $notice_parts[] = sprintf( '%d removed from %s ranking for inactivity', $inactivity['removed'], $label );
+    }
+
     return array(
-        'notice'  => sprintf(
-            'Format rankings updated: %d player(s)\' %s of the Courts average.',
-            $updated_count, $source === 'ace' ? 'Ace' : 'Queen'
-        ),
+        'notice'  => 'Format rankings updated: ' . implode( ', ', $notice_parts ) . '.',
         'updated' => true,
     );
+}
+
+/**
+ * 1.3.0: sitewide consecutive-miss tracking, grace-period decay, and
+ * removal for ONE format ('ace'/'queen') -- runs on every event of that
+ * format, over every player who has EVER had an average in it (spp_kq_
+ * get_format_population()), not just today's participants. See file
+ * header's "Changes from 1.2.0" for the full design.
+ *
+ * Today's real participants have ALREADY had their miss counter reset
+ * and active flag confirmed by the caller (spp_kq_update_format_
+ * rankings()) -- this function only processes everyone else, so it must
+ * be passed that participant set to skip them correctly.
+ *
+ * @param array $participants uid => true for today's real (non-guest)
+ *   participants in this format.
+ * @return array ['changed' => bool, 'removed' => int]. 'changed' is
+ *   true if any absent player's average or active status moved (decay
+ *   or removal) -- tells the caller a re-rank is warranted even when
+ *   $updated_count from today's participants was zero.
+ */
+function spp_kq_apply_format_inactivity( string $source, array $participants ) : array {
+    $avg_key    = "spp_kq_{$source}_avg";
+    $misses_key = "spp_kq_{$source}_misses";
+    $active_key = "spp_kq_{$source}_active";
+    $rank_key   = "spp_kq_{$source}_rank";
+
+    $changed = false;
+    $removed = 0;
+
+    foreach ( spp_kq_get_format_population( $source ) as $user_id ) {
+        if ( isset( $participants[ $user_id ] ) ) {
+            continue; // played today -- already handled by the caller
+        }
+
+        // Missing meta means active -- true for every player this
+        // feature shipped after, no migration/backfill needed.
+        $active_raw = get_user_meta( $user_id, $active_key, true );
+        $is_active  = ( $active_raw === '' || $active_raw === false ) ? true : ( (int) $active_raw === 1 );
+        if ( ! $is_active ) {
+            continue; // already removed -- frozen, not touched further
+        }
+
+        $misses_raw = get_user_meta( $user_id, $misses_key, true );
+        $misses = ( ( $misses_raw === '' || $misses_raw === false ) ? 0 : (int) $misses_raw ) + 1;
+
+        if ( $misses >= SPP_KQ_FORMAT_RANK_REMOVE_AFTER_MISSES ) {
+            // Removal -- average is preserved exactly as it stands (no
+            // decay this step; miss #2's decay, if any, is the last
+            // thing that touched it), active flips off, and any rank is
+            // deleted outright so they read as unranked rather than
+            // stale. See file header.
+            update_user_meta( $user_id, $misses_key, $misses );
+            update_user_meta( $user_id, $active_key, 0 );
+            delete_user_meta( $user_id, $rank_key );
+            $removed++;
+            $changed = true;
+            continue;
+        }
+
+        // Grace period (misses 1-2): decay one step toward the neutral
+        // midpoint, but only when currently above it -- an at-or-below-
+        // neutral idle player's average is left frozen. See file header.
+        $old_avg = (float) get_user_meta( $user_id, $avg_key, true );
+        if ( $old_avg > SPP_KQ_FORMAT_RANK_NEUTRAL ) {
+            $new_avg = ( SPP_KQ_FORMAT_RANK_DECAY_ALPHA * SPP_KQ_FORMAT_RANK_NEUTRAL )
+                + ( ( 1 - SPP_KQ_FORMAT_RANK_DECAY_ALPHA ) * $old_avg );
+            update_user_meta( $user_id, $avg_key, $new_avg );
+            $changed = true;
+        }
+
+        update_user_meta( $user_id, $misses_key, $misses );
+    }
+
+    return array( 'changed' => $changed, 'removed' => $removed );
+}
+
+/**
+ * Every user_id who currently has an spp_kq_{source}_avg usermeta row --
+ * i.e. has played this format at least once ever, active or removed (a
+ * removed player's row IS the frozen snapshot they restore from on
+ * return -- see file header). Guests never appear here: the avg key is
+ * never written for them in the first place (spp_kq_update_format_
+ * rankings()'s own guest exclusion runs before that write).
+ *
+ * @return int[] user_ids.
+ */
+function spp_kq_get_format_population( string $source ) : array {
+    global $wpdb;
+    $usermeta = $wpdb->prefix . 'usermeta';
+    $avg_key  = "spp_kq_{$source}_avg";
+
+    $uids = $wpdb->get_col( $wpdb->prepare(
+        "SELECT user_id FROM {$usermeta} WHERE meta_key = %s", $avg_key
+    ) );
+
+    return array_map( 'intval', $uids );
 }
 
 /**
@@ -336,6 +511,23 @@ function spp_kq_recompute_format_ranks( string $source ) : void {
     $avg_by_uid = array();
     foreach ( $avg_rows as $r ) {
         $avg_by_uid[ (int) $r['user_id'] ] = (float) $r['meta_value'];
+    }
+
+    // 1.3.0: players removed for inactivity get no rank at all -- see
+    // file header. spp_kq_apply_format_inactivity() already deletes
+    // their rank meta at the moment of removal; this filter just keeps
+    // them out of the sort/rank assignment on every subsequent recompute
+    // too, so the remaining active population's 1..N stays contiguous.
+    $active_key = "spp_kq_{$source}_active";
+    foreach ( $avg_by_uid as $uid => $avg ) {
+        $active_raw = get_user_meta( $uid, $active_key, true );
+        $is_active  = ( $active_raw === '' || $active_raw === false ) ? true : ( (int) $active_raw === 1 );
+        if ( ! $is_active ) {
+            unset( $avg_by_uid[ $uid ] );
+        }
+    }
+    if ( empty( $avg_by_uid ) ) {
+        return;
     }
 
     $rank_rows = $wpdb->get_results( $wpdb->prepare(
