@@ -1,8 +1,30 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Live Event Schema
-   Version: 1.7.0
-   Date: 2026-09-15
+   Version: 1.8.0
+   Date: 2026-09-20
+
+   Changes from 1.7.0 (serve-first indicator -- real usage feedback,
+   reviewed and approved; see inc/spp-kq-live.php's own changelog for
+   the determination logic and inc/spp-kq-screens.php/inc/spp-kq-
+   history.php for where it's displayed):
+   - spp_kq_scores gains `serving_team` (live ALTER -- same dbDelta ADD
+     COLUMN case as `cancelled`/`client_ts`/etc., no new migration
+     technique needed). ENUM('red','black') DEFAULT NULL, same domain as
+     spp_kq_assignments.team_color. Lives on spp_kq_scores rather than
+     spp_kq_assignments because this table already has exactly one row
+     per (occurrence_id, round_number, court_name) -- the same
+     per-court, per-round granularity "which team serves first"
+     actually needs; a copy on every one of the 4 players' assignment
+     rows would be redundant and could theoretically drift. Set once,
+     randomly, at the moment a round's court structure is created
+     (spp_kq_create_score_placeholders(), inc/spp-kq-live.php -- the
+     ONE shared call site for both round 1's draw and every
+     round-advance), never touched again -- purely informational,
+     confirmed to have zero interaction with spp_kq_compute_next_round()
+     or any movement/scoring logic (inc/spp-kq-movement.php never reads
+     it, never will: it's a display-only fact about who serves the
+     first point, not an input to who wins/moves).
 
    Changes from 1.6.0 (pre-round announcement flow -- "Go to your
    courts" for round 1 (manual) and round 2+ (automatic 2-minute rest)
@@ -226,7 +248,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'SPP_KQ_DB_VERSION', '1.7.0' );
+define( 'SPP_KQ_DB_VERSION', '1.8.0' );
 
 /**
  * Create (or, on a later run, no-op/upgrade) the three spp_kq_*
@@ -295,6 +317,10 @@ function spp_kq_create_tables() {
     // time, in the same row and same atomic UPDATE as the score write --
     // see this file's own 1.5.0 changelog and
     // spp_kq_submit_court_score()'s docblock (inc/spp-kq-live.php).
+    // serving_team (1.8.0): which team serves first this court/round --
+    // set once, randomly, the moment the row is created; purely
+    // informational, never read by movement/scoring. See this file's
+    // own 1.8.0 changelog.
     dbDelta( "CREATE TABLE {$p}spp_kq_scores (
         occurrence_id  INT UNSIGNED NOT NULL,
         round_number   SMALLINT UNSIGNED NOT NULL,
@@ -302,6 +328,7 @@ function spp_kq_create_tables() {
         red_score      SMALLINT UNSIGNED DEFAULT NULL,
         black_score    SMALLINT UNSIGNED DEFAULT NULL,
         cancelled      TINYINT UNSIGNED NOT NULL DEFAULT 0,
+        serving_team   ENUM('red','black') DEFAULT NULL,
         updated_by     BIGINT UNSIGNED DEFAULT NULL,
         client_ts      BIGINT UNSIGNED DEFAULT NULL,
         updated_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

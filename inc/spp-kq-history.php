@@ -1,8 +1,32 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Permanent History, Live Scoreboard, Recap Email
-   Version: 1.9.0
-   Date: 2026-09-17
+   Version: 1.10.0
+   Date: 2026-09-20
+
+   Changes from 1.9.0 (real usage feedback, reviewed and approved):
+   - spp_kq_get_full_scoreboard() now also selects/returns each court's
+     serving_team (see inc/spp-kq-live.php's own 1.10.0 changelog for
+     where that's decided). Null for a court archived before this
+     feature existed -- spp_kq_render_scoreboard_markup() below treats
+     that as "don't show a serve-first line" rather than guessing.
+     spp_kq_get_history_scoreboard() is UNCHANGED -- spp_kq_history has
+     no such column and never will (it's a permanent, once-written
+     archive; adding a column there for a purely cosmetic, decided-at-
+     creation-time fact isn't worth it) -- its rows simply have no
+     'serving_team' key, same as any live court predating this feature.
+   - spp_kq_render_scoreboard_markup() gains two new, optional trailing
+     params ($editable, $occurrence_id) -- when $editable is true, every
+     court's score renders as an inline-editable pair of inputs + Save
+     button (spp_kq_correct_court_score(), inc/spp-kq-live.php, via the
+     new wp_ajax_spp_kq_correct_score handler, inc/spp-kq-screens.php)
+     instead of static text, and a "Red/Black serves first" line prints
+     when a court's 'serving_team' key is set. Both params default to
+     false/0 so the historical Event Detail view's own call site below
+     (unchanged) renders exactly as before -- only spp_kq_render_full_
+     scoreboard_screen() (inc/spp-kq-screens.php) ever passes them, and
+     only for the live event, only while it hasn't ended. See that
+     function's own docblock for the editability decision itself.
 
    Changes from 1.8.0 (fix court display order -- was alphabetical, now
    the fixed Aces/Kings/Queens/Jacks hierarchy everywhere courts are
@@ -251,7 +275,7 @@ function spp_kq_get_full_scoreboard( int $occurrence_id ) : array {
     $assignments_table = spp_kq_assignments_table();
 
     $rows = $wpdb->get_results( $wpdb->prepare(
-        "SELECT s.round_number, s.court_name, s.red_score, s.black_score,
+        "SELECT s.round_number, s.court_name, s.red_score, s.black_score, s.serving_team,
                 a.user_id, a.team_color, m.first_name, m.last_name
          FROM {$scores_table} s
          JOIN {$assignments_table} a
@@ -277,6 +301,11 @@ function spp_kq_get_full_scoreboard( int $occurrence_id ) : array {
                 'black'       => array(),
                 'red_score'   => (int) $r['red_score'],
                 'black_score' => (int) $r['black_score'],
+                // 1.8.0: see inc/spp-kq-live.php's own 1.10.0 changelog --
+                // null for any court that predates this feature, which
+                // spp_kq_render_scoreboard_markup() treats as "don't show
+                // a serve-first line" rather than guessing.
+                'serving_team' => $r['serving_team'],
             );
         }
         $out[ $round ][ $court ][ $r['team_color'] ][] = array(
@@ -359,6 +388,24 @@ function spp_kq_get_history_scoreboard( string $source, string $event_date ) : a
  * body (see that function's docblock) -- markup itself is unchanged from
  * before this existed.
  *
+ * 1.8.0 (real usage feedback, reviewed and approved -- two additions,
+ * both opt-in via new trailing params so the historical Event Detail
+ * view's own call site, which passes neither, is completely unaffected):
+ *  - Serve-first: a court's 'serving_team' key (present when fed by
+ *    spp_kq_get_full_scoreboard(), absent/null from spp_kq_get_history_
+ *    scoreboard() and from any live court that predates this feature)
+ *    prints a small "Red/Black serves first" line when set. Purely
+ *    display -- see inc/spp-kq-live.php's own 1.10.0 changelog.
+ *  - $editable/$occurrence_id: when true, every court's score becomes
+ *    an inline-editable pair of inputs + Save button (spp_kq_correct_
+ *    court_score(), inc/spp-kq-live.php, via the new wp_ajax_spp_kq_
+ *    correct_score handler below) instead of static text. ONLY the live
+ *    Full Scoreboard ever passes $editable=true, and only while the
+ *    event hasn't ended -- see spp_kq_render_full_scoreboard_screen()'s
+ *    own docblock for how it decides that. The historical Event Detail
+ *    view is read-only, permanently-archived data by definition and
+ *    never passes these params, so it renders exactly as before.
+ *
  * @param array  $scoreboard    Grouped [round => [court => [...]]] shape,
  *                               same as both functions above return.
  * @param string $empty_message Shown instead of any round/court markup
@@ -366,8 +413,12 @@ function spp_kq_get_history_scoreboard( string $source, string $event_date ) : a
  *                               this to fit their own context (a live
  *                               event with no rounds yet vs. a historical
  *                               lookup that found no matching event).
+ * @param bool   $editable      Whether to render inline score-correction
+ *                               controls (live Full Scoreboard only).
+ * @param int    $occurrence_id Required when $editable is true -- every
+ *                               correction AJAX call needs it.
  */
-function spp_kq_render_scoreboard_markup( array $scoreboard, string $empty_message = 'No completed rounds yet.' ) : string {
+function spp_kq_render_scoreboard_markup( array $scoreboard, string $empty_message = 'No completed rounds yet.', bool $editable = false, int $occurrence_id = 0 ) : string {
     ob_start();
     ?>
     <?php if ( empty( $scoreboard ) ) : ?>
@@ -376,21 +427,137 @@ function spp_kq_render_scoreboard_markup( array $scoreboard, string $empty_messa
         <?php foreach ( $scoreboard as $round_number => $courts ) : ?>
             <h3 class="kq-picker-section-heading">Round <?php echo esc_html( $round_number ); ?></h3>
             <div class="kq-court-grid">
-                <?php foreach ( $courts as $court_name => $court ) : ?>
+                <?php foreach ( $courts as $court_name => $court ) :
+                    $serving = $court['serving_team'] ?? null;
+                ?>
                     <div class="kq-court-card">
                         <div class="kq-court-name"><?php echo esc_html( $court_name ); ?></div>
+                        <?php if ( ! empty( $serving ) ) : ?>
+                            <p class="kq-serve-first"><?php echo esc_html( ucfirst( $serving ) . ' served first' ); ?></p>
+                        <?php endif; ?>
                         <div class="kq-team kq-team-red">
                             Red: <?php echo esc_html( implode( ', ', array_column( $court['red'], 'name' ) ) ); ?>
-                            &mdash; <?php echo esc_html( $court['red_score'] ); ?>
+                            <?php if ( ! $editable ) : ?>
+                                &mdash; <?php echo esc_html( $court['red_score'] ); ?>
+                            <?php endif; ?>
                         </div>
                         <div class="kq-team kq-team-black">
                             Black: <?php echo esc_html( implode( ', ', array_column( $court['black'], 'name' ) ) ); ?>
-                            &mdash; <?php echo esc_html( $court['black_score'] ); ?>
+                            <?php if ( ! $editable ) : ?>
+                                &mdash; <?php echo esc_html( $court['black_score'] ); ?>
+                            <?php endif; ?>
                         </div>
+                        <?php if ( $editable ) : ?>
+                            <div class="kq-score-row kq-correct-score-row"
+                                 data-round="<?php echo esc_attr( $round_number ); ?>"
+                                 data-court="<?php echo esc_attr( $court_name ); ?>"
+                                 data-orig-red="<?php echo esc_attr( $court['red_score'] ); ?>"
+                                 data-orig-black="<?php echo esc_attr( $court['black_score'] ); ?>">
+                                <label>Red<br>
+                                    <input type="number" class="kq-score-input kq-correct-red-input" min="0" max="11" inputmode="numeric" pattern="[0-9]*"
+                                           value="<?php echo esc_attr( $court['red_score'] ); ?>">
+                                </label>
+                                <label>Black<br>
+                                    <input type="number" class="kq-score-input kq-correct-black-input" min="0" max="11" inputmode="numeric" pattern="[0-9]*"
+                                           value="<?php echo esc_attr( $court['black_score'] ); ?>">
+                                </label>
+                                <button type="button" class="kq-btn kq-btn-secondary kq-correct-score-btn" disabled>Save Correction</button>
+                                <span class="kq-saved" style="display:none;">Saved &#10003;</span>
+                            </div>
+                        <?php endif; ?>
                     </div>
                 <?php endforeach; ?>
             </div>
         <?php endforeach; ?>
+
+        <?php if ( $editable ) : ?>
+        <div class="kq-notice kq-notice-err" id="kq-correct-score-msg" style="display:none;"></div>
+        <script>
+        (function() {
+            var ajaxUrl = <?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>;
+            var nonce   = <?php echo wp_json_encode( wp_create_nonce( 'spp_kq_live_action' ) ); ?>;
+            var occ     = <?php echo (int) $occurrence_id; ?>;
+            var msgEl   = document.getElementById('kq-correct-score-msg');
+
+            function showMsg(text, ok) {
+                if (!msgEl) return;
+                msgEl.textContent = text;
+                msgEl.className = 'kq-notice ' + (ok ? 'kq-notice-ok' : 'kq-notice-err');
+                msgEl.style.display = 'block';
+            }
+
+            // One wiring pass per (round, court) row -- same pattern as
+            // spp_kq_render_in_play_screen()'s own score-save wiring, but
+            // the Save button here ALSO requires the value to have
+            // actually changed from what's currently stored (real usage
+            // feedback spec point 3), not just be individually valid.
+            document.querySelectorAll('.kq-correct-score-row').forEach(function(row) {
+                var round      = row.dataset.round;
+                var court      = row.dataset.court;
+                var redInput   = row.querySelector('.kq-correct-red-input');
+                var blackInput = row.querySelector('.kq-correct-black-input');
+                var saveBtn    = row.querySelector('.kq-correct-score-btn');
+                var savedTag   = row.querySelector('.kq-saved');
+                if (!redInput || !blackInput || !saveBtn) return;
+
+                function updateSaveState() {
+                    var r = redInput.value, b = blackInput.value;
+                    if (r === '' || b === '') { saveBtn.disabled = true; return; }
+                    var rn = parseInt(r, 10), bn = parseInt(b, 10);
+                    var unchanged = (String(rn) === row.dataset.origRed && String(bn) === row.dataset.origBlack);
+                    // Same rules, same order, as spp_kq_validate_score_
+                    // pair()'s server-side checks (inc/spp-kq-live.php) --
+                    // immediate feedback only, the server re-validates
+                    // independently regardless.
+                    if (rn < 0 || rn > 11 || bn < 0 || bn > 11) {
+                        saveBtn.disabled = true;
+                    } else if (rn === bn) {
+                        saveBtn.disabled = true;
+                    } else {
+                        saveBtn.disabled = unchanged;
+                    }
+                }
+
+                redInput.addEventListener('input', function() { savedTag.style.display = 'none'; updateSaveState(); });
+                blackInput.addEventListener('input', function() { savedTag.style.display = 'none'; updateSaveState(); });
+                updateSaveState();
+
+                saveBtn.addEventListener('click', function() {
+                    saveBtn.disabled = true;
+                    savedTag.style.display = 'none';
+                    if (msgEl) msgEl.style.display = 'none';
+
+                    var data = new FormData();
+                    data.append('action', 'spp_kq_correct_score');
+                    data.append('nonce', nonce);
+                    data.append('occ', occ);
+                    data.append('round', round);
+                    data.append('court_name', court);
+                    data.append('red_score', redInput.value);
+                    data.append('black_score', blackInput.value);
+
+                    fetch(ajaxUrl, { method: 'POST', body: data, credentials: 'same-origin' })
+                        .then(function(r) { return r.json(); })
+                        .then(function(res) {
+                            if (!res.success) {
+                                showMsg(res.data || 'Save failed.', false);
+                                updateSaveState();
+                                return;
+                            }
+                            row.dataset.origRed   = String(res.data.red_score);
+                            row.dataset.origBlack = String(res.data.black_score);
+                            savedTag.style.display = 'inline';
+                            updateSaveState();
+                        })
+                        .catch(function() {
+                            showMsg('Network error -- try again.', false);
+                            updateSaveState();
+                        });
+                });
+            });
+        })();
+        </script>
+        <?php endif; ?>
     <?php endif; ?>
     <?php
     return ob_get_clean();

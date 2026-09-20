@@ -1,8 +1,58 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Screens
-   Version: 1.27.0
-   Date: 2026-09-19
+   Version: 1.28.0
+   Date: 2026-09-20
+
+   Changes from 1.27.0 -- real usage feedback, reviewed and approved,
+   four independent items:
+
+   ITEM 1 -- Serve-first indicator. spp_kq_get_round_court_view() now
+   also returns each court's serving_team (a 'serving' key), sourced
+   from spp_kq_scores (see inc/spp-kq-live.php's own 1.10.0 changelog
+   for where that's decided). Displayed as a small "Red/Black serves
+   first" line on both the Overview screen (spp_kq_render_overview_
+   screen()) and the In-Play screen (spp_kq_render_in_play_screen()),
+   above the Red/Black team listing -- new .kq-serve-first CSS rule.
+
+   ITEM 2 -- Editable Full Scoreboard. spp_kq_render_full_scoreboard_
+   screen() now decides $editable from a fresh spp_kq_get_event_state()
+   read (true unless phase is complete/cancelled) and passes it (plus
+   $occurrence_id) into spp_kq_render_scoreboard_markup() (inc/spp-kq-
+   history.php) -- see that function's own 1.8.0 changelog for the
+   inline-edit UI itself. New wp_ajax_spp_kq_correct_score handler,
+   thin plumbing over the new spp_kq_correct_court_score() (inc/spp-kq-
+   live.php). The historical Event Detail view's own call site is
+   unaffected -- it never passes these new (default-false/0) params.
+
+   ITEM 3 -- Live polling added to two screens that previously had NONE
+   at all (Check-in and the Round-1 Draw screen were deliberately
+   excluded from the persistent app -- see this file's own 1.14.0
+   changelog -- which meant no live updates whatsoever, not just a slow
+   interval, contrary to what investigating this item assumed going in):
+     - Draw screen (spp_kq_render_draw_screen()): new 2500ms poll reusing
+       the EXISTING wp_ajax_spp_kq_render_fragment endpoint (already
+       renders this exact screen's HTML for organizing+round1+unclaimed
+       -- no new backend code needed here), replacing only the
+       #kq-not-drawn-list/#kq-card-grid/#kq-revealed-courts/#kq-draw-
+       count containers (event-delegated click handlers, so replacing
+       children's innerHTML never orphans a listener) and reloading if
+       the draw completed via another device.
+     - Check-in screen (spp_kq_render_start_screen()): new 2500ms poll
+       against a new, read-only wp_ajax_spp_kq_poll_checkin endpoint,
+       patching each row's checked-in visual state + the summary count
+       line. The check-in action itself is deliberately LEFT as the
+       existing plain POST/reload (lower risk, and a click is already
+       atomic -- no mid-interaction race to guard against the way the
+       draw screen's own card selection needed). Scope: only checked-in
+       status of players already rendered updates live; a Roster Adjust
+       add/remove elsewhere still needs a manual reload to appear here.
+   Also tightened the persistent app's own existing poll (organizing
+   post-draw/in_play/complete/cancelled) from 4000ms to 2500ms -- see
+   that script's own inline comment for the honest ceiling (a tighter
+   poll shortens how long a change can sit unnoticed on an idle device;
+   it cannot and does not change how fast any one request completes over
+   a player's own cellular connection).
 
    Changes from 1.26.0 -- two changes from real live-event feedback:
 
@@ -1474,11 +1524,28 @@ function spp_kq_get_draw_reveal_state( int $occurrence_id, array $courts_order )
 function spp_kq_get_round_court_view( int $occurrence_id, int $round_number ) : array {
     global $wpdb;
     $table = spp_kq_assignments_table();
+    $scores_table = spp_kq_scores_table();
 
     $courts_order = spp_kq_determine_courts_order( $occurrence_id );
     $out = array();
     foreach ( $courts_order as $court ) {
-        $out[ $court ] = array( 'red' => array(), 'black' => array() );
+        $out[ $court ] = array( 'red' => array(), 'black' => array(), 'serving' => null );
+    }
+
+    // 1.28.0: serving_team, one lookup for the whole round -- see
+    // inc/spp-kq-live.php's own 1.10.0 changelog for where/how this is
+    // decided (spp_kq_create_score_placeholders()). Never null for a
+    // court that genuinely exists this round (every score placeholder
+    // row gets one at creation), so a missing key here only ever means
+    // "not a real court this round" -- same as $out's own default above.
+    $serving_by_court = $wpdb->get_results( $wpdb->prepare(
+        "SELECT court_name, serving_team FROM {$scores_table} WHERE occurrence_id = %d AND round_number = %d",
+        $occurrence_id, $round_number
+    ), OBJECT_K );
+    foreach ( $serving_by_court as $court => $row ) {
+        if ( isset( $out[ $court ] ) ) {
+            $out[ $court ]['serving'] = $row->serving_team;
+        }
     }
 
     $rows = $wpdb->get_results( $wpdb->prepare(
@@ -1643,6 +1710,7 @@ function spp_kq_styles() : string {
         .kq-team { font-size:14px; margin-bottom:2px; }
         .kq-team-red { color:#c0392b; }
         .kq-team-black { color:#222; }
+        .kq-serve-first { font-size:12px; font-weight:bold; text-transform:uppercase; letter-spacing:.4px; color:#3fc804; margin:0 0 6px; }
         .kq-draw-progress { color:#555; font-size:14px; margin:0 0 16px; }
         .kq-draw-columns { display:flex; gap:16px; flex-wrap:wrap; margin-bottom:16px; }
         .kq-draw-col { flex:1 1 220px; }
@@ -1941,7 +2009,7 @@ function spp_kq_render_start_screen( int $occurrence_id, string $event_date, ?st
 
     ob_start();
     ?>
-    <p class="kq-meta">
+    <p class="kq-meta" id="kq-checkin-count">
         <?php echo esc_html( $checked_in_count ); ?> of <?php echo esc_html( $confirmed_count ); ?> confirmed registrant<?php echo $confirmed_count === 1 ? '' : 's'; ?> checked in
     </p>
     <p class="kq-hint">Mark each player checked in as they arrive. Anyone still not checked in when you start Round 1 is removed from the registrant list.</p>
@@ -1950,11 +2018,11 @@ function spp_kq_render_start_screen( int $occurrence_id, string $event_date, ?st
     <?php if ( empty( $confirmed ) ) : ?>
         <p class="kq-hint">No confirmed registrants yet.</p>
     <?php else : ?>
-        <ul class="kq-checkin-list">
+        <ul class="kq-checkin-list" id="kq-checkin-list">
             <?php foreach ( $confirmed as $p ) :
                 $is_in = in_array( $p['user_id'], $checked_in_ids, true );
             ?>
-                <li>
+                <li data-uid="<?php echo esc_attr( $p['user_id'] ); ?>" data-name="<?php echo esc_attr( $p['name'] ); ?>">
                     <form method="post" class="kq-inline-form" style="width:100%;">
                         <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
                         <input type="hidden" name="spp_kq_action" value="<?php echo $is_in ? 'checkin_unmark' : 'checkin_mark'; ?>">
@@ -1994,6 +2062,73 @@ function spp_kq_render_start_screen( int $occurrence_id, string $event_date, ?st
             <input type="hidden" name="spp_kq_action" value="start_round1">
             <button type="submit" class="kq-btn kq-btn-primary">Start Round 1 Draw</button>
         </form>
+    <?php endif; ?>
+
+    <?php if ( ! empty( $confirmed ) ) : ?>
+    <script>
+    (function() {
+        // 1.28.0 (real usage feedback): live poll so a facilitator sees
+        // ANOTHER device's check-ins land without reloading -- see this
+        // file's own 1.28.0 changelog for why this is a genuinely new
+        // capability (this screen previously had no polling at all,
+        // unlike the persistent app's post-draw screens). Each row's
+        // own Check-in/Check-out button submission is DELIBERATELY left
+        // as the existing plain <form method="post"> -- lower-risk than
+        // also AJAX-ifying the visitor's own action, and unnecessary:
+        // a click causes an immediate real navigation either way, so
+        // there's no "poll lands mid-interaction" race to guard against
+        // the way there is for the draw screen's own selection state.
+        // SCOPE: only the checked-in/not status of players already on
+        // this page updates live; a Roster Adjust add/remove elsewhere
+        // (a rarer, convenor-only action) still needs a manual reload
+        // to appear here -- deliberately out of scope, see the
+        // conversation this was built from.
+        var ajaxUrl = <?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>;
+        var nonce   = <?php echo wp_json_encode( wp_create_nonce( 'spp_kq_live_action' ) ); ?>;
+        var occ     = <?php echo (int) $occurrence_id; ?>;
+
+        var listEl  = document.getElementById( 'kq-checkin-list' );
+        var countEl = document.getElementById( 'kq-checkin-count' );
+        if ( ! listEl ) return;
+
+        function pollCheckins() {
+            var data = new FormData();
+            data.append( 'action', 'spp_kq_poll_checkin' );
+            data.append( 'nonce', nonce );
+            data.append( 'occ', occ );
+            fetch( ajaxUrl, { method: 'POST', body: data, credentials: 'same-origin' } )
+                .then( function( r ) { return r.json(); } )
+                .then( function( res ) {
+                    if ( ! res.success ) return;
+                    var checkedIn = res.data.checked_in_ids; // array of ints, current server truth
+
+                    listEl.querySelectorAll( 'li[data-uid]' ).forEach( function( li ) {
+                        var uid    = parseInt( li.dataset.uid, 10 );
+                        var isIn   = checkedIn.indexOf( uid ) !== -1;
+                        var btn    = li.querySelector( '.kq-btn' );
+                        var action = li.querySelector( 'input[name="spp_kq_action"]' );
+                        if ( ! btn || ! action ) return;
+
+                        var locallyIn = ( action.value === 'checkin_unmark' ); // this row's own last-rendered state
+                        if ( isIn !== locallyIn ) {
+                            // Server truth changed (someone else's device) since this row last rendered -- update it.
+                            action.value = isIn ? 'checkin_unmark' : 'checkin_mark';
+                            btn.className = 'kq-btn ' + ( isIn ? 'kq-btn-primary' : 'kq-btn-secondary' );
+                            btn.textContent = li.dataset.name + ( isIn ? ' -- Checked in ✓' : ' -- Check in' );
+                        }
+                    } );
+
+                    if ( countEl ) {
+                        countEl.textContent = res.data.checked_in_count + ' of ' + res.data.confirmed_count
+                            + ' confirmed registrant' + ( res.data.confirmed_count === 1 ? '' : 's' ) + ' checked in';
+                    }
+                } )
+                .catch( function() { /* silent -- next tick retries */ } );
+        }
+        var checkinPollInterval = setInterval( pollCheckins, 2500 );
+        window.addEventListener( 'beforeunload', function() { clearInterval( checkinPollInterval ); } );
+    })();
+    </script>
     <?php endif; ?>
     <?php
     return ob_get_clean();
@@ -2177,6 +2312,74 @@ function spp_kq_render_draw_screen( int $occurrence_id ) : string {
                 } )
                 .catch( function() { showError( 'Network error -- try again.' ); } );
         } );
+
+        // 1.28.0 (real usage feedback): live poll so a device that ISN'T
+        // the one drawing a given card still sees it land, without a
+        // manual refresh -- previously this screen had NO polling at
+        // all (see this file's own 1.28.0 changelog), unlike the
+        // persistent app's post-draw screens. Reuses the EXISTING wp_
+        // ajax_spp_kq_render_fragment endpoint (no new backend code) --
+        // it already renders exactly this screen's own HTML for
+        // 'organizing'+round 1+unclaimed>0, the same server-side switch
+        // spp_kq_render_live_fragment() (inc/spp-kq-screens.php) always
+        // used. Only the three server-truth containers are replaced
+        // (#kq-not-drawn-list, #kq-card-grid, #kq-revealed-courts) plus
+        // the progress count -- the click handlers above are bound via
+        // EVENT DELEGATION on their parent elements, so replacing
+        // children's innerHTML never orphans a listener.
+        var reloading = false;
+        function pollDrawState() {
+            if ( reloading ) return;
+            var data = new FormData();
+            data.append( 'action', 'spp_kq_render_fragment' );
+            data.append( 'nonce', nonce );
+            data.append( 'occ', occ );
+            fetch( ajaxUrl, { method: 'POST', body: data, credentials: 'same-origin' } )
+                .then( function( r ) { return r.json(); } )
+                .then( function( res ) {
+                    if ( ! res.success || reloading ) return;
+                    var tmp = document.createElement( 'div' );
+                    tmp.innerHTML = res.data.html;
+
+                    if ( ! tmp.querySelector( '#kq-draw-progress' ) ) {
+                        // The draw finished (or the event moved on) via
+                        // ANOTHER device -- same recovery this screen's
+                        // own click handler already uses when ITS draw
+                        // completes (see draw_complete just above).
+                        reloading = true;
+                        window.location.reload();
+                        return;
+                    }
+
+                    var freshNotDrawn = tmp.querySelector( '#kq-not-drawn-list' );
+                    var freshCardGrid = tmp.querySelector( '#kq-card-grid' );
+                    var freshRevealed = tmp.querySelector( '#kq-revealed-courts' );
+                    var freshCount    = tmp.querySelector( '#kq-draw-count' );
+
+                    var notDrawnEl = document.getElementById( 'kq-not-drawn-list' );
+                    var cardGridEl = document.getElementById( 'kq-card-grid' );
+                    var revealedEl = document.getElementById( 'kq-revealed-courts' );
+                    var countEl    = document.getElementById( 'kq-draw-count' );
+
+                    if ( freshNotDrawn && notDrawnEl ) notDrawnEl.innerHTML = freshNotDrawn.innerHTML;
+                    if ( freshCardGrid && cardGridEl ) cardGridEl.innerHTML = freshCardGrid.innerHTML;
+                    if ( freshRevealed && revealedEl ) revealedEl.innerHTML = freshRevealed.innerHTML;
+                    if ( freshCount && countEl ) countEl.textContent = freshCount.textContent;
+
+                    // A fresh render has no notion of this device's own
+                    // in-progress (not-yet-submitted) selection -- restore
+                    // the visual highlight so an in-flight tap isn't lost
+                    // to a poll landing mid-selection.
+                    if ( selectedUid !== null && notDrawnEl ) {
+                        var btn = notDrawnEl.querySelector( '.kq-player-btn[data-uid="' + selectedUid + '"]' );
+                        if ( btn ) btn.classList.add( 'kq-selected' );
+                        else selectedUid = null; // this device's own pick was claimed elsewhere first
+                    }
+                } )
+                .catch( function() { /* silent -- a poll tick is not the visitor's own action, nothing to show an error for; next tick retries. */ } );
+        }
+        var drawPollInterval = setInterval( pollDrawState, 2500 );
+        window.addEventListener( 'beforeunload', function() { clearInterval( drawPollInterval ); } );
     })();
     </script>
     <?php
@@ -2321,6 +2524,9 @@ function spp_kq_render_overview_screen( int $occurrence_id, int $round, ?int $co
                 <?php elseif ( in_array( $court, $understaffed, true ) ) : ?>
                     <p class="kq-hint">Needs players &mdash; <a href="<?php echo esc_url( add_query_arg( 'kq_view', 'roster' ) ); ?>">Roster Adjust</a>.</p>
                 <?php else : ?>
+                    <?php if ( ! empty( $teams['serving'] ) ) : ?>
+                        <p class="kq-serve-first"><?php echo esc_html( ucfirst( $teams['serving'] ) . ' serves first' ); ?></p>
+                    <?php endif; ?>
                     <div class="kq-team kq-team-red">Red: <?php echo esc_html( implode( ', ', $teams['red'] ) ); ?></div>
                     <div class="kq-team kq-team-black">Black: <?php echo esc_html( implode( ', ', $teams['black'] ) ); ?></div>
                 <?php endif; ?>
@@ -2595,6 +2801,9 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round, ?int $rou
             <?php if ( $is_cancelled ) : ?>
                 <p class="kq-hint">Cancelled for this round &mdash; no score to enter.</p>
             <?php else : ?>
+                <?php if ( ! empty( $teams['serving'] ) ) : ?>
+                    <p class="kq-serve-first"><?php echo esc_html( ucfirst( $teams['serving'] ) . ' serves first' ); ?></p>
+                <?php endif; ?>
                 <div class="kq-team kq-team-red">Red: <?php echo esc_html( implode( ', ', $teams['red'] ) ); ?></div>
                 <div class="kq-team kq-team-black">Black: <?php echo esc_html( implode( ', ', $teams['black'] ) ); ?></div>
 
@@ -3929,7 +4138,20 @@ function spp_kq_render_live_app( int $occurrence_id, array $state ) : string {
                 .catch(function() {});
         }
 
-        pollInterval = setInterval(poll, 4000);
+        // 1.28.0 (real usage feedback): tightened from 4000ms -- this is
+        // a small club, not a high-traffic site, and this poll is one
+        // cheap read (spp_kq_get_event_state() + a handful of indexed
+        // spp_kq_scores rows) per tick, so 2500ms costs negligible extra
+        // server load in exchange for meaningfully snappier cross-device
+        // updates during check-in/scoring. See this file's own 1.28.0
+        // changelog for the honest ceiling on what polling alone can fix
+        // here: real-world latency on a player's own cellular connection
+        // (typically 100-500ms+ one-way, sometimes much worse) is
+        // outside this codebase's control regardless of interval --
+        // tightening the poll reduces how long a change can sit
+        // unnoticed on a device that's just SITTING there, it doesn't
+        // change how fast any one request completes.
+        pollInterval = setInterval(poll, 2500);
     })();
     </script>
     <div id="kq-live-app">
@@ -4080,9 +4302,25 @@ function spp_kq_live_shortcode() : string {
  * layout against spp_kq_get_history_scoreboard() (the archive) instead
  * of duplicating this markup for a second data source. This function is
  * now just: fetch the live scoreboard, hand it to that shared renderer.
+ *
+ * EDITABLE (1.8.0, real usage feedback): $editable is decided HERE,
+ * internally, from a fresh spp_kq_get_event_state() read, rather than
+ * threaded in as a parameter from this function's own callers -- it has
+ * three call paths (the plain ?kq_view=scoreboard page, the persistent
+ * app's own scoreboard fragment, and that fragment's own AJAX endpoint)
+ * and none of them otherwise need to know/carry phase, so fetching it
+ * once right here is simpler than changing three signatures. Editable
+ * (any logged-in member, spp_kq_can_facilitate()'s same open access
+ * model as everywhere else in this feature) any time the event hasn't
+ * ended -- phase NOT IN ('complete','cancelled') -- matching spp_kq_
+ * correct_court_score()'s own guard exactly (inc/spp-kq-live.php) so
+ * this visibility check and that function's real enforcement can never
+ * disagree about when correction is allowed.
  */
 function spp_kq_render_full_scoreboard_screen( int $occurrence_id ) : string {
     $scoreboard = spp_kq_get_full_scoreboard( $occurrence_id );
+    $state      = spp_kq_get_event_state( $occurrence_id );
+    $editable   = ! $state || ! in_array( $state['phase'], array( 'complete', 'cancelled' ), true );
     ob_start();
     ?>
     <p class="kq-round-label">Full Scoreboard</p>
@@ -4094,7 +4332,7 @@ function spp_kq_render_full_scoreboard_screen( int $occurrence_id ) : string {
     // rare edge case, so it's worded for that: the plain, expected state
     // of a not-yet-played event, not a "something's missing" read.
     ?>
-    <?php echo spp_kq_render_scoreboard_markup( $scoreboard, 'No scores entered yet.' ); ?>
+    <?php echo spp_kq_render_scoreboard_markup( $scoreboard, 'No scores entered yet.', $editable, $occurrence_id ); ?>
     <?php
     return ob_get_clean();
 }
@@ -4301,6 +4539,38 @@ add_action( 'wp_ajax_spp_kq_submit_score', function() {
 } );
 
 // =============================================================
+// AJAX: correct a past round's score from the Full Scoreboard (1.8.0,
+// real usage feedback) -- spp_kq_correct_court_score() (inc/spp-kq-
+// live.php) owns the actual guard (event not yet ended) and validation;
+// this handler is just parameter plumbing, same shape as spp_kq_submit_
+// score just above.
+// =============================================================
+
+add_action( 'wp_ajax_spp_kq_correct_score', function() {
+    if ( ! spp_kq_can_facilitate() ) {
+        wp_send_json_error( 'Not authorized' );
+    }
+    check_ajax_referer( 'spp_kq_live_action', 'nonce' );
+
+    $occurrence_id = isset( $_POST['occ'] ) ? absint( $_POST['occ'] ) : 0;
+    $round         = isset( $_POST['round'] ) ? absint( $_POST['round'] ) : 0;
+    $court_name    = isset( $_POST['court_name'] ) ? sanitize_text_field( wp_unslash( $_POST['court_name'] ) ) : '';
+    $red_score     = isset( $_POST['red_score'] ) ? intval( $_POST['red_score'] ) : -1;
+    $black_score   = isset( $_POST['black_score'] ) ? intval( $_POST['black_score'] ) : -1;
+
+    if ( ! $occurrence_id || ! $round || $court_name === '' ) {
+        wp_send_json_error( 'Missing parameters.' );
+    }
+
+    $result = spp_kq_correct_court_score( $occurrence_id, $round, $court_name, $red_score, $black_score, get_current_user_id() );
+    if ( ! $result['success'] ) {
+        wp_send_json_error( $result['error'] );
+    }
+
+    wp_send_json_success( $result );
+} );
+
+// =============================================================
 // AJAX: lightweight status poll (Stage 3) -- lets the in-play screen
 // update its "N of M reported" line live and detect a round advance
 // without a full reload, while staying well short of real-time push.
@@ -4368,6 +4638,38 @@ add_action( 'wp_ajax_spp_kq_poll_status', function() {
         // (spp_kq_render_live_app()) that decides when to swap in a
         // new fragment.
         'courts_announced_at' => $state['courts_announced_at'] !== null ? (int) $state['courts_announced_at'] : null,
+    ) );
+} );
+
+// =============================================================
+// AJAX: lightweight check-in poll (1.28.0, real usage feedback) -- lets
+// the Start/Check-in screen (spp_kq_render_start_screen() above) show
+// ANOTHER device's check-ins without a reload. Read-only, same
+// is_user_logged_in()-only access as wp_ajax_spp_kq_poll_status just
+// above (this screen is pre-Round-1 and was never part of the
+// persistent app, so spp_kq_can_facilitate() vs. a bare is_user_
+// logged_in() check makes no practical difference here -- matched to
+// its neighbor for consistency).
+// =============================================================
+
+add_action( 'wp_ajax_spp_kq_poll_checkin', function() {
+    if ( ! is_user_logged_in() ) {
+        wp_send_json_error( 'Not authorized' );
+    }
+    check_ajax_referer( 'spp_kq_live_action', 'nonce' );
+
+    $occurrence_id = isset( $_POST['occ'] ) ? absint( $_POST['occ'] ) : 0;
+    if ( ! $occurrence_id ) {
+        wp_send_json_error( 'Missing parameters.' );
+    }
+
+    $checked_in_ids = spp_kq_get_checked_in_user_ids( $occurrence_id );
+    $confirmed_count = count( spp_kq_get_confirmed_registrants_named( $occurrence_id ) );
+
+    wp_send_json_success( array(
+        'checked_in_ids'   => array_map( 'intval', $checked_in_ids ),
+        'checked_in_count' => count( $checked_in_ids ),
+        'confirmed_count'  => $confirmed_count,
     ) );
 } );
 

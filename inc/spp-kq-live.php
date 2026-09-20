@@ -1,8 +1,35 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Live Event Runner
-   Version: 1.9.0
-   Date: 2026-09-19
+   Version: 1.10.0
+   Date: 2026-09-20
+
+   Changes from 1.9.0 (real usage feedback, reviewed and approved --
+   two independent items):
+   - Serve-first indicator: spp_kq_create_score_placeholders() now also
+     stamps a random serving_team ('red'/'black', via wp_rand()) onto
+     every court row it creates -- the one shared call site for both
+     round 1's draw (spp_kq_transition_start_round1()) and every
+     round-advance (spp_kq_transition_advance_round()), i.e. exactly
+     "when a round's court assignments are finalized." Purely
+     informational; see that function's own docblock for why this is
+     safe to decide before the draw itself completes, and inc/spp-kq-
+     schema.php's 1.8.0 changelog for the new column. Display lives in
+     inc/spp-kq-screens.php (Overview/In-Play, via spp_kq_get_round_
+     court_view()) and inc/spp-kq-history.php (Full Scoreboard, via
+     spp_kq_get_full_scoreboard()).
+   - Editable Full Scoreboard: spp_kq_validate_score_pair() extracted
+     from spp_kq_submit_court_score()'s own inline checks (0-11 range,
+     no ties, the 11-11 special case) -- now shared with the new
+     spp_kq_correct_court_score(), which lets a facilitator correct
+     ANY already-recorded round's score (not just the current one) any
+     time before the event ends (phase NOT IN complete/cancelled),
+     deliberately WITHOUT re-running round-advance/movement for that
+     past round -- see that function's own docblock for the full
+     design (why no client_ts guard here, how this flows into history/
+     Club Rating automatically). UI lives in inc/spp-kq-screens.php
+     (spp_kq_render_scoreboard_markup(), the new wp_ajax_spp_kq_
+     correct_score handler).
 
    Changes from 1.8.0: new spp_kq_transition_skip_rest_countdown() --
    round 2+'s automatic rest-countdown "Skip Wait" button (inc/spp-kq-
@@ -570,6 +597,23 @@ function spp_kq_create_assignment_placeholders( int $occurrence_id, int $round_n
  * Create a round's spp_kq_scores placeholder rows (NULL scores, one
  * per active court) -- lets "has every court reported" be a plain
  * COUNT rather than needing to already know which courts exist.
+ *
+ * SERVE-FIRST (1.8.0): each row also gets a random serving_team
+ * ('red'/'black', via wp_rand()) at the moment it's created -- this is
+ * the ONE shared call site for both round 1's draw (spp_kq_transition_
+ * start_round1()) and every round-advance (spp_kq_transition_
+ * advance_round()), i.e. exactly "when a round's court assignments are
+ * finalized" per the real usage feedback this was built from. Safe to
+ * decide here rather than waiting for round 1's card draw to actually
+ * complete: each slot's red/black split is already fixed the instant
+ * these placeholder rows (and spp_kq_assignments' own placeholders,
+ * spp_kq_create_assignment_placeholders() just above) are created --
+ * the draw only ever fills in WHO occupies an already-red or
+ * already-black slot, never which color a slot is, so "which color
+ * serves first" is fully determined by court structure alone, never by
+ * player identity. Purely informational -- confirmed no interaction
+ * with movement/scoring, see this file's own docblock convention and
+ * inc/spp-kq-schema.php's 1.8.0 changelog.
  */
 function spp_kq_create_score_placeholders( int $occurrence_id, int $round_number, array $courts ) : void {
     global $wpdb;
@@ -578,10 +622,11 @@ function spp_kq_create_score_placeholders( int $occurrence_id, int $round_number
     $placeholders = array();
     $values = array();
     foreach ( $courts as $court ) {
-        $placeholders[] = '(%d, %d, %s)';
-        array_push( $values, $occurrence_id, $round_number, $court );
+        $serving = ( wp_rand( 0, 1 ) === 0 ) ? 'red' : 'black';
+        $placeholders[] = '(%d, %d, %s, %s)';
+        array_push( $values, $occurrence_id, $round_number, $court, $serving );
     }
-    $sql = "INSERT INTO {$table} (occurrence_id, round_number, court_name) VALUES "
+    $sql = "INSERT INTO {$table} (occurrence_id, round_number, court_name, serving_team) VALUES "
          . implode( ', ', $placeholders );
     $wpdb->query( $wpdb->prepare( $sql, $values ) );
 }
@@ -1263,6 +1308,31 @@ function spp_kq_get_round_progress( int $occurrence_id, int $round_number ) : ar
 }
 
 /**
+ * Shared score-pair validation (1.8.0, extracted from spp_kq_submit_
+ * court_score()'s own inline checks so spp_kq_correct_court_score()
+ * below -- the Full Scoreboard's inline-edit path, real usage feedback
+ * -- can never silently diverge on what counts as a valid score): games
+ * are played to 11, decisive (never a tie; games are deliberately
+ * extended by a point specifically so a real tie should never occur),
+ * and 11-11 gets its own message since it's a logical impossibility,
+ * not just an ordinary tie.
+ *
+ * @return string|null Error message, or null if valid.
+ */
+function spp_kq_validate_score_pair( int $red_score, int $black_score ) : ?string {
+    if ( $red_score < 0 || $red_score > 11 || $black_score < 0 || $black_score > 11 ) {
+        return 'Scores must be between 0 and 11 -- games are played to 11.';
+    }
+    if ( $red_score === 11 && $black_score === 11 ) {
+        return "11-11 isn't possible -- the game ends the instant either team reaches 11. Please double-check before saving.";
+    }
+    if ( $red_score === $black_score ) {
+        return "Scores can't be tied -- games are extended by a point specifically to avoid this. Please check and resubmit.";
+    }
+    return null;
+}
+
+/**
  * One court's current red_score/black_score/client_ts for a round --
  * the "true current state" payload returned alongside both a normal
  * success and a superseded/rejected one (1.2.0), so a caller whose own
@@ -1375,19 +1445,9 @@ function spp_kq_submit_court_score( int $occurrence_id, int $round_number, strin
         return array( 'success' => false, 'error' => "This court doesn't have exactly 4 players assigned yet -- fix via Roster Adjust before entering a score." );
     }
 
-    if ( $red_score < 0 || $red_score > 11 || $black_score < 0 || $black_score > 11 ) {
-        return array( 'success' => false, 'error' => 'Scores must be between 0 and 11 -- games are played to 11.' );
-    }
-    // Checked before the generic tie rejection below: 11-11 specifically
-    // is a logical impossibility (the game ends the instant either team
-    // reaches 11 -- both sides can never simultaneously be at 11), not
-    // just an ordinary tie, and it's an easy digit-repeated data-entry
-    // mistake -- worth its own clearer message.
-    if ( $red_score === 11 && $black_score === 11 ) {
-        return array( 'success' => false, 'error' => "11-11 isn't possible -- the game ends the instant either team reaches 11. Please double-check before saving." );
-    }
-    if ( $red_score === $black_score ) {
-        return array( 'success' => false, 'error' => "Scores can't be tied -- games are extended by a point specifically to avoid this. Please check and resubmit." );
+    $validation_error = spp_kq_validate_score_pair( $red_score, $black_score );
+    if ( $validation_error !== null ) {
+        return array( 'success' => false, 'error' => $validation_error );
     }
 
     // $client_ts <= 0 means an old cached client that predates this fix --
@@ -1465,6 +1525,90 @@ function spp_kq_submit_court_score( int $occurrence_id, int $round_number, strin
         'reported'    => $progress['reported'],
         'total'       => $progress['total'],
         'advanced'    => $advanced,
+    );
+}
+
+/**
+ * Correct an already-recorded score for ANY round of this event, not
+ * necessarily the current one -- the Full Scoreboard's inline edit
+ * (1.8.0, real usage feedback, reviewed and approved). Deliberately a
+ * SEPARATE function from spp_kq_submit_court_score() above rather than
+ * a parameter on it: that function's entire write guard is built around
+ * "this round is still the live one" (current_round equality AND
+ * phase='in_play'), which is exactly backwards for correcting a PAST
+ * round -- this function's own guard is the EVENT as a whole not yet
+ * having ended (phase NOT IN complete/cancelled), independent of which
+ * round is current. Reuses spp_kq_validate_score_pair() for the
+ * identical numeric rules so the two paths can never silently diverge
+ * on what counts as a valid score.
+ *
+ * DELIBERATELY NO ROUND-ADVANCE/MOVEMENT RECOMPUTE -- a correction only
+ * ever rewrites the stored number itself. Accepted trade-off, not a
+ * bug (see the conversation this was built from): movement for that
+ * round (and every round after it) was already computed and actually
+ * played from the ORIGINAL value; re-deriving it now would retroactively
+ * rewrite who-played-whom/where for rounds that already happened in
+ * real life, a far stranger change than "the number on file was wrong."
+ * Permanent history archival (spp_kq_history, inc/spp-kq-history.php)
+ * and Club Rating (inc/spp-kq-club-rating.php) both read spp_kq_scores/
+ * spp_kq_assignments FRESH at event end -- never a frozen snapshot --
+ * so a correction made before the event ends flows through to both
+ * automatically; no separate propagation step needed.
+ *
+ * No client_ts ordering guard here (unlike the live submit path above)
+ * -- that guard exists specifically for the race between a court's own
+ * live players racing to submit its real result while the round is
+ * still active. A correction is a deliberate, one-off facilitator
+ * action against an already-settled row; plain "last save wins" (an
+ * ordinary UPDATE, no special ordering) is correct and simpler here.
+ */
+function spp_kq_correct_court_score( int $occurrence_id, int $round_number, string $court_name, int $red_score, int $black_score, int $user_id ) : array {
+    $state = spp_kq_get_event_state( $occurrence_id );
+    if ( ! $state || in_array( $state['phase'], array( 'complete', 'cancelled' ), true ) ) {
+        return array( 'success' => false, 'error' => 'This event has ended -- scores can no longer be corrected.' );
+    }
+
+    global $wpdb;
+    $scores_table = spp_kq_scores_table();
+
+    $court_row = $wpdb->get_row( $wpdb->prepare(
+        "SELECT cancelled, red_score, black_score FROM {$scores_table}
+         WHERE occurrence_id = %d AND round_number = %d AND court_name = %s",
+        $occurrence_id, $round_number, $court_name
+    ), ARRAY_A );
+    if ( ! $court_row ) {
+        return array( 'success' => false, 'error' => 'Not a valid court/round for this event.' );
+    }
+    if ( (int) $court_row['cancelled'] === 1 ) {
+        return array( 'success' => false, 'error' => 'This court was cancelled for this round -- no score to correct.' );
+    }
+    if ( $court_row['red_score'] === null || $court_row['black_score'] === null ) {
+        return array( 'success' => false, 'error' => 'This court has no recorded score yet.' );
+    }
+
+    $validation_error = spp_kq_validate_score_pair( $red_score, $black_score );
+    if ( $validation_error !== null ) {
+        return array( 'success' => false, 'error' => $validation_error );
+    }
+
+    $wpdb->query( $wpdb->prepare(
+        "UPDATE {$scores_table}
+         SET red_score = %d, black_score = %d, updated_by = %d
+         WHERE occurrence_id = %d AND round_number = %d AND court_name = %s",
+        $red_score, $black_score, $user_id,
+        $occurrence_id, $round_number, $court_name
+    ) );
+    // Rows-affected is deliberately not checked here -- a no-op UPDATE
+    // (new values identical to what's already stored) reports 0 affected
+    // in MySQL even though the row already holds exactly the requested
+    // value, which is success from this caller's point of view either way.
+
+    return array(
+        'success'      => true,
+        'court_name'   => $court_name,
+        'round_number' => $round_number,
+        'red_score'    => $red_score,
+        'black_score'  => $black_score,
     );
 }
 
