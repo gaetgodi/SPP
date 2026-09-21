@@ -54,9 +54,7 @@ require_once get_stylesheet_directory() . '/inc/spp-change-new-user-rank.php'; /
 require_once get_stylesheet_directory() . '/inc/spp-random-ranks.php'; // must load before spp-assign-ranks-to-registered-players.php below, which calls spp_random_ranks() directly
 require_once get_stylesheet_directory() . '/inc/spp-create-view.php'; // must load before gl-schedule-production below, which now calls spp_create_view() directly instead of via CM254's [cmruncode] (spp-schedule-production.php, updated the same way, isn't in this require chain at all -- see its own note)
 require_once get_stylesheet_directory() . '/inc/spp-assign-ranks-to-registered-players.php'; // must load before gl-schedule-production/spp-schedule-production below, which now call spp_assign_ranks_to_registered_players() directly instead of via CM279's [cmruncode]
-require_once get_stylesheet_directory() . '/inc/spp-pdf-skills-assessment.php'; // no direct tracked-file caller -- only reached via CM258's [cmruncode] shim
-require_once get_stylesheet_directory() . '/inc/spp-pdf-constitution.php'; // no direct tracked-file caller -- only reached via CM260's [cmruncode] shim
-require_once get_stylesheet_directory() . '/inc/spp-pdf-instructor-subsidy.php'; // no direct tracked-file caller -- only reached via CM261's [cmruncode] shim
+require_once get_stylesheet_directory() . '/inc/spp-pdf.php'; // generic [spp_pdf file="" title=""], consolidates the former spp-pdf-skills-assessment.php/spp-pdf-constitution.php/spp-pdf-instructor-subsidy.php (CM258/CM260/CM261 shims), all now retired
 require_once get_stylesheet_directory() . '/inc/spp-remove-inactive-ladder-users.php'; // no direct tracked-file caller -- only reached via CM176's [cmruncode] shim
 require_once get_stylesheet_directory() . '/inc/spp-score-scanner-ui.php'; // no direct tracked-file caller -- only reached via CM268's [cmruncode] shim
 require_once get_stylesheet_directory() . '/inc/spp-rank-history.php'; // no direct tracked-file caller -- only reached via CM272's [cmruncode] shim
@@ -230,7 +228,7 @@ add_action('template_redirect', function() {
         'spp_show_results', 'spp_remove_user_from_ladder', 'spp_create_membership_table',
         'spp_random_ranks', 'spp_remove_inactive_ladder_users', 'spp_blank_scores_colour',
         'spp_membership_tags_refresh_ui', 'spp_score_review_grid', 'spp_create_view',
-        'spp_pdf_skills_assessment', 'spp_pdf_constitution', 'spp_pdf_instructor_subsidy',
+        'spp_pdf',
         'spp_score_scanner_ui', 'spp_rank_history', 'spp_scores_events_dropdown',
         'spp_gl_ladder_events_dropdown', 'spp_schedule_before_after_comparison',
         'spp_change_new_user_rank',
