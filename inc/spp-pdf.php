@@ -1,8 +1,27 @@
 <?php
 /* =========================================================
    SPP PDF Embed (generic)
-   Version: 1.0.0
+   Version: 1.1.0
    Date: 2026-09-21
+
+   Changes from 1.0.0:
+   - title now optionally renders as a visible caption directly above the
+     iframe (a <h3> styled off the same --spp-h3-* tokens css/spp-tokens.css
+     already defines for every other heading on the site, not a one-off
+     color/size) -- purely opt-in: title omitted/empty still renders no
+     caption at all, unchanged from before. The invisible iframe title=
+     attribute and data-pdf-title are unchanged/still set either way,
+     falling back to "PDF document" when title is empty so the iframe
+     always has an accessible name even with no visible caption.
+     IMPORTANT: the 4 real pages already using [spp_pdf] (Constitution x2,
+     Skills Self-Assessment, Instructor Certification Subsidy) all already
+     pass a title attribute (added when they were migrated onto this
+     shortcode) -- this change makes all 4 start showing a visible caption
+     where none rendered before. Not reverted here since a visible
+     document title is a reasonable default any of the 4 could plausibly
+     want; if any specific page shouldn't show one, drop title from that
+     page's shortcode call (or blank it) rather than changing this
+     function's default behavior.
 
    PURPOSE:
    Generic replacement for the three near-identical hardcoded PDF-embed
@@ -83,6 +102,11 @@ function spp_pdf_shortcode( $atts ) {
     ob_start();
     ?>
     <div class="spp-pdf-embed" data-pdf-title="<?php echo esc_attr( $atts['title'] ); ?>">
+        <?php if ( $atts['title'] !== '' ) : ?>
+        <h3 style="color:var(--spp-h3-color);font-size:var(--spp-h3-size);font-weight:var(--spp-h3-weight);margin:0 0 10px;">
+            <?php echo esc_html( $atts['title'] ); ?>
+        </h3>
+        <?php endif; ?>
         <iframe
             src="<?php echo esc_url( $viewer_src ); ?>"
             title="<?php echo esc_attr( $atts['title'] ?: 'PDF document' ); ?>"

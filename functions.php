@@ -91,6 +91,7 @@ require_once get_stylesheet_directory() . '/inc/spp-report-table.php'; // must l
 require_once get_stylesheet_directory() . '/inc/spp-report-variants.php'; // must load before spp-reports.php below, which calls spp_get_report_variant()
 require_once get_stylesheet_directory() . '/inc/spp-reports.php';
 require_once get_stylesheet_directory() . '/inc/spp-report-generator-admin.php'; // must load after spp-reports.php, which defines spp_report_filter_columns()
+require_once get_stylesheet_directory() . '/inc/spp-pdf-generator-admin.php'; // must load right after spp-report-generator-admin.php above -- its admin_menu registration order is what puts this submenu item directly below "Report Generator" under Pages
 require_once get_stylesheet_directory() . '/inc/spp-report-edit.php';
 require_once get_stylesheet_directory() . '/inc/spp-kq-schema.php'; // Ace/Queen of the Courts live event runner -- must load before spp-kq-movement.php/spp-kq-live.php below
 require_once get_stylesheet_directory() . '/inc/spp-kq-movement.php'; // pure movement algorithm, no dependency on spp-kq-schema.php itself, but grouped with the rest of this feature
