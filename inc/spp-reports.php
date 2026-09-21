@@ -501,11 +501,11 @@ function spp_report_schedule_current() {
         array( 'key' => 'first_name', 'label' => 'First Name', 'sortable' => false ),
         array( 'key' => 'last_name',  'label' => 'Last Name',  'sortable' => true ),
         array( 'key' => 'user_phone', 'label' => 'User Phone', 'sortable' => false ),
-        array( 'key' => 'T_desc',     'label' => 'T Desc',     'sortable' => true ),
+        array( 'key' => 'T_desc',     'label' => 'Times',     'sortable' => true ),
         array( 'key' => 'Travel',     'label' => 'Travel',     'sortable' => true ),
-        array( 'key' => 'Crt_name',   'label' => 'Crt Name',   'sortable' => true ),
-        array( 'key' => 'GP_name',    'label' => 'GP Name',    'sortable' => true ),
-        array( 'key' => 'user_id',    'label' => 'User',       'sortable' => true ),
+        array( 'key' => 'Crt_name',   'label' => 'Courts',   'sortable' => true ),
+        array( 'key' => 'GP_name',    'label' => 'Groups',    'sortable' => true ),
+        array( 'key' => 'user_id',    'label' => 'User code',       'sortable' => true ),
     );
 
     return array(
