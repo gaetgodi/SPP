@@ -1,8 +1,107 @@
 <?php
 /* =========================================================
    Report Registry
-   Version: 1.12.0
+   Version: 1.14.0
    Date: 2026-09-21
+
+   Changes from 1.13.0:
+   - Added event_status: reproduces the live GL Event Status page's
+     ([gl_event_registrations], plugin file wp-content/plugins/gl-events/
+     public/gl-event-registrations.php, page 20010189 "gl-event-status-2",
+     linked in both Main nav ("Status of Events") and GL admin nav) own
+     aggregate query -- GROUP BY occurrence, COUNT/CASE-based confirmed/
+     waiting/withdrawn tallies against gl_event_occurrences/
+     gl_registrations/gl_event_categories -- as a real [spp_report]
+     registry entry with actual column sorting/pagination, not a second
+     copy of that page. NOT a WPDA-app replacement -- gl_event_registrations
+     is a GL Events plugin feature, unrelated to the WPDA-deactivation
+     migration this week's other report additions were part of.
+     Date scope deliberately widened from the plugin page's rolling
+     5-week window to unbounded (event_date >= CURDATE(), no upper
+     cutoff) per this task's explicit instruction -- this report is
+     meant to show every current/future event, not just the near term.
+     No category filter dropdown (also per instruction) -- sorting by
+     the Category column, same as any other column, replaces it; a
+     saved report-variant scoped to one category is a future decision
+     if wanted, not built here.
+     Date column is stored as `event_date` + zero-padded 24h `event_time`
+     concatenated ("2026-09-21 18:00"), NOT the plugin page's human
+     display format ("Sep 21, 2026 6:00 pm") -- necessary because
+     spp_render_report_table()'s sort is a plain is_numeric-or-
+     strcasecmp comparison on the raw column value (spp-report-table.php,
+     ~line 517), and month-abbreviation date strings don't sort
+     chronologically under strcasecmp (e.g. "Aug" > "Apr" alphabetically
+     works, but "Dec" < "Feb" doesn't -- not a safe general format).
+     ISO-ish zero-padded date+time sorts correctly as a plain string and
+     stays fully human-readable. This is the one place this report's
+     column values deliberately differ from the source page's display
+     formatting -- everything else (which counts get tallied, which
+     rows get included, the "n/a" capacity placeholder for capacity<=0)
+     is reproduced exactly, including the source query's own existing
+     quirk of silently excluding 'late_withdrawn' registrations from
+     every tally (matches gl-event-registrations.php's CASE branches
+     exactly, which only match 'confirmed'/'waiting'/'withdrawn').
+     ACCESS: no report-specific gate, matching the source page's own
+     real access level -- [gl_event_registrations] itself has no
+     capability/login check of its own. The [spp_report] shortcode's
+     blanket is_user_logged_in() floor still applies (site-wide policy,
+     no per-report opt-out, see 1.4.0 above) -- an ungated GL Events
+     page and this report differ only in that one respect, which is a
+     property of the shared shortcode handler, not a per-report choice
+     made here.
+     Not wired into any page by this change -- registry entry only, per
+     Gaetan's review-before-embedding instruction; the existing GL Event
+     Status page/shortcode is untouched.
+
+   Changes from 1.12.0:
+   - Added recent_results: replaces the WPDA "LadderRanking" app
+     (app_id=9, table Results -- yes, the same table spp_report_results()
+     already queries; app 9 is a second, differently-scoped app over the
+     same table, not a typo). Live today as [wpda_app app_id="9"] on
+     20000903 ("Rankings from most recent results", linked in Main nav,
+     real member traffic) -- 20005826 ("Results of Monday's ladder
+     tournament", same app_id) is now trashed, so 20000903 is the only
+     remaining live embed.
+     Pulled app 9's real cnt_table config fresh rather than trusting the
+     earlier Phase 1 inventory summary's characterization of it as a
+     "limited" member-safe view: IMPORTANT DISCREPANCY FOUND -- app 9's
+     actual column set includes RankOverride (orderable, no less),
+     alongside Rank/display_name/RankPrev/RankCalc/Score/event_id/
+     user_id/group_id. It does NOT include RankCalc_Shadow. This is the
+     exact same class of exposure spp_report_results() was security-fixed
+     for at 1.4.0 above ("any logged-in member could view per-player
+     RankOverride... internal ranking mechanics") -- except app 9 has
+     been doing exactly that, live, on a Main-nav page, this whole time;
+     nothing in this migration created that exposure, it already exists
+     in production today via the WPDA app itself.
+     Built to match app 9's real config exactly, RankOverride included,
+     per this task's explicit instruction to reproduce app 9's actual
+     column set rather than assume/impose the 'results' report's
+     narrower admin-safe set -- but this is a real judgment call, not a
+     mechanical one: flagged clearly for Gaetan rather than silently
+     either (a) reproducing a possible PII/internal-mechanics leak, or
+     (b) unilaterally dropping a column the live app currently shows.
+     Not gated beyond the shortcode's blanket is_user_logged_in() floor
+     -- matches app 9's own real current exposure level (no theme-level
+     page gate applies to 20000903 either, same as app 9's WPDA config
+     has no access restriction of its own) -- but Gaetan should decide
+     whether RankOverride visibility is actually intended before this
+     gets wired into any page; trivial to add spp_is_admin_or_editor()
+     gating on this one column (or the whole report) at that point.
+     No WHERE filter, matching app 9's own empty defaultWhere -- verified
+     this is safe/correct, not an oversight: the Results table itself
+     only ever holds the single most recent event's rows (144 rows, all
+     one event_id, confirmed fresh against live data), rebuilt by
+     spp-create-results.php each event, so there's no cross-event data
+     to accidentally leak by omitting a recency filter.
+     Same orderable flags as app 9's own config: only Rank and
+     RankOverride are sortable, matching its real orderable set exactly
+     (display_name/RankPrev/RankCalc/event_id/user_id/group_id are not),
+     same precedent as spp_report_courts()/spp_report_schedule_current()
+     for reproducing a WPDA app's real orderable set rather than
+     upgrading it silently.
+     Not wired into 20000903 by this change -- registry entry only, per
+     Gaetan's review-before-embedding instruction.
 
    Changes from 1.11.0:
    - Added schedule_current: replaces the WPDA "ShowSchedules" app
@@ -377,6 +476,8 @@ $GLOBALS['spp_report_registry'] = array(
     'membership_tags'      => 'spp_report_membership_tags',
     'kq_history'           => 'spp_report_kq_history',
     'schedule_current'     => 'spp_report_schedule_current',
+    'recent_results'       => 'spp_report_recent_results',
+    'event_status'         => 'spp_report_event_status',
 );
 
 /**
@@ -449,6 +550,123 @@ function spp_report_results() {
     );
 }
 
+
+/**
+ * Recent results report: replaces the WPDA "LadderRanking" app (app_id=9,
+ * table Results, page 20000903 "Rankings from most recent results").
+ * See this file's 1.13.0 changelog entry for the full investigation,
+ * including the RankOverride exposure discrepancy found there -- app 9's
+ * real config includes RankOverride, reproduced here deliberately, not
+ * an oversight. Distinct from spp_report_results()/'results': that
+ * report is the admin/editor-only override-editing tool (adds
+ * RankCalc_Shadow, an editable RankOverride cell, edit wiring to the
+ * Results table); this one is app 9's real, narrower, member-facing
+ * read-only column set.
+ *
+ * ACCESS: no report-specific gate -- just the shortcode's blanket
+ * is_user_logged_in() floor, matching app 9's own real current exposure
+ * (its only live embedding page, 20000903, has no admin/editor page gate
+ * either). Revisit if Gaetan decides RankOverride shouldn't be
+ * member-visible once this is actually wired into a page.
+ */
+function spp_report_recent_results() {
+    global $wpdb;
+
+    $rows = $wpdb->get_results(
+        "SELECT Rank, display_name, RankPrev, RankCalc, RankOverride, Score, event_id, user_id, group_id
+         FROM Results",
+        ARRAY_A
+    );
+
+    $columns = array(
+        array( 'key' => 'Rank',         'label' => 'Rank',         'sortable' => true ),
+        array( 'key' => 'display_name', 'label' => 'Display Name', 'sortable' => false ),
+        array( 'key' => 'RankPrev',     'label' => 'RankPrev',     'sortable' => false ),
+        array( 'key' => 'RankCalc',     'label' => 'RankCalc',     'sortable' => false ),
+        array( 'key' => 'RankOverride', 'label' => 'RankOverride', 'sortable' => true ),
+        array( 'key' => 'Score',        'label' => 'Score',        'sortable' => true ),
+        array( 'key' => 'event_id',     'label' => 'Event Id',     'sortable' => false ),
+        array( 'key' => 'user_id',      'label' => 'User Id',      'sortable' => false ),
+        array( 'key' => 'group_id',     'label' => 'Group Id',     'sortable' => false ),
+    );
+
+    return array(
+        'columns'      => $columns,
+        'rows'         => $rows,
+        'default_sort' => 'Rank',
+    );
+}
+
+/**
+ * Event status report: reproduces the live GL Event Status page's own
+ * aggregate query ([gl_event_registrations], wp-content/plugins/gl-events/
+ * public/gl-event-registrations.php) as a real, sortable [spp_report]
+ * entry. See this file's 1.14.0 changelog entry for the full reasoning,
+ * including why the Date column's value is stored zero-padded/ISO-ish
+ * rather than in the source page's human display format (sortability
+ * under spp_render_report_table()'s plain string/numeric compare).
+ *
+ * Date scope: event_date >= CURDATE(), no upper cutoff -- deliberately
+ * unbounded, unlike the source page's rolling 5-week window.
+ *
+ * ACCESS: no report-specific gate -- matches [gl_event_registrations]'s
+ * own real access level (no capability/login check of its own); only
+ * the [spp_report] shortcode's blanket is_user_logged_in() floor applies.
+ */
+function spp_report_event_status() {
+    global $wpdb;
+    $p = $wpdb->prefix;
+
+    $raw_rows = $wpdb->get_results(
+        "SELECT
+            o.id                AS occurrence_id,
+            o.event_date        AS event_date,
+            o.event_time        AS event_time,
+            o.title             AS Event,
+            COALESCE(c.name, '') AS Category,
+            o.capacity          AS capacity_raw,
+            COUNT( DISTINCT CASE WHEN r.status = 'confirmed' THEN r.user_id END ) AS Confirmed,
+            COUNT( DISTINCT CASE WHEN r.status = 'waiting'   THEN r.user_id END ) AS Waiting,
+            COUNT( DISTINCT CASE WHEN r.status = 'withdrawn' THEN r.user_id END ) AS Withdrawn
+         FROM {$p}gl_event_occurrences o
+         LEFT JOIN {$p}gl_event_categories c ON o.category_id = c.id
+         LEFT JOIN {$p}gl_registrations r    ON r.occurrence_id = o.id
+         WHERE o.cancelled = 0
+         AND o.event_date >= CURDATE()
+         GROUP BY o.id, o.event_date, o.event_time, o.title, o.capacity, c.name",
+        ARRAY_A
+    );
+
+    $rows = array();
+    foreach ( $raw_rows as $r ) {
+        $time_part = $r['event_time'] ? substr( $r['event_time'], 0, 5 ) : '00:00';
+        $rows[] = array(
+            'Date'      => $r['event_date'] . ' ' . $time_part,
+            'Event'     => $r['Event'],
+            'Category'  => $r['Category'],
+            'Confirmed' => (int) $r['Confirmed'],
+            'Capacity'  => ( (int) $r['capacity_raw'] > 0 ) ? (int) $r['capacity_raw'] : 'n/a',
+            'Waiting'   => (int) $r['Waiting'],
+            'Withdrawn' => (int) $r['Withdrawn'],
+        );
+    }
+
+    $columns = array(
+        array( 'key' => 'Date',      'label' => 'Date',      'sortable' => true ),
+        array( 'key' => 'Event',     'label' => 'Event',     'sortable' => true ),
+        array( 'key' => 'Category',  'label' => 'Category',  'sortable' => true ),
+        array( 'key' => 'Confirmed', 'label' => 'Confirmed', 'sortable' => true ),
+        array( 'key' => 'Capacity',  'label' => 'Capacity',  'sortable' => true ),
+        array( 'key' => 'Waiting',   'label' => 'Waiting',   'sortable' => true ),
+        array( 'key' => 'Withdrawn', 'label' => 'Withdrawn', 'sortable' => true ),
+    );
+
+    return array(
+        'columns'      => $columns,
+        'rows'         => $rows,
+        'default_sort' => 'Date',
+    );
+}
 
 /**
  * Current schedule report: replaces the WPDA "ShowSchedules" app
