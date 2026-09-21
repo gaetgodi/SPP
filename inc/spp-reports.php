@@ -1,8 +1,68 @@
 <?php
 /* =========================================================
    Report Registry
-   Version: 1.11.0
-   Date: 2026-09-17
+   Version: 1.12.0
+   Date: 2026-09-21
+
+   Changes from 1.11.0:
+   - Added schedule_current: replaces the WPDA "ShowSchedules" app
+     (app_id=4, table schedules_w). Investigated before building --
+     app 4 is NOT dead/superseded config: it's live, embedded today as
+     [wpda_app app_id="4"] on page 20005754 ("This week's Schedule"),
+     paired with [spp_create_view] (a separate, non-report shortcode --
+     see inc/spp-create-view.php -- that just (re)points the schedules_w
+     VIEW at the live Schedules table before app 4 renders it; it is
+     not itself a report and renders no output of its own).
+     "This week's Schedule" is menu-linked from Main ("View Schedule")
+     but is, in practice, editor/admin-only today: [spp_create_view] is
+     in functions.php's migrated_admin_tool_shortcodes gate list, and
+     20005754 is not in $member_pages, so a regular member clicking
+     "View Schedule" is silently redirected home. Flagged for Gaetan
+     separately -- likely an unintended side effect of the 2026-09-06
+     cmruncode migration gate (see that file's own changelog) landing
+     on a page that reads as member-facing by name/title, not a
+     deliberate access decision -- not fixed here since it's outside
+     this task's scope.
+     Compared app 4's actual scope against both existing schedule
+     shortcodes before building: [spp_player_schedule_view] (the real
+     member-facing replacement, published/gated behind
+     get_option('spp_schedule_published'), card-per-court-per-time-slot
+     layout) is NOT the same tool -- app 4 is a flat, fully sortable
+     single table across every player/court/time in one view, useful
+     for a convenor eyeballing the whole current (possibly
+     not-yet-published) schedule at once, which the card layout doesn't
+     offer. Not a duplicate; built.
+     Sources Schedules/Times/Groups/Courts directly via the same JOIN
+     schedules_w's CREATE VIEW itself uses, rather than querying
+     schedules_w -- deliberately not reproducing the schedules_w
+     dependency gl-player-schedule-view.php's own 1.6.5 changelog
+     already documented and removed for this exact page's use case
+     (schedules_w is a repointable VIEW with a real DROP+CREATE race
+     window and a history of being left pointed at the wrong table by
+     an unrelated feature; reading the underlying tables directly
+     removes that risk structurally, same fix, same reasoning).
+     Same 9 columns/labels/orderable flags app 4's own WPDA config
+     renders today (Rank, First Name, Last Name, User Phone, T Desc,
+     Travel, Crt Name, GP Name, User) -- first_name/user_phone kept
+     non-sortable, matching app 4's own orderable flags exactly, same
+     as spp_report_courts()'s precedent for reproducing a WPDA app's
+     real orderable set rather than upgrading it silently. No WHERE
+     filter, matching app 4's own empty defaultWhere (Group 99
+     dropout/unscheduled sentinel rows included, unlike
+     spp_player_schedule_view which excludes them -- intentional parity
+     with what app 4 itself shows today, not an oversight).
+     ACCESS: gated to spp_is_admin_or_editor(), same pattern/precedent
+     as spp_report_results() -- this preserves app 4's real current
+     exposure level (editor/admin-only, per the page-access gate above)
+     rather than the shortcode's normal blanket is_user_logged_in()
+     floor, since this data (incl. every player's phone number) is only
+     public today once spp_player_schedule_view's own publish flag is
+     set -- an ungated version of this report would leak a
+     not-yet-published week's schedule + phone numbers to any logged-in
+     member. Not wired into any page by this change -- registry entry
+     only, per Gaetan's review-before-embedding instruction; loosen this
+     gate only if/when he decides where this gets embedded and confirms
+     that's the intended exposure.
 
    Changes from 1.10.0:
    - Added 3 new registry entries -- ladder_ratings_only, queen_ratings,
@@ -316,6 +376,7 @@ $GLOBALS['spp_report_registry'] = array(
     'preferred_permanent'  => 'spp_report_preferred_permanent',
     'membership_tags'      => 'spp_report_membership_tags',
     'kq_history'           => 'spp_report_kq_history',
+    'schedule_current'     => 'spp_report_schedule_current',
 );
 
 /**
@@ -388,6 +449,71 @@ function spp_report_results() {
     );
 }
 
+
+/**
+ * Current schedule report: replaces the WPDA "ShowSchedules" app
+ * (app_id=4, table schedules_w, page 20005754 "This week's Schedule").
+ * See this file's 1.12.0 changelog entry for the full investigation --
+ * app 4 is live and distinct in purpose from [spp_player_schedule_view],
+ * not a duplicate.
+ *
+ * Sources Schedules/Times/Groups/Courts directly (the same JOIN
+ * schedules_w's own CREATE VIEW uses) rather than querying schedules_w
+ * itself, to avoid that view's repointable-VIEW race/staleness risk --
+ * same fix gl-player-schedule-view.php's 1.6.5 changelog already
+ * applied to this exact data for this exact reason.
+ *
+ * ACCESS CONTROL: gated to spp_is_admin_or_editor(), same pattern as
+ * spp_report_results() -- preserves app 4's real current exposure
+ * level (see 1.12.0 changelog) rather than the shortcode's normal
+ * blanket is_user_logged_in() floor. This report includes every
+ * scheduled player's phone number, which today is only public once
+ * spp_player_schedule_view's own publish flag is set.
+ */
+function spp_report_schedule_current() {
+    global $wpdb;
+
+    if ( ! function_exists( 'spp_is_admin_or_editor' ) || ! spp_is_admin_or_editor() ) {
+        return array(
+            'columns' => array(
+                array( 'key' => 'notice', 'label' => 'Notice', 'sortable' => false ),
+            ),
+            'rows' => array(
+                array( 'notice' => 'You do not have permission to view this report.' ),
+            ),
+        );
+    }
+
+    $rows = $wpdb->get_results(
+        "SELECT Schedules.Rank, Schedules.first_name, Schedules.last_name,
+                Schedules.user_phone, Times.T_desc, Schedules.travel AS Travel,
+                Courts.Crt_name, Groups.GP_name, Schedules.user_id
+         FROM Schedules
+         JOIN Times   ON Schedules.time_id  = Times.T_ID
+         JOIN Groups  ON Schedules.group_id = Groups.GP_ID
+         JOIN Courts  ON Schedules.Crt_ID   = Courts.Crt_ID
+         ORDER BY Times.T_desc ASC, Courts.Crt_name ASC, Schedules.Rank ASC",
+        ARRAY_A
+    );
+
+    $columns = array(
+        array( 'key' => 'Rank',       'label' => 'Rank',       'sortable' => true ),
+        array( 'key' => 'first_name', 'label' => 'First Name', 'sortable' => false ),
+        array( 'key' => 'last_name',  'label' => 'Last Name',  'sortable' => true ),
+        array( 'key' => 'user_phone', 'label' => 'User Phone', 'sortable' => false ),
+        array( 'key' => 'T_desc',     'label' => 'T Desc',     'sortable' => true ),
+        array( 'key' => 'Travel',     'label' => 'Travel',     'sortable' => true ),
+        array( 'key' => 'Crt_name',   'label' => 'Crt Name',   'sortable' => true ),
+        array( 'key' => 'GP_name',    'label' => 'GP Name',    'sortable' => true ),
+        array( 'key' => 'user_id',    'label' => 'User',       'sortable' => true ),
+    );
+
+    return array(
+        'columns'      => $columns,
+        'rows'         => $rows,
+        'default_sort' => 'T_desc',
+    );
+}
 
 /**
  * Ladder Ratings report: Rank, Club Rating, DUPR, First Name, Last Name
