@@ -174,8 +174,8 @@
    - GL Assign ranks snippet name fixed (no trailing 's').
 
    Changes from 1.0.0:
-   - Reads registrants from lX9c1_gl_registrations instead of
-     lX9c1_rtec_entries. No +30000000 hack.
+   - Reads registrants from {$wpdb->prefix}gl_registrations instead of
+     {$wpdb->prefix}rtec_entries. No +30000000 hack.
    - $Event is now the actual gl_event_occurrences.id value.
    - registration_date populated from gl_registrations.registered_at
      (legacy field, no longer used functionally).

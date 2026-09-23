@@ -195,7 +195,7 @@ $time_slots = $wpdb->get_results("SELECT T_ID, T_desc FROM Times WHERE Active = 
 $_conv_event_id = (int) get_option('spp_current_event', 0);
 $_conv = $wpdb->get_row($wpdb->prepare(
     "SELECT o.title, o.event_date, m.first_name, m.user_phone
-     FROM lX9c1_gl_event_occurrences o
+     FROM {$wpdb->prefix}gl_event_occurrences o
      JOIN membership m ON o.convenor_id = m.user_id
      WHERE o.id = %d", $_conv_event_id
 ), ARRAY_A);
