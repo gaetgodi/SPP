@@ -197,59 +197,23 @@ function spp_event_date_resolution_sql( $event_id_expr, $alias = 'ed' ) {
     return array( 'join' => $join, 'date_expr' => $date_expr );
 }
 /* =========================================================
-   PAGE ACCESS RESTRICTION
-   Restricts cmruncode pages to editors and admins only,
-   with exceptions for member-facing pages.
-
-   UPDATE (2026-09-06): this gate detects an "admin tool page" purely
-   by sniffing post_content for the literal [cmruncode] shortcode.
-   Tonight's Code Manager migration replaced [cmruncode name="X"] with
-   real [spp_x] shortcodes on 31 pages -- which silently made this
-   check return false (no more "cmruncode" string in the content) and
-   removed the restriction from all 22 of those pages that weren't
-   already in $member_pages, including the site's highest-stakes page
-   (Apply Override / Publish Results). Caught during Phase 3
-   verification, fixed immediately: the check now also recognizes
-   every shortcode tag migrated tonight that has a real page-level
-   caller, restoring the exact same protection under the new names.
-   Any FUTURE snippet migration that adds a new [spp_x] shortcode to
-   a previously admin/editor-only cmruncode page must add its tag to
-   this list too, or that page will silently lose this restriction
-   the same way.
+   PAGE ACCESS RESTRICTION (template_redirect gate) -- REMOVED
+   2026-09-21. Retired the whole mechanism ($migrated_admin_tool_
+   shortcodes, $member_pages, and this hook) once every one of the
+   20 tracked shortcodes was confirmed to self-gate via
+   spp_is_admin_or_editor()/spp_is_admin() internally (the last 3 --
+   spp_blank_scores_colour, spp_gl_ladder_events_dropdown,
+   spp_schedule_before_after_comparison -- gained that check in this
+   same change; spp_rank_history's existing spp_is_ladder_admin()
+   feature-differentiation, not a hard block, was confirmed
+   intentional and left untouched) or turned out to protect nothing
+   at all (the raw [cmruncode] branch -- Code Manager is deactivated
+   site-wide, so that shortcode already renders nothing for anyone).
+   $member_pages' obsolete/no-op entries (Club Membership list
+   20003754, Enter Scores 20010267, the already-trashed 20009765)
+   needed no separate cleanup -- removing the whole mechanism
+   resolved them along with everything else.
    ========================================================= */
-add_action('template_redirect', function() {
-    if (defined('DOING_AJAX') && DOING_AJAX) return;
-    if (!is_page()) return;
-    if (spp_is_admin_or_editor()) return;
-
-    $member_pages = [1517, 20003754, 20003889, 20009040, 20009451, 20005967, 20009765, 20009901, 1948, 20006331, 20010179, 20010257, 20010267];
-
-    $migrated_admin_tool_shortcodes = [
-        'spp_apply_override_to_results_table', 'spp_copy_ranks_to_user_profile',
-        'spp_show_results', 'spp_remove_user_from_ladder', 'spp_create_membership_table',
-        'spp_random_ranks', 'spp_remove_inactive_ladder_users', 'spp_blank_scores_colour',
-        'spp_membership_tags_refresh_ui', 'spp_score_review_grid', 'spp_create_view',
-        'spp_pdf',
-        'spp_score_scanner_ui', 'spp_rank_history', 'spp_scores_events_dropdown',
-        'spp_gl_ladder_events_dropdown', 'spp_schedule_before_after_comparison',
-        'spp_change_new_user_rank',
-    ];
-
-    global $post;
-    if ( ! $post || in_array($post->ID, $member_pages) ) return;
-
-    $is_admin_tool_page = has_shortcode($post->post_content, 'cmruncode');
-    if ( ! $is_admin_tool_page ) {
-        foreach ($migrated_admin_tool_shortcodes as $tag) {
-            if (has_shortcode($post->post_content, $tag)) { $is_admin_tool_page = true; break; }
-        }
-    }
-
-    if ($is_admin_tool_page) {
-        wp_redirect(home_url());
-        exit;
-    }
-});
 
 /* =========================================================
    JS ERROR LOGGING (TEC single event pages) -- REMOVED 2026-09-14.

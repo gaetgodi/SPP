@@ -78,11 +78,29 @@
    entirely instead, matching the pattern already removed from every
    other snippet migrated tonight. $_SESSION is never read anywhere in
    this snippet regardless, so dropping it is a true no-op.
+
+   SECURITY FIX (2026-09-21, page-level gate retirement audit): this
+   was one of 3 tracked shortcodes (of 20) found to have no access
+   control of its own, relying entirely on functions.php's
+   template_redirect page-level gate -- and its only live, non-
+   orphaned embedding (page 20010224, "GL Create Schedule") is
+   directly linked in the Main nav. Added the same
+   spp_is_admin_or_editor() check every other self-gating tracked
+   shortcode already uses, so this is no longer solely dependent on
+   that page-level mechanism, which is being removed entirely in this
+   same change. Confirmed safe to add: this function has no caller
+   besides its own shortcode wrapper (gl-schedule-production.php only
+   reads the $GLOBALS it sets after the page has already rendered the
+   form, never calls this function directly).
    ========================================================= */
 
 defined( 'ABSPATH' ) || exit;
 
 function spp_gl_ladder_events_dropdown( bool $show_tolerance = false ) {
+    if ( ! spp_is_admin_or_editor() ) {
+        echo '<p>You do not have permission to use this tool.</p>';
+        return;
+    }
 
     global $wpdb, $Event, $name, $all;
 

@@ -69,11 +69,26 @@
        and one of the pair could show an incorrect changed/departed/
        arrived flag. No such collision exists in current data, and
        CM264 has always had this behavior.
+
+   SECURITY FIX (2026-09-21, page-level gate retirement audit): this
+   was one of 3 tracked shortcodes (of 20) found to have no access
+   control of its own, relying entirely on functions.php's
+   template_redirect page-level gate -- and its only live embedding
+   (page 20009753, "Schedule Before-After") is directly linked in the
+   Main nav. Added the same spp_is_admin_or_editor() check every
+   other self-gating tracked shortcode already uses, so this is no
+   longer solely dependent on that page-level mechanism, which is
+   being removed entirely in this same change.
    ========================================================= */
 
 defined( 'ABSPATH' ) || exit;
 
 function spp_schedule_before_after_comparison() {
+    if ( ! spp_is_admin_or_editor() ) {
+        echo '<p>You do not have permission to use this tool.</p>';
+        return;
+    }
+
     global $wpdb;
 
     $Event = get_option( 'spp_current_event' );
