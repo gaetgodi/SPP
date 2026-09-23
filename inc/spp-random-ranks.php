@@ -108,6 +108,18 @@
    button; only a POST with random_ranks_confirmed=1 calls the real
    function. The function body itself, and the CM279 internal
    caller, are untouched.
+
+   SECURITY FIX (2026-09-23, completing the 2026-09-21 page-level
+   gate retirement): this shortcode writes player Rank/Ladder data
+   and had no access control of its own beyond the POST confirm
+   step -- it relied entirely on functions.php's now-removed
+   template_redirect gate. Its page ("Random Ranks", 2725) is
+   currently trashed, but restoring it would have exposed this to
+   anonymous visitors. Added the same spp_is_admin_or_editor() check
+   the other self-gating tracked shortcodes use -- in the
+   add_shortcode() wrapper, NOT the function body, for the same
+   reason the confirm gate lives there: the CM279 internal caller
+   (spp_assign_ranks_to_registered_players()) must keep working.
    ========================================================= */
 
 defined( 'ABSPATH' ) || exit;
@@ -233,6 +245,10 @@ function spp_random_ranks() {
 }
 
 add_shortcode( 'spp_random_ranks', function( $atts ) {
+    if ( ! spp_is_admin_or_editor() ) {
+        return '<p>You do not have permission to use this tool.</p>';
+    }
+
     ob_start();
 
     $confirmed = isset( $_POST['random_ranks_confirmed'] ) && $_POST['random_ranks_confirmed'] === '1';

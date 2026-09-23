@@ -100,6 +100,19 @@
        adverse effect.
    Revisit only if this function starts writing anything beyond the
    named view's own definition.
+
+   SECURITY FIX (2026-09-23, completing the 2026-09-21 page-level
+   gate retirement): the [spp_create_view] shortcode runs DROP VIEW /
+   CREATE VIEW and had no access control of its own, relying entirely
+   on functions.php's now-removed template_redirect gate. Its page
+   ("Create View", 20008188) is currently trashed, but restoring it
+   would have exposed this to anonymous visitors. Added the same
+   spp_is_admin_or_editor() check the other self-gating tracked
+   shortcodes use -- in the add_shortcode() wrapper ONLY, NOT the
+   function body: spp_create_view() is called directly by
+   spp_score_review_grid() on a public, anonymously-viewed page
+   (20006331), and by both schedule-production pipelines and
+   spp_blank_scores_colour(), all of which must keep working.
    ========================================================= */
 
 defined( 'ABSPATH' ) || exit;
@@ -161,6 +174,10 @@ function spp_create_view( string $table = 'Schedules', string $view_name = 'sche
 // and spp-blank-scores-colour.php's headers. Unused by any live caller today
 // (all three confirmed real callers pass no attributes at all).
 add_shortcode( 'spp_create_view', function( $atts ) {
+    if ( ! spp_is_admin_or_editor() ) {
+        return '<p>You do not have permission to use this tool.</p>';
+    }
+
     $atts = shortcode_atts( array(
         'file'      => 'Schedules',
         'view_name' => 'schedules_w',

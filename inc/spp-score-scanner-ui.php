@@ -33,11 +33,27 @@
    migrated snippet), and $_SESSION was never read anywhere in
    this snippet regardless. No other behavior change -- identical
    markup, identical CSS.
+
+   SECURITY FIX (2026-09-23, completing the 2026-09-21 page-level
+   gate retirement): this shortcode had no access control of its own,
+   relying entirely on functions.php's now-removed template_redirect
+   gate. Its page ("Score Scanner", 20009788) is currently trashed,
+   but restoring it would have shown the scanner UI to anonymous
+   visitors. The backing AJAX handlers in score-scanner.php already
+   enforce nonce + editor/administrator checks independently, so this
+   is defense in depth. Added the same spp_is_admin_or_editor() check
+   every other self-gating tracked shortcode uses, at the top of the
+   function body (its shortcode wrapper is its only caller).
    ========================================================= */
 
 defined( 'ABSPATH' ) || exit;
 
 function spp_score_scanner_ui() {
+    if ( ! spp_is_admin_or_editor() ) {
+        echo '<p>You do not have permission to use this tool.</p>';
+        return;
+    }
+
     ?>
     <style>
     .spp-scan-wrap { max-width: 900px; margin: 0 auto; font-family: Arial, sans-serif; }
