@@ -268,7 +268,7 @@ function spp_kq_create_tables() {
     require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 
     $charset = $wpdb->get_charset_collate();
-    $p       = $wpdb->prefix; // e.g. {$wpdb->prefix}
+    $p       = $wpdb->prefix;
 
     // ── Events ────────────────────────────────────────────────────────────
     dbDelta( "CREATE TABLE {$p}spp_kq_events (
