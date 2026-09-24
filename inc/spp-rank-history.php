@@ -1,8 +1,20 @@
 <?php
 /* =========================================================
    Rank History
-   Version: 1.2.0
+   Version: 1.3.0
    Date: 2026-09-24
+
+   Changes from 1.2.0:
+   - Orange "manual override" highlight and the "(override: calc X to
+     Y)" note now compare Override against Calc (Shadow) whenever the
+     row has one (events 162+), and only fall back to plain Calc when
+     RankCalc_Shadow is NULL (every event before 162). Since 6bd8fb7
+     (Aug 25) RankOverride holds the shadow value for every player as
+     normal processing, so comparing against plain Calc flagged every
+     dampened player as "manually overridden" (47 false flags across
+     162/164/165/166, 0 after this change). Pre-162 behaviour is
+     unchanged. The note says "calc (shadow)" instead of "calc" when
+     that's the baseline it used. See spp_rh_override_baseline().
 
    Changes from 1.1.0:
    - Per-event table: new "Calc (Shadow)" column (Results_all.
@@ -101,6 +113,20 @@
    ========================================================= */
 
 defined( 'ABSPATH' ) || exit;
+
+// Baseline a row's RankOverride is compared against to decide whether it
+// was manually overridden: Calc (Shadow) when the row has one (162+, where
+// RankOverride holds the shadow value by default), else plain Calc.
+// Returns [ value|null, label ].
+function spp_rh_override_baseline( $row ) {
+    if ( isset( $row['RankCalc_Shadow'] ) ) {
+        return [ (float) $row['RankCalc_Shadow'], 'calc (shadow)' ];
+    }
+    if ( isset( $row['RankCalc'] ) ) {
+        return [ (float) $row['RankCalc'], 'calc' ];
+    }
+    return [ null, 'calc' ];
+}
 
 function spp_rank_history() {
     global $wpdb;
@@ -352,8 +378,9 @@ function spp_rank_history() {
         else                   { $arrow = '';     $color = '#555';   $direction = 'unchanged'; }
 
         $override_note = '';
-        if ( $played && abs( $rank_calc - $rank_over ) >= 0.5 ) {
-            $override_note = ' <span style="color:#e65100;font-size:0.8rem;font-weight:normal;">(override: calc ' . number_format( $rank_calc, 1 ) . ' to ' . number_format( $rank_over, 1 ) . ')</span>';
+        list( $base_val, $base_label ) = spp_rh_override_baseline( $event );
+        if ( $played && $base_val !== null && abs( $base_val - $rank_over ) >= 0.5 ) {
+            $override_note = ' <span style="color:#e65100;font-size:0.8rem;font-weight:normal;">(override: ' . $base_label . ' ' . number_format( $base_val, 1 ) . ' to ' . number_format( $rank_over, 1 ) . ')</span>';
         }
 
         // Neighbours +-6 ranks
@@ -443,8 +470,9 @@ function spp_rank_history() {
             $r_calc     = isset( $row['RankCalc'] )     ? number_format( (float) $row['RankCalc'], 2 )     : '-';
             $r_shadow   = isset( $row['RankCalc_Shadow'] ) ? number_format( (float) $row['RankCalc_Shadow'], 2 ) : '-';
             $r_over     = isset( $row['RankOverride'] ) ? number_format( (float) $row['RankOverride'], 2 ) : '-';
-            $over_class = ( ! $is_self && isset( $row['RankCalc'], $row['RankOverride'] ) &&
-                           abs( (float) $row['RankCalc'] - (float) $row['RankOverride'] ) >= 0.5 )
+            $row_base   = spp_rh_override_baseline( $row )[0];
+            $over_class = ( ! $is_self && $row_base !== null && isset( $row['RankOverride'] ) &&
+                           abs( $row_base - (float) $row['RankOverride'] ) >= 0.5 )
                            ? 'rh-override' : '';
 
             echo '<tr class="' . $row_class . '">';
