@@ -1,8 +1,34 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Screens
-   Version: 1.28.0
-   Date: 2026-09-20
+   Version: 1.29.0
+   Date: 2026-09-24
+
+   Changes from 1.28.0 -- card-flip reveal on the Round-1 Draw screen
+   (spp_kq_render_draw_screen()), reviewed and approved:
+
+   A successful card claim now flips the tapped card over (flat CSS
+   scaleX squash/unsquash, 150ms each half, no 3D) to show its face,
+   holds it ~500ms, THEN runs the pre-existing success handling
+   unchanged (remove name, remove card, fill slot, update count, reload
+   on draw_complete or scroll #kq-not-drawn-list into view). There is
+   no suited deck underneath: a "card" IS a round-1 (court, color) slot,
+   so the face shows the court's rank letter (A/K/Q/J from Aces/Kings/
+   Queens/Jacks), a suit glyph purely standing in for the team color
+   (Red = heart, Black = spade), and the court name. prefers-reduced-
+   motion skips the squash but keeps the hold.
+   Ordering vs. 1.25.0's scroll-to-names: the scroll now runs after the
+   hold, not alongside it -- scrolling first would move the card being
+   revealed out of view before anyone saw it.
+   Also: the claim now captures its own uid at tap time (previously
+   selectedUid was re-read when the response landed, so selecting the
+   next player mid-request removed the wrong name); the tapped card and
+   that player's button are marked pending/disabled until the result is
+   known (double-taps are inert; restored on error). The 2500ms poll
+   skips/discards any render overlapping a claim this device has in
+   flight (claimsInFlight/localGen), so it can't wipe a mid-flip card or
+   double-fill a slot this device is about to fill itself. Purely per-
+   device -- nothing about the flip is synced or stored.
 
    Changes from 1.27.0 -- real usage feedback, reviewed and approved,
    four independent items:
@@ -1721,6 +1747,19 @@ function spp_kq_styles() : string {
         #kq-card-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(56px,1fr)); gap:8px; }
         .kq-card { aspect-ratio:2/3; background:#2c3e50; border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:24px; color:#fff; cursor:pointer; user-select:none; }
         .kq-card:hover { background:#3f5a80; }
+        /* 1.29.0: card-flip reveal on a successful claim -- a flat scaleX
+           squash/unsquash (not a 3D rotate), content swapped at the
+           midpoint while the card is edge-on. */
+        .kq-card { transition:transform 150ms ease-in; }
+        .kq-card.kq-card-pending { cursor:default; opacity:.7; }
+        .kq-card.kq-card-flip-out { transform:scaleX(0); }
+        .kq-card.kq-card-face, .kq-card.kq-card-face:hover { background:#fff; border:2px solid #2c3e50; flex-direction:column; gap:0; cursor:default; opacity:1; transition-timing-function:ease-out; }
+        .kq-card-face.kq-card-face-red { color:#c0392b; }
+        .kq-card-face.kq-card-face-black { color:#222; }
+        .kq-card-rank { font-size:22px; font-weight:bold; line-height:1; }
+        .kq-card-suit { font-size:20px; line-height:1.1; }
+        .kq-card-label { font-size:10px; line-height:1.2; text-transform:uppercase; letter-spacing:.3px; }
+        @media (prefers-reduced-motion: reduce) { .kq-card { transition:none; } }
         .kq-draw-revealed h3 { font-size:14px; margin:0 0 8px; color:#555 !important; text-transform:uppercase; letter-spacing:.5px; }
         .kq-slot { color:#999; }
         .kq-slot.kq-slot-filled { color:inherit; font-weight:bold; }
@@ -2244,41 +2283,121 @@ function spp_kq_render_draw_screen( int $occurrence_id ) : string {
             if ( btn ) selectPlayer( btn );
         } );
 
+        // 1.29.0: card-flip reveal. FLIP_MS is each half of the scaleX
+        // squash (matches the .kq-card CSS transition); HOLD_MS is how long
+        // the revealed face stays up before the pre-existing grid/list/
+        // slot/scroll updates run.
+        var FLIP_MS = 150, HOLD_MS = 500;
+        var reducedMotion = window.matchMedia && window.matchMedia( '(prefers-reduced-motion: reduce)' ).matches;
+        // claimsInFlight is >0 from a card tap until that claim's grid
+        // update has run (request + flip + hold); localGen is bumped at
+        // both ends. pollDrawState() below skips/discards any render that
+        // overlaps either -- otherwise it would wipe a mid-flip card, or
+        // re-apply a claim this device is about to apply itself (double-
+        // filling its slot).
+        var localGen = 0, claimsInFlight = 0;
+
+        function revealCard( card, courtName, teamColor, done ) {
+            var rank  = courtName ? courtName.charAt( 0 ) : '?';
+            var isRed = ( teamColor === 'red' );
+            var colorLabel = isRed ? 'Red' : 'Black';
+            function showFace() {
+                card.classList.remove( 'kq-card-pending' );
+                card.classList.add( 'kq-card-face', isRed ? 'kq-card-face-red' : 'kq-card-face-black' );
+                card.setAttribute( 'aria-label', courtName + ' — ' + colorLabel );
+                card.innerHTML = '';
+                [ [ 'kq-card-rank', rank ], [ 'kq-card-suit', isRed ? '♥' : '♠' ], [ 'kq-card-label', courtName ] ].forEach( function( p ) {
+                    var s = document.createElement( 'span' );
+                    s.className = p[0];
+                    s.textContent = p[1];
+                    card.appendChild( s );
+                } );
+            }
+            if ( reducedMotion ) {
+                showFace();
+                setTimeout( done, HOLD_MS );
+                return;
+            }
+            card.classList.add( 'kq-card-flip-out' );
+            setTimeout( function() {
+                showFace();
+                card.classList.remove( 'kq-card-flip-out' );
+                setTimeout( done, FLIP_MS + HOLD_MS );
+            }, FLIP_MS );
+        }
+
         document.getElementById( 'kq-card-grid' ).addEventListener( 'click', function( e ) {
             var card = e.target.closest( '.kq-card' );
             if ( ! card ) return;
+            // A card already submitted/flipping from this device is inert.
+            if ( card.classList.contains( 'kq-card-pending' ) || card.classList.contains( 'kq-card-face' ) ) return;
             if ( ! selectedUid ) {
                 showError( 'Select a player first, then tap a card.' );
                 return;
             }
 
+            // Capture the claim's own uid now: previously selectedUid was
+            // re-read when the response landed, so selecting the NEXT
+            // player mid-request would remove the wrong name.
+            var uid = selectedUid;
+            var pendingBtn = document.querySelector( '#kq-not-drawn-list .kq-player-btn[data-uid="' + uid + '"]' );
+            if ( pendingBtn ) { pendingBtn.classList.remove( 'kq-selected' ); pendingBtn.disabled = true; }
+            selectedUid = null;
+            card.classList.add( 'kq-card-pending' );
+            claimsInFlight++;
+            localGen++;
+
             var data = new FormData();
             data.append( 'action', 'spp_kq_draw_card' );
             data.append( 'nonce', nonce );
             data.append( 'occ', occ );
-            data.append( 'user_id', selectedUid );
+            data.append( 'user_id', uid );
+
+            function restore() {
+                claimsInFlight--;
+                localGen++;
+                card.classList.remove( 'kq-card-pending' );
+                var b = document.querySelector( '#kq-not-drawn-list .kq-player-btn[data-uid="' + uid + '"]' );
+                if ( b ) b.disabled = false;
+            }
 
             fetch( ajaxUrl, { method: 'POST', body: data, credentials: 'same-origin' } )
                 .then( function( r ) { return r.json(); } )
                 .then( function( res ) {
                     if ( ! res.success ) {
+                        restore();
                         showError( res.data || 'Draw failed.' );
                         return;
                     }
                     var d = res.data;
+                    revealCard( card, d.court_name, d.team_color, function() {
+                        applyClaim( card, uid, d );
+                        claimsInFlight--;
+                        localGen++;
+                    } );
+                } )
+                .catch( function() { restore(); showError( 'Network error -- try again.' ); } );
+        } );
 
+        // Everything below is the pre-1.29.0 success handling, unchanged
+        // apart from running after the flip and using the captured uid.
+        function applyClaim( card, uid, d ) {
                     // Remove the drawn player from the list.
-                    var li = document.querySelector( '#kq-not-drawn-list li[data-uid="' + selectedUid + '"]' );
+                    var li = document.querySelector( '#kq-not-drawn-list li[data-uid="' + uid + '"]' );
                     var playerName = li ? li.querySelector( '.kq-player-btn' ).textContent : '';
                     if ( li ) li.remove();
-                    selectedUid = null;
 
                     // Remove one card from the grid.
                     card.remove();
 
-                    // Fill the first still-empty slot for this court/color.
+                    // Fill the first still-empty slot for this court/color
+                    // (unless a poll render already shows this name there).
                     var slots = document.querySelectorAll( '.kq-slot[data-court="' + d.court_name + '"][data-color="' + d.team_color + '"]' );
-                    for ( var i = 0; i < slots.length; i++ ) {
+                    var alreadyShown = false;
+                    for ( var j = 0; j < slots.length; j++ ) {
+                        if ( playerName && slots[ j ].classList.contains( 'kq-slot-filled' ) && slots[ j ].textContent === playerName ) alreadyShown = true;
+                    }
+                    for ( var i = 0; ! alreadyShown && i < slots.length; i++ ) {
                         if ( ! slots[ i ].classList.contains( 'kq-slot-filled' ) ) {
                             slots[ i ].textContent = playerName;
                             slots[ i ].classList.add( 'kq-slot-filled' );
@@ -2309,9 +2428,7 @@ function spp_kq_render_draw_screen( int $occurrence_id ) : string {
                             notDrawnList.scrollIntoView( { behavior: 'smooth', block: 'center' } );
                         }
                     }
-                } )
-                .catch( function() { showError( 'Network error -- try again.' ); } );
-        } );
+        }
 
         // 1.28.0 (real usage feedback): live poll so a device that ISN'T
         // the one drawing a given card still sees it land, without a
@@ -2329,7 +2446,8 @@ function spp_kq_render_draw_screen( int $occurrence_id ) : string {
         // children's innerHTML never orphans a listener.
         var reloading = false;
         function pollDrawState() {
-            if ( reloading ) return;
+            if ( reloading || claimsInFlight > 0 ) return;
+            var genAtRequest = localGen;
             var data = new FormData();
             data.append( 'action', 'spp_kq_render_fragment' );
             data.append( 'nonce', nonce );
@@ -2338,6 +2456,10 @@ function spp_kq_render_draw_screen( int $occurrence_id ) : string {
                 .then( function( r ) { return r.json(); } )
                 .then( function( res ) {
                     if ( ! res.success || reloading ) return;
+                    // 1.29.0: never replace the grid under a mid-flip card,
+                    // and drop a render fetched before this device's own
+                    // latest claim (stale; next tick is fresh).
+                    if ( claimsInFlight > 0 || genAtRequest !== localGen ) return;
                     var tmp = document.createElement( 'div' );
                     tmp.innerHTML = res.data.html;
 
