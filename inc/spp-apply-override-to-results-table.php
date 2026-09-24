@@ -1,8 +1,16 @@
 <?php
 /* =========================================================
    Apply Override to Results Table
-   Version: 1.3.0
-   Date: 2026-09-08
+   Version: 1.4.0
+   Date: 2026-09-24
+
+   Changes from 1.3.0:
+   - Stage 1 archive: RankCalc_Shadow is now copied from the results
+     table into Results_all alongside RankCalc (RankCalc is still
+     captured too). Only when Results_all actually has the column
+     (spp_results_all_has_shadow()) -- before the hand-run ALTER, the
+     INSERT is exactly the old 9-column one. tmp_results already
+     selected RankCalc_Shadow; it just was never written through.
 
    Changes from 1.2.0:
    - Added a trial-recipient choice on the Stage 2 ("Confirm Results
@@ -379,7 +387,11 @@ function spp_apply_override_to_results_table() {
 
         $num_event = intval($Event);
         $wpdb->query("DELETE FROM Results_all WHERE event_id = {$num_event}");
-        $wpdb->query("INSERT INTO Results_all (Rank, RankPrev, RankCalc, RankOverride, user_id, group_id, Score, event_id, display_name) SELECT Rank, RankPrev, RankCalc, RankOverride, user_id, group_id, Score, event_id, display_name FROM tmp_results");
+        if ( spp_results_all_has_shadow() ) {
+            $wpdb->query("INSERT INTO Results_all (Rank, RankPrev, RankCalc, RankOverride, RankCalc_Shadow, user_id, group_id, Score, event_id, display_name) SELECT Rank, RankPrev, RankCalc, RankOverride, RankCalc_Shadow, user_id, group_id, Score, event_id, display_name FROM tmp_results");
+        } else {
+            $wpdb->query("INSERT INTO Results_all (Rank, RankPrev, RankCalc, RankOverride, user_id, group_id, Score, event_id, display_name) SELECT Rank, RankPrev, RankCalc, RankOverride, user_id, group_id, Score, event_id, display_name FROM tmp_results");
+        }
         // -- Verify Results_all row count matches what we just inserted ------------
         $expected_count = (int) $wpdb->get_var("SELECT COUNT(*) FROM tmp_results");
         $actual_count   = (int) $wpdb->get_var("SELECT COUNT(*) FROM Results_all WHERE event_id = {$num_event}");

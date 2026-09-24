@@ -1,6 +1,18 @@
 <?php
 /* =========================================================
    Show Results
+   Version: 1.1.0
+   Date: 2026-09-24
+
+   Changes from 1.0.0:
+   - Added a "Calc (Shadow)" column (Results_all.RankCalc_Shadow)
+     right after Calculated. Populated from event 162 on (the first
+     event processed after RankOverride started defaulting to the
+     shadow calc); blank for every earlier event, where no shadow
+     value was ever archived. Calculated (plain RankCalc) is kept as
+     is -- it's the only calc older events have. Column is only
+     selected once Results_all has it (spp_results_all_has_shadow()).
+
    Version: 1.0.0
    Date: 2026-09-05
    Based on: Code Manager snippet "Show results" (CM80)
@@ -66,11 +78,16 @@ function spp_show_results() {
     $title    = "<br>All results from Event " . $Event;
     $subtitle = "Sorted by Rank";
 
+    $shadow_col = ( function_exists( 'spp_results_all_has_shadow' ) && spp_results_all_has_shadow() )
+        ? "RankCalc_Shadow as `Calc (Shadow)`,"
+        : '';
+
     $sql = "SELECT
         Rank,
         display_name as Player,
         RankPrev as Previous,
         RankCalc as Calculated,
+        $shadow_col
         RankOverride as Override,
         event_id as Event,
         group_id as Groups,

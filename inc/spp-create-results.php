@@ -1,9 +1,17 @@
 <?php
 /* =========================================================
    SPP Create Results (for Override)
-   Version: 3.2.0
-   Date: 2026-08-25
+   Version: 3.2.1
+   Date: 2026-09-24
    Based on: Create Results for Override (Main Path) 2.0
+
+   Changes from 3.2.0:
+   - Added spp_results_all_has_shadow() beside the shadow ratio
+     helpers: true once Results_all has a RankCalc_Shadow column.
+     Used by apply-override, score-correction, show-results and
+     rank-history so each works both before and after that column is
+     added (the ALTER is run by hand, not by code). No change to this
+     file's own pipeline.
 
    Changes from 3.1.0:
    - Step 11: RankOverride's initial value at creation time now
@@ -402,6 +410,17 @@ function spp_cr_rating_numeric( $rating ) {
 
 function spp_cr_shadow_ratio( $distance ) {
     return exp( -$distance / SPP_CR_SHADOW_K );
+}
+
+// True once Results_all has a RankCalc_Shadow column (added by hand,
+// 2026-09-24). Cached per request.
+function spp_results_all_has_shadow() {
+    static $has = null;
+    if ( $has === null ) {
+        global $wpdb;
+        $has = (bool) $wpdb->get_var( "SHOW COLUMNS FROM Results_all LIKE 'RankCalc_Shadow'" );
+    }
+    return $has;
 }
 
 function spp_create_results_run( $force = false ) {

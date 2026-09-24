@@ -1,8 +1,18 @@
 <?php
 /* =========================================================
    Rank History
-   Version: 1.1.0
-   Date: 2026-09-14
+   Version: 1.2.0
+   Date: 2026-09-24
+
+   Changes from 1.1.0:
+   - Per-event table: new "Calc (Shadow)" column (Results_all.
+     RankCalc_Shadow) right after Calc. Filled from event 162 on,
+     "-" for earlier events (no shadow value was archived before
+     then). Only selected once Results_all has the column
+     (spp_results_all_has_shadow()); before that it's NULL everywhere.
+     Calc, Override, the orange override highlight and the
+     "(override: calc X to Y)" note are unchanged -- they still compare
+     Override against plain Calc.
 
    Changes from 1.0.0 (dead tec_occurrences dependency removed --
    full investigation and root-cause writeup in the conversation this
@@ -177,12 +187,17 @@ function spp_rank_history() {
     /* ---------------------------------------------------------
        3. Get this player's results for those events
        --------------------------------------------------------- */
+    $shadow_sel = ( function_exists( 'spp_results_all_has_shadow' ) && spp_results_all_has_shadow() )
+        ? 'r.RankCalc_Shadow'
+        : 'NULL AS RankCalc_Shadow';
+
     $player_results = $wpdb->get_results( $wpdb->prepare( "
         SELECT
             r.event_id,
             r.Rank,
             CAST(r.RankPrev AS DECIMAL(8,2))     AS RankPrev,
             r.RankCalc,
+            {$shadow_sel},
             r.RankOverride,
             r.Score,
             r.group_id,
@@ -249,6 +264,7 @@ function spp_rank_history() {
         $rank_prev  = (float) $event['RankPrev'];
         $rank_calc  = (float) $event['RankCalc'];
         $rank_over  = (float) $event['RankOverride'];
+        $rank_shadow = $event['RankCalc_Shadow'] ?? null;
         $score      = $event['Score'];
         $group_id   = $event['group_id'];
         $event_date = $event['event_date'] ?? $event_id;
@@ -349,6 +365,7 @@ function spp_rank_history() {
                 r.Rank,
                 CAST(r.RankPrev AS DECIMAL(8,2)) AS RankPrev,
                 r.RankCalc,
+                {$shadow_sel},
                 r.RankOverride,
                 r.Score,
                 r.group_id,
@@ -406,6 +423,7 @@ function spp_rank_history() {
             'RankPrev'     => $rank_prev,
             'Rank'         => $rank_now,
             'RankCalc'     => $rank_calc,
+            'RankCalc_Shadow' => $rank_shadow,
             'RankOverride' => $rank_over,
             'Score'        => $score,
             'group_id'     => $group_id,
@@ -416,13 +434,14 @@ function spp_rank_history() {
         echo '<div class="rh-scroll">';
         echo '<table class="rh-table">';
         echo '<thead><tr>';
-        echo '<th>Name</th><th>Prev</th><th>Rank</th><th>Calc</th><th>Override</th><th>Score</th><th>Grp</th>';
+        echo '<th>Name</th><th>Prev</th><th>Rank</th><th>Calc</th><th>Calc (Shadow)</th><th>Override</th><th>Score</th><th>Grp</th>';
         echo '</tr></thead><tbody>';
 
         foreach ( $all_rows as $row ) {
             $is_self    = ! empty( $row['is_self'] );
             $row_class  = $is_self ? 'rh-self' : '';
             $r_calc     = isset( $row['RankCalc'] )     ? number_format( (float) $row['RankCalc'], 2 )     : '-';
+            $r_shadow   = isset( $row['RankCalc_Shadow'] ) ? number_format( (float) $row['RankCalc_Shadow'], 2 ) : '-';
             $r_over     = isset( $row['RankOverride'] ) ? number_format( (float) $row['RankOverride'], 2 ) : '-';
             $over_class = ( ! $is_self && isset( $row['RankCalc'], $row['RankOverride'] ) &&
                            abs( (float) $row['RankCalc'] - (float) $row['RankOverride'] ) >= 0.5 )
@@ -433,6 +452,7 @@ function spp_rank_history() {
             echo '<td>' . (int) round( (float) $row['RankPrev'] ) . '</td>';
             echo '<td>' . (int) $row['Rank'] . '</td>';
             echo '<td>' . $r_calc . '</td>';
+            echo '<td>' . $r_shadow . '</td>';
             echo '<td class="' . $over_class . '">' . $r_over . '</td>';
             echo '<td>' . ( is_null( $row['Score'] )    ? '-' : $row['Score'] ) . '</td>';
             echo '<td>' . ( is_null( $row['group_id'] ) ? '-' : $row['group_id'] ) . '</td>';

@@ -12,8 +12,28 @@
  *   - rankUsersWithTies(): score desc, current rank as tie-breaker
  *   - setCaclRank(): placement adjustment + score bonus
  *
- * Version: 1.4.1
- * Date:    2026-09-05
+ * Version: 1.5.0
+ * Date:    2026-09-24
+ *
+ * Changes from 1.4.1:
+ *   - RankOverride is now set to the recomputed SHADOW calc, not the
+ *     plain RankCalc. Since spp-create-results.php 3.2.0 (2026-08-25)
+ *     RankOverride defaults to RankCalc_Shadow; this tool was still
+ *     resetting it to plain RankCalc on every correction, silently
+ *     undoing that for the whole corrected group.
+ *   - spp_sc_recalculate() now also returns new_shadows: the same
+ *     formula as create-results Step 9 -- rank + (newcalc - rank) *
+ *     exp(-distance / SPP_CR_SHADOW_K), distance = |own rating - avg
+ *     rating of the rest of the group| (ClubRating usermeta, self-
+ *     reported Master.Rating as fallback), peers = every row in the
+ *     group including NP/NS. Verified to reproduce the stored
+ *     RankCalc_Shadow exactly when the score is left unchanged.
+ *   - Apply writes the new shadow to RankOverride and RankCalc_Shadow
+ *     in Results, and to RankOverride (+ RankCalc_Shadow once that
+ *     column exists, spp_results_all_has_shadow()) in Results_all.
+ *     RankCalc is still updated to the new plain calc as before.
+ *   - Preview gains a "New Override (Shadow)" column showing exactly
+ *     what RankOverride will be set to.
  *
  * Changes from 1.4.0:
  *   - Step 6: call spp_create_membership_table() directly instead of
@@ -600,6 +620,33 @@ function spp_sc_recalculate( $event_id, $user_id, $game_num, $new_score ) {
         $new_calcs[ $uid ] = spp_sc_calc_rank( $maxrk, $new_group_ranks[ $uid ], $rp, $new_scores[ $uid ], $bonus_max, $bonus_min );
     }
 
+    // Shadow calc for each playing member -- see 1.5.0 changelog.
+    $group_uids = array_map( 'intval', array_column( $members, 'user_id' ) );
+    $uid_list   = implode( ',', $group_uids );
+    $club = array_column( $wpdb->get_results(
+        "SELECT user_id, meta_value FROM {$wpdb->usermeta} WHERE meta_key = 'ClubRating' AND user_id IN ({$uid_list})", ARRAY_A
+    ), 'meta_value', 'user_id' );
+    $self = array_column( $wpdb->get_results(
+        "SELECT user_id, Rating FROM Master WHERE user_id IN ({$uid_list})", ARRAY_A
+    ), 'Rating', 'user_id' );
+    $ratings = array();
+    foreach ( $group_uids as $uid ) {
+        $ratings[ $uid ] = isset( $club[ $uid ] ) ? (float) $club[ $uid ] : spp_cr_rating_numeric( $self[ $uid ] ?? 3.0 );
+    }
+    $new_shadows = array();
+    foreach ( $group_uids as $uid ) {
+        if ( $new_calcs[ $uid ] === null ) {
+            $new_shadows[ $uid ] = null;
+            continue;
+        }
+        $peers = $ratings;
+        unset( $peers[ $uid ] );
+        $avg   = $peers ? array_sum( $peers ) / count( $peers ) : $ratings[ $uid ];
+        $rp    = $current_ranks[ $uid ];
+        $ratio = spp_cr_shadow_ratio( abs( $ratings[ $uid ] - $avg ) );
+        $new_shadows[ $uid ] = round( $rp + ( $new_calcs[ $uid ] - $rp ) * $ratio, 2 );
+    }
+
     // Get current Results_all data for this group
     $results_data = array();
     foreach ( $members as $m ) {
@@ -621,6 +668,7 @@ function spp_sc_recalculate( $event_id, $user_id, $game_num, $new_score ) {
         'new_group_ranks' => $new_group_ranks,
         'old_calcs'       => $old_calcs,
         'new_calcs'       => $new_calcs,
+        'new_shadows'     => $new_shadows,
         'results_data'    => $results_data,
         'bonus_max'       => $bonus_max,
         'bonus_min'       => $bonus_min,
@@ -659,7 +707,7 @@ add_action( 'wp_ajax_spp_sc_preview', function() {
     $html = '<div class="sc-preview">';
     $html .= '<h4>Preview -- Group ' . $result['group_id'] . '</h4>';
     $html .= '<table>';
-    $html .= '<thead><tr><th>Player</th><th>Rank</th><th>Old</th><th>New</th><th>Old Grp</th><th>New Grp</th><th>Old Calc</th><th>New Calc</th><th>+/-</th></tr></thead>';
+    $html .= '<thead><tr><th>Player</th><th>Rank</th><th>Old</th><th>New</th><th>Old Grp</th><th>New Grp</th><th>Old Calc</th><th>New Calc</th><th>+/-</th><th>New Override (Shadow)</th></tr></thead>';
     $html .= '<tbody>';
 
     foreach ( $result['members'] as $m ) {
@@ -676,7 +724,7 @@ add_action( 'wp_ajax_spp_sc_preview', function() {
 
         if ( $old_rc === null ) {
             $html .= '<tr><td>' . esc_html( $name ) . '</td><td>' . $rp . '</td>';
-            $html .= '<td colspan="7" class="sc-same">NP/NS -- not affected</td></tr>';
+            $html .= '<td colspan="8" class="sc-same">NP/NS -- not affected</td></tr>';
             continue;
         }
 
@@ -703,6 +751,7 @@ add_action( 'wp_ajax_spp_sc_preview', function() {
         $html .= "<td class=\"{$rc_class}\">" . number_format( $old_rc, 2 ) . "</td>";
         $html .= "<td class=\"{$rc_class}\">" . number_format( $new_rc, 2 ) . "</td>";
         $html .= "<td class=\"{$rc_class}\">{$diff_str}</td>";
+        $html .= "<td class=\"{$rc_class}\">" . number_format( $result['new_shadows'][ $uid ], 2 ) . "</td>";
         $html .= '</tr>';
     }
 
@@ -767,6 +816,7 @@ add_action( 'wp_ajax_spp_sc_apply', function() {
     foreach ( $result['members'] as $m ) {
         $uid    = (int) $m['user_id'];
         $new_rc = $result['new_calcs'][ $uid ];
+        $new_sh = $result['new_shadows'][ $uid ];
         $new_sc = $result['new_scores'][ $uid ];
 
         if ( $new_rc === null ) continue; // NP/NS
@@ -775,17 +825,25 @@ add_action( 'wp_ajax_spp_sc_apply', function() {
         $old_rc   = $old_data ? (float) $old_data['RankCalc'] : null;
 
         // Update Results_all
-        $wpdb->query( $wpdb->prepare(
-            "UPDATE Results_all SET RankCalc = %f, RankOverride = %f, Score = %d
-             WHERE event_id = %d AND user_id = %d",
-            $new_rc, $new_rc, $new_sc, $event_id, $uid
-        ) );
+        if ( spp_results_all_has_shadow() ) {
+            $wpdb->query( $wpdb->prepare(
+                "UPDATE Results_all SET RankCalc = %f, RankOverride = %f, RankCalc_Shadow = %f, Score = %d
+                 WHERE event_id = %d AND user_id = %d",
+                $new_rc, $new_sh, $new_sh, $new_sc, $event_id, $uid
+            ) );
+        } else {
+            $wpdb->query( $wpdb->prepare(
+                "UPDATE Results_all SET RankCalc = %f, RankOverride = %f, Score = %d
+                 WHERE event_id = %d AND user_id = %d",
+                $new_rc, $new_sh, $new_sc, $event_id, $uid
+            ) );
+        }
 
         // Update Results (current event only)
         $wpdb->query( $wpdb->prepare(
-            "UPDATE Results SET RankCalc = %f, RankOverride = %f, Score = %d
+            "UPDATE Results SET RankCalc = %f, RankOverride = %f, RankCalc_Shadow = %f, Score = %d
              WHERE user_id = %d",
-            $new_rc, $new_rc, $new_sc, $uid
+            $new_rc, $new_sh, $new_sh, $new_sc, $uid
         ) );
 
         if ( $old_rc !== null && number_format( $old_rc, 2 ) !== number_format( $new_rc, 2 ) ) {
