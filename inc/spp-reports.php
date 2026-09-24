@@ -1,8 +1,31 @@
 <?php
 /* =========================================================
    Report Registry
-   Version: 1.14.0
-   Date: 2026-09-21
+   Version: 1.15.0
+   Date: 2026-09-24
+
+   Changes from 1.14.0:
+   - results and recent_results: the Calc column (key 'RankCalc') now
+     shows RankCalc_Shadow instead of plain RankCalc -- the shadow calc
+     is what RankOverride defaults to since spp-create-results.php
+     3.2.0, so it's the calc actually driving real overrides now.
+     Done as a SQL alias (RankCalc_Shadow AS RankCalc) so the column
+     key stays 'RankCalc' and every saved variant in
+     spp_report_variants (results-variant-1/2/3, recent_results-
+     variant-1) keeps working without touching their stored column
+     lists. Header relabeled "Calc (Shadow)" so nobody mistakes it for
+     the old plain RankCalc value. Plain RankCalc is no longer shown in
+     either report.
+     Side effect in 'results': its separate RankCalc_Shadow column now
+     shows the same value as Calc (Shadow), and spp-report-table.php's
+     RankCalc-vs-RankCalc_Shadow discrepancy highlight (reads
+     $row['RankCalc']) can no longer trip there. Left as-is rather than
+     dropping the column -- that's a follow-up decision, not part of
+     this change.
+     NOT changed: spp-show-results.php and spp-rank-history.php also
+     show Calc beside Override, but they read Results_all, which has no
+     RankCalc_Shadow column (and no historical shadow values exist
+     anywhere to backfill it from).
 
    Changes from 1.13.0:
    - Added event_status: reproduces the live GL Event Status page's
@@ -513,7 +536,7 @@ function spp_report_results() {
     }
 
     $rows = $wpdb->get_results(
-        "SELECT user_id, Rank, RankPrev, RankCalc, RankOverride, RankCalc_Shadow, group_id, Score, event_id, display_name
+        "SELECT user_id, Rank, RankPrev, RankCalc_Shadow AS RankCalc, RankOverride, RankCalc_Shadow, group_id, Score, event_id, display_name
          FROM Results",
         ARRAY_A
     );
@@ -522,7 +545,7 @@ function spp_report_results() {
         array( 'key' => 'user_id',  'label' => 'User',        'sortable' => true ),
         array( 'key' => 'Rank',       'label' => 'Rank',        'sortable' => true ),
         array( 'key' => 'RankPrev', 'label' => 'RankPrev', 'sortable' => true ),
-        array( 'key' => 'RankCalc', 'label' => 'RankCalc', 'sortable' => true ),
+        array( 'key' => 'RankCalc', 'label' => 'Calc (Shadow)', 'sortable' => true ), // RankCalc_Shadow, see 1.15.0
         array(
             'key'           => 'RankOverride',
             'label'         => 'Override',
@@ -573,7 +596,7 @@ function spp_report_recent_results() {
     global $wpdb;
 
     $rows = $wpdb->get_results(
-        "SELECT Rank, display_name, RankPrev, RankCalc, RankOverride, Score, event_id, user_id, group_id
+        "SELECT Rank, display_name, RankPrev, RankCalc_Shadow AS RankCalc, RankOverride, Score, event_id, user_id, group_id
          FROM Results",
         ARRAY_A
     );
@@ -582,7 +605,7 @@ function spp_report_recent_results() {
         array( 'key' => 'Rank',         'label' => 'Rank',         'sortable' => true ),
         array( 'key' => 'display_name', 'label' => 'Display Name', 'sortable' => false ),
         array( 'key' => 'RankPrev',     'label' => 'RankPrev',     'sortable' => false ),
-        array( 'key' => 'RankCalc',     'label' => 'RankCalc',     'sortable' => false ),
+        array( 'key' => 'RankCalc',     'label' => 'Calc (Shadow)', 'sortable' => false ), // RankCalc_Shadow, see 1.15.0
         array( 'key' => 'RankOverride', 'label' => 'RankOverride', 'sortable' => true ),
         array( 'key' => 'Score',        'label' => 'Score',        'sortable' => true ),
         array( 'key' => 'event_id',     'label' => 'Event Id',     'sortable' => false ),
