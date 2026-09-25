@@ -1,8 +1,35 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Screens
-   Version: 1.29.0
-   Date: 2026-09-24
+   Version: 1.30.0
+   Date: 2026-09-25
+
+   Changes from 1.29.0 -- two items, reviewed and approved:
+
+   ITEM 1 -- Event picker keeps pending events. spp_kq_render_event_
+   picker()'s Upcoming query compared against CURDATE(), which is the DB
+   server's UTC date -- after ~8pm Eastern the day's event dropped off
+   (first hit: occurrence 266, left in_play round 6 on 2026-09-24, gone
+   from the list the same evening). Now compares against current_time(
+   'Y-m-d') (site-local), and ORs in any occurrence that is started but
+   never ended (phase organizing/in_play) dated on/after SPP_KQ_CLUB_
+   RATING_LAUNCH_DATE, regardless of date. Never-started occurrences
+   (e.g. 133) still drop off once their date passes. The Sandbox query
+   (event_date < launch date) is untouched and disjoint from the new
+   pending branch.
+
+   ITEM 2 -- Reset Round. The Overview screen (spp_kq_render_overview_
+   screen(), organizing, current round M >= 3) gains a "Reset a Round"
+   control: pick any completed round N from SPP_KQ_RESET_ROUND_MIN to
+   M-1 (default M-1). New 'reset_round' POST action calls spp_kq_
+   transition_reset_round() (inc/spp-kq-live.php 1.11.0, full writeup
+   in its docblock): round N's assignments are kept, its scores are
+   cleared, every later round is deleted, and the event lands on
+   organizing/round N with courts_announced_at = now. Submitted via
+   AJAX (wireAjaxForm) behind a confirm(), so this device's announcer
+   state survives and "Go to your courts." fires once on every
+   following device via the ordinary signature-change swap. Start Play
+   then stamps a fresh timer, same as any round.
 
    Changes from 1.28.0 -- card-flip reveal on the Round-1 Draw screen
    (spp_kq_render_draw_screen()), reviewed and approved:
@@ -1828,6 +1855,9 @@ function spp_kq_styles() : string {
            duration field, the audio-unlock banner, and the timer itself. */
         .kq-start-play-form { display:flex; align-items:flex-end; gap:12px; flex-wrap:wrap; }
         .kq-duration-label { font-size:13px; color:#555; }
+        .kq-reset-round { margin-top:24px; padding-top:12px; border-top:1px solid #ddd; }
+        .kq-reset-round .kq-inline-form { display:flex; flex-wrap:wrap; align-items:flex-end; gap:10px; }
+        .kq-reset-round-select { font-size:16px; padding:6px 8px; }
         .kq-duration-input { display:block; width:70px; padding:8px; font-size:16px; text-align:center; border:1px solid #bbb; border-radius:6px; margin-top:4px; }
         .kq-audio-unlock { margin-bottom:14px; }
         .kq-audio-unlock .kq-btn { width:100%; }
@@ -1900,14 +1930,31 @@ function spp_kq_render_event_picker() : string {
     // (eff_category_id IN (2,3) already pools both) -- same chronological
     // order as before, just truncated so this list doesn't grow unbounded
     // as far-future occurrences get scheduled.
+    //
+    // 1.30.0: "today" is the site's local date (current_time()), not
+    // CURDATE() -- the DB server runs on UTC, so CURDATE() rolled over at
+    // ~8pm Eastern and dropped that day's event off this list early.
+    // Also keeps any PENDING event listed regardless of its date: started
+    // (organizing/in_play) but never ended, and dated on/after
+    // SPP_KQ_CLUB_RATING_LAUNCH_DATE -- a real event left mid-round must
+    // stay reachable here until someone presses End Event. Never-started
+    // occurrences (phase NULL/not_started) still drop off once their date
+    // passes. Pre-launch occurrences are excluded from the pending branch
+    // so they stay exclusively in the Sandbox list below.
     $rows = $wpdb->get_results(
-        "SELECT v.occurrence_id, v.eff_title, v.event_date, v.eff_event_time,
-                e.current_round, e.phase
-         FROM {$view} v
-         LEFT JOIN {$events_table} e ON e.occurrence_id = v.occurrence_id
-         WHERE v.eff_category_id IN (2,3) AND v.cancelled = 0 AND v.event_date >= CURDATE()
-         ORDER BY v.event_date ASC, v.eff_event_time ASC
-         LIMIT 8",
+        $wpdb->prepare(
+            "SELECT v.occurrence_id, v.eff_title, v.event_date, v.eff_event_time,
+                    e.current_round, e.phase
+             FROM {$view} v
+             LEFT JOIN {$events_table} e ON e.occurrence_id = v.occurrence_id
+             WHERE v.eff_category_id IN (2,3) AND v.cancelled = 0
+               AND ( v.event_date >= %s
+                     OR ( e.phase IN ('organizing','in_play') AND v.event_date >= %s ) )
+             ORDER BY v.event_date ASC, v.eff_event_time ASC
+             LIMIT 8",
+            current_time( 'Y-m-d' ),
+            SPP_KQ_CLUB_RATING_LAUNCH_DATE
+        ),
         ARRAY_A
     );
 
@@ -2850,6 +2897,49 @@ function spp_kq_render_overview_screen( int $occurrence_id, int $round, ?int $co
 
     <?php endif; ?>
 
+    <?php if ( $round > SPP_KQ_RESET_ROUND_MIN ) : ?>
+    <?php
+    // 1.30.0: Reset Round -- see spp_kq_transition_reset_round()
+    // (inc/spp-kq-live.php). Only between rounds, so there's always at
+    // least one completed round >= SPP_KQ_RESET_ROUND_MIN to pick.
+    // AJAX (not a plain POST like End Event) so this device keeps its
+    // announcer state for the "Go to your courts." that follows. The
+    // confirm listener is added before wireAjaxForm()'s so it runs first
+    // and can stop the submit.
+    ?>
+    <div class="kq-reset-round">
+        <p class="kq-hint">Round played with the wrong partners? Reset it: its courts stay the same, its scores are cleared, and every round after it is discarded.</p>
+        <div class="kq-notice kq-notice-err" id="kq-reset-round-msg" style="display:none;"></div>
+        <form method="post" class="kq-inline-form kq-reset-round-form">
+            <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
+            <input type="hidden" name="spp_kq_action" value="reset_round">
+            <input type="hidden" name="spp_kq_round" value="<?php echo esc_attr( $round ); ?>">
+            <label class="kq-duration-label">Round to replay<br>
+                <select name="spp_kq_reset_target" class="kq-reset-round-select">
+                    <?php for ( $n = $round - 1; $n >= SPP_KQ_RESET_ROUND_MIN; $n-- ) : ?>
+                        <option value="<?php echo esc_attr( $n ); ?>">Round <?php echo esc_html( $n ); ?></option>
+                    <?php endfor; ?>
+                </select>
+            </label>
+            <button type="submit" class="kq-btn kq-btn-secondary">Reset Round</button>
+        </form>
+    </div>
+    <script>
+    (function() {
+        var form = document.querySelector('.kq-reset-round-form');
+        if (!form) return;
+        form.addEventListener('submit', function(e) {
+            var n = form.querySelector('.kq-reset-round-select').value;
+            if (!confirm('Reset round ' + n + '? Its scores are cleared and it gets played again with the same courts. Every round after it is discarded.')) {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+            }
+        });
+        SppKqLiveApp.wireAjaxForm('.kq-reset-round-form', 'kq-reset-round-msg');
+    })();
+    </script>
+    <?php endif; ?>
+
     <?php if ( $scores_exist ) : ?>
     <div class="kq-action-row kq-action-row-right">
         <form method="post" class="kq-inline-form" onsubmit="return confirm('End the event now? This closes the day — no more rounds.');">
@@ -3461,6 +3551,15 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date, ?st
             // race against the countdown's own natural completion both
             // resolve to a silent no-op, not something worth surfacing.
             $r = spp_kq_transition_skip_rest_countdown( $occurrence_id, $round );
+            return ( ! $r['won'] && $r['error'] ) ? $r['error'] : '';
+
+        case 'reset_round':
+            // 1.30.0: any facilitator, same as Reset Event. Bounds and the
+            // CAS are both enforced inside spp_kq_transition_reset_round()
+            // (inc/spp-kq-live.php); a lost race is a silent no-op like
+            // every other transition here.
+            $target = isset( $_POST['spp_kq_reset_target'] ) ? intval( $_POST['spp_kq_reset_target'] ) : 0;
+            $r = spp_kq_transition_reset_round( $occurrence_id, $round, $target );
             return ( ! $r['won'] && $r['error'] ) ? $r['error'] : '';
 
         case 'start_play':

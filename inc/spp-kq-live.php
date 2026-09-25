@@ -1,8 +1,20 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Live Event Runner
-   Version: 1.10.0
-   Date: 2026-09-20
+   Version: 1.11.0
+   Date: 2026-09-25
+
+   Changes from 1.10.0 -- Reset Round, reviewed and approved: new
+   spp_kq_transition_reset_round() + SPP_KQ_RESET_ROUND_MIN (2). Voids a
+   completed round N (>= 2) from the between-rounds Overview screen:
+   keeps round N's assignments, clears its scores, deletes every later
+   round, lands on organizing/round N with courts_announced_at = now so
+   the ordinary Start Play flow replays it with a fresh timer. CAS on
+   current_round/phase='organizing' inside one InnoDB transaction -- see
+   its docblock. spp_kq_correct_court_score() now refuses to write into
+   a row whose score is NULL at write time (a reset landed in between)
+   instead of reporting success on a 0-row UPDATE. UI: inc/spp-kq-
+   screens.php 1.30.0.
 
    Changes from 1.9.0 (real usage feedback, reviewed and approved --
    two independent items):
@@ -1117,6 +1129,96 @@ function spp_kq_transition_reset_event( int $occurrence_id, int $expected_round,
 }
 
 /**
+ * Lowest round Reset Round (below) will accept. Round 1 is excluded by
+ * the approved spec; lowering this to 1 is the only change needed to
+ * allow it (round 1's drawn assignments are kept exactly like any other
+ * round's).
+ */
+const SPP_KQ_RESET_ROUND_MIN = 2;
+
+/**
+ * Reset Round (1.11.0): void a completed round N and everything after
+ * it, from the Overview screen between rounds (organizing, current
+ * round $expected_round, N < $expected_round). For when a round was
+ * played with players physically standing against the wrong partner --
+ * the ASSIGNMENT was right, the game played wasn't, so:
+ *   - round N's spp_kq_assignments rows are left exactly as they are
+ *     (including cancelled flags and serving_team on its score rows);
+ *   - round N's scores are cleared back to NULL (client_ts/updated_by
+ *     too, so the live submit path's ordering guard starts fresh);
+ *   - every round > N is deleted outright (assignments and scores) --
+ *     all of it was computed from round N's now-void result;
+ *   - the event lands on organizing/round N with courts_announced_at =
+ *     now: the exact shape spp_kq_transition_advance_round() leaves
+ *     behind, minus the rest period. The Overview screen then speaks
+ *     "Go to your courts." once and reveals Start Play, which stamps a
+ *     fresh round_started_at/duration -- so round N is replayed exactly
+ *     as if for the first time. Not in_play directly: that would either
+ *     reuse the stale round_started_at (an already-expired timer that
+ *     fires end-of-round announcements immediately) or run with no
+ *     timer at all, and the round has to be physically replayed anyway.
+ *
+ * CAS + TRANSACTION: the events-row UPDATE is the usual current_round/
+ * phase='organizing' compare-and-swap, so a double press or a race with
+ * Start Play/End Event/another Reset Round has exactly one winner.
+ * Score submission can't race it at all (the live submit path requires
+ * phase='in_play' at write time). The CAS and the clear/delete run in
+ * one InnoDB transaction, so the events row stays locked until the
+ * cleanup commits -- nothing can act on "round N" before its old scores
+ * and later rounds are actually gone. spp_kq_correct_court_score()
+ * refuses to write into a row this cleared (see its own guard).
+ */
+function spp_kq_transition_reset_round( int $occurrence_id, int $expected_round, int $target_round ) : array {
+    global $wpdb;
+
+    if ( $target_round < SPP_KQ_RESET_ROUND_MIN || $target_round >= $expected_round ) {
+        return array( 'won' => false, 'error' => "Round {$target_round} can't be reset from round {$expected_round}." );
+    }
+
+    $events_table      = spp_kq_events_table();
+    $assignments_table = spp_kq_assignments_table();
+    $scores_table      = spp_kq_scores_table();
+    $announced_at      = current_time( 'timestamp', true );
+
+    $wpdb->query( 'START TRANSACTION' );
+
+    $affected = $wpdb->query( $wpdb->prepare(
+        "UPDATE {$events_table}
+         SET current_round = %d, phase = 'organizing', courts_announced_at = %d
+         WHERE occurrence_id = %d AND current_round = %d AND phase = 'organizing'",
+        $target_round, $announced_at, $occurrence_id, $expected_round
+    ) );
+
+    if ( (int) $affected !== 1 ) {
+        $wpdb->query( 'ROLLBACK' );
+        return array( 'won' => false, 'error' => null );
+    }
+
+    $ok = false !== $wpdb->query( $wpdb->prepare(
+        "DELETE FROM {$assignments_table} WHERE occurrence_id = %d AND round_number > %d",
+        $occurrence_id, $target_round
+    ) );
+    $ok = $ok && false !== $wpdb->query( $wpdb->prepare(
+        "DELETE FROM {$scores_table} WHERE occurrence_id = %d AND round_number > %d",
+        $occurrence_id, $target_round
+    ) );
+    $ok = $ok && false !== $wpdb->query( $wpdb->prepare(
+        "UPDATE {$scores_table}
+         SET red_score = NULL, black_score = NULL, client_ts = NULL, updated_by = NULL
+         WHERE occurrence_id = %d AND round_number = %d",
+        $occurrence_id, $target_round
+    ) );
+
+    if ( ! $ok ) {
+        $wpdb->query( 'ROLLBACK' );
+        return array( 'won' => false, 'error' => 'Reset failed -- nothing was changed. Please try again.' );
+    }
+
+    $wpdb->query( 'COMMIT' );
+    return array( 'won' => true, 'error' => null, 'round' => $target_round );
+}
+
+/**
  * Full Reset: administrator-only (enforced by the caller,
  * spp_is_admin(), checked before this is ever invoked -- this function
  * itself performs no capability check of its own, matching every other
@@ -1591,17 +1693,27 @@ function spp_kq_correct_court_score( int $occurrence_id, int $round_number, stri
         return array( 'success' => false, 'error' => $validation_error );
     }
 
-    $wpdb->query( $wpdb->prepare(
+    // 1.11.0: the NOT NULL guard re-checks "has a recorded score" at
+    // write time, so a correction racing spp_kq_transition_reset_round()
+    // can't resurrect a score that reset just cleared.
+    $affected = $wpdb->query( $wpdb->prepare(
         "UPDATE {$scores_table}
          SET red_score = %d, black_score = %d, updated_by = %d
-         WHERE occurrence_id = %d AND round_number = %d AND court_name = %s",
+         WHERE occurrence_id = %d AND round_number = %d AND court_name = %s
+           AND red_score IS NOT NULL AND black_score IS NOT NULL",
         $red_score, $black_score, $user_id,
         $occurrence_id, $round_number, $court_name
     ) );
-    // Rows-affected is deliberately not checked here -- a no-op UPDATE
-    // (new values identical to what's already stored) reports 0 affected
-    // in MySQL even though the row already holds exactly the requested
-    // value, which is success from this caller's point of view either way.
+    // 0 affected is still success when it's a no-op UPDATE (new values
+    // identical to what's stored -- MySQL reports 0 for that). Only a row
+    // that's gone or was cleared (a Reset Round landed in between) is a
+    // real failure, so re-read to tell the two apart.
+    if ( (int) $affected !== 1 ) {
+        $now = spp_kq_get_court_score( $occurrence_id, $round_number, $court_name );
+        if ( ! $now || $now['red_score'] === null || $now['black_score'] === null ) {
+            return array( 'success' => false, 'error' => 'This round was reset -- refresh to see the current state.' );
+        }
+    }
 
     return array(
         'success'      => true,
