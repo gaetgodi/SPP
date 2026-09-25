@@ -1,8 +1,16 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Screens
-   Version: 1.32.0
+   Version: 1.33.0
    Date: 2026-09-26
+
+   Changes from 1.32.0: Complete screen "Final round winners (Aces)"
+   (spp_kq_render_complete_screen()) now reads the last round with a
+   real score (new spp_kq_get_last_scored_round()) instead of the
+   current round, which after a normal End Event is always the
+   generated-but-unplayed next round -- the line never appeared for 184,
+   185 or 265. Void-ended events are covered the same way (voided rows
+   are cancelled, so they're skipped).
 
    Changes from 1.31.0 -- reviewed and approved, after the 2026-09-25
    incident: on occurrence 204 a round-1 score was corrected after round
@@ -3550,8 +3558,32 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round, ?int $rou
  * top-of-page render, which is deliberately skipped for phase
  * complete/cancelled specifically (see that function's own comment).
  */
+/**
+ * The last round with at least one real, uncancelled score (1.33.0) --
+ * the same boundary the history archive stops at (spp_kq_get_full_
+ * scoreboard() only reads scored, uncancelled rows). null if nothing was
+ * ever scored.
+ */
+function spp_kq_get_last_scored_round( int $occurrence_id ) : ?int {
+    global $wpdb;
+    $r = $wpdb->get_var( $wpdb->prepare(
+        "SELECT MAX(round_number) FROM " . spp_kq_scores_table() . "
+         WHERE occurrence_id = %d AND red_score IS NOT NULL AND black_score IS NOT NULL AND cancelled = 0",
+        $occurrence_id
+    ) );
+    return $r === null ? null : (int) $r;
+}
+
 function spp_kq_render_complete_screen( int $occurrence_id, int $round ) : string {
-    $winner = spp_kq_get_final_winner_names( $occurrence_id, $round );
+    // 1.33.0: End Event is only offered between rounds, so $round (the
+    // current round) is always the freshly generated, never-played one
+    // and never has an Aces score -- this line never showed for a
+    // normally ended event (184, 185, 265). Read the last round that
+    // was actually played instead. If Aces was cancelled in that round,
+    // nothing shows, rather than an earlier round's winners under a
+    // "final round" label.
+    $last_scored = spp_kq_get_last_scored_round( $occurrence_id );
+    $winner      = $last_scored === null ? null : spp_kq_get_final_winner_names( $occurrence_id, $last_scored );
     ob_start();
     ?>
     <p class="kq-round-label">Event complete.</p>

@@ -1,8 +1,26 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Format Rankings
-   Version: 1.3.0
-   Date: 2026-09-20
+   Version: 1.4.0
+   Date: 2026-09-26
+
+   Changes from 1.3.0 -- same-day sibling sessions (reviewed and
+   approved). The inactivity pass treated each OCCURRENCE as its own
+   event: on a doubleheader day (Ace 9:00 + 10:30 Fridays, Queen 9:00 +
+   10:30 Thursdays) a player who played one session was charged a miss,
+   with a decay step, by the other one's pass. Confirmed on real data:
+   2026-09-25, 185 (9:00) then 204 (10:30). And a player who missed
+   both was charged twice in one day, two of the three misses that
+   remove them. Now, per format per day:
+     - excused if they played another same-format session that day
+       (spp_kq_history), or are a confirmed registrant of one that
+       hasn't been processed yet -- spp_kq_get_same_day_excused();
+     - at most one miss per format per day, via a new usermeta key,
+       spp_kq_{source}_last_miss_date (Y-m-d), checked and written in
+       spp_kq_apply_format_inactivity() (new optional $event_date param).
+   Single-session days behave exactly as before. Ace and Queen stay
+   independent. Going forward only -- nothing already charged is
+   rewritten here.
 
    Changes from 1.2.0 (inactivity handling -- reviewed and approved
    before implementation; per-player, per-format, same independence as
@@ -280,7 +298,12 @@ function spp_kq_update_format_rankings( int $occurrence_id, string $event_date )
 
     // 1.3.0: sitewide inactivity pass over everyone who has EVER had an
     // average in this format but did NOT play today. See file header.
-    $inactivity = spp_kq_apply_format_inactivity( $source, $participants );
+    // 1.4.0: excuse same-day sibling sessions of this format -- see
+    // spp_kq_get_same_day_excused(). Only the inactivity pass sees the
+    // extra names; today's EMA update above is still this event's own
+    // players only.
+    $excused    = $participants + spp_kq_get_same_day_excused( $occurrence_id, $source, $event_date );
+    $inactivity = spp_kq_apply_format_inactivity( $source, $excused, $event_date );
 
     if ( $updated_count === 0 && ! $inactivity['changed'] ) {
         return array( 'notice' => '', 'updated' => false );
@@ -304,6 +327,56 @@ function spp_kq_update_format_rankings( int $occurrence_id, string $event_date )
 }
 
 /**
+ * 1.4.0: players who must NOT be charged an inactivity miss by this
+ * occurrence's pass because of another session of the SAME format on the
+ * SAME date (Ace 9:00 + Ace 10:30 on a Friday, Queen likewise on a
+ * Thursday). Ace and Queen never excuse each other -- both lookups are
+ * filtered by $source. Two groups:
+ *   - played: anyone archived in spp_kq_history for another occurrence
+ *     of this format on this date (a session that already ended);
+ *   - still to play: confirmed registrants of another same-format,
+ *     same-date occurrence that hasn't been processed yet (not complete/
+ *     cancelled, not cancelled in GL Events). When the earlier session
+ *     ends, the later one's players haven't played yet -- they're judged
+ *     by that later session's own pass instead.
+ * On a day with only one session of a format both lists are empty, so
+ * nothing changes.
+ *
+ * @return array uid => true.
+ */
+function spp_kq_get_same_day_excused( int $occurrence_id, string $source, string $event_date ) : array {
+    global $wpdb;
+    $excused = array();
+
+    $played = $wpdb->get_col( $wpdb->prepare(
+        "SELECT DISTINCT user_id FROM " . spp_kq_history_table() . "
+         WHERE source = %s AND event_date = %s AND occurrence_id <> %d",
+        $source, $event_date, $occurrence_id
+    ) );
+    foreach ( $played as $uid ) {
+        $excused[ (int) $uid ] = true;
+    }
+
+    $category = ( $source === 'ace' ) ? 2 : 3; // spp_kq_category_source()'s mapping, reversed
+    $pending  = $wpdb->get_col( $wpdb->prepare(
+        "SELECT v.occurrence_id
+         FROM {$wpdb->prefix}gl_events_v v
+         LEFT JOIN " . spp_kq_events_table() . " e ON e.occurrence_id = v.occurrence_id
+         WHERE v.eff_category_id = %d AND v.event_date = %s AND v.cancelled = 0
+           AND v.occurrence_id <> %d
+           AND ( e.phase IS NULL OR e.phase NOT IN ('complete','cancelled') )",
+        $category, $event_date, $occurrence_id
+    ) );
+    foreach ( $pending as $sibling ) {
+        foreach ( spp_kq_confirmed_user_ids( (int) $sibling ) as $uid ) {
+            $excused[ $uid ] = true;
+        }
+    }
+
+    return $excused;
+}
+
+/**
  * 1.3.0: sitewide consecutive-miss tracking, grace-period decay, and
  * removal for ONE format ('ace'/'queen') -- runs on every event of that
  * format, over every player who has EVER had an average in it (spp_kq_
@@ -322,11 +395,14 @@ function spp_kq_update_format_rankings( int $occurrence_id, string $event_date )
  *   or removal) -- tells the caller a re-rank is warranted even when
  *   $updated_count from today's participants was zero.
  */
-function spp_kq_apply_format_inactivity( string $source, array $participants ) : array {
+function spp_kq_apply_format_inactivity( string $source, array $participants, string $event_date = '' ) : array {
     $avg_key    = "spp_kq_{$source}_avg";
     $misses_key = "spp_kq_{$source}_misses";
     $active_key = "spp_kq_{$source}_active";
     $rank_key   = "spp_kq_{$source}_rank";
+    // 1.4.0: date of the last miss charged -- at most one per format per
+    // day, so missing both sessions of a doubleheader is one miss, not two.
+    $last_miss_key = "spp_kq_{$source}_last_miss_date";
 
     $changed = false;
     $removed = 0;
@@ -342,6 +418,13 @@ function spp_kq_apply_format_inactivity( string $source, array $participants ) :
         $is_active  = ( $active_raw === '' || $active_raw === false ) ? true : ( (int) $active_raw === 1 );
         if ( ! $is_active ) {
             continue; // already removed -- frozen, not touched further
+        }
+
+        if ( $event_date !== '' ) {
+            if ( get_user_meta( $user_id, $last_miss_key, true ) === $event_date ) {
+                continue; // already charged a miss for this format today
+            }
+            update_user_meta( $user_id, $last_miss_key, $event_date );
         }
 
         $misses_raw = get_user_meta( $user_id, $misses_key, true );
