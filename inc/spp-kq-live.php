@@ -1,8 +1,23 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Live Event Runner
-   Version: 1.11.0
+   Version: 1.12.0
    Date: 2026-09-25
+
+   Changes from 1.11.0 -- reviewed and approved, two items:
+   - Void Round: new spp_kq_transition_void_round() + SPP_KQ_VOID_ROUND_
+     MIN (2) + spp_kq_count_active_courts(). Marks every court in round
+     N and every later round cancelled with no score (the same state
+     spp_kq_cancel_court() leaves), deletes nothing, drops in_play to
+     organizing so End Event is reachable. Full writeup in its docblock.
+     Coexistence guards: spp_kq_transition_start_play() refuses a round
+     with zero active courts; spp_kq_transition_reset_round() refuses a
+     fully voided target; spp_kq_submit_court_score()'s write now also
+     requires cancelled = 0. UI: inc/spp-kq-screens.php 1.31.0.
+   - Stuck-round fix: spp_kq_cancel_court() now runs the same "all
+     reported? advance" step as a score save (occurrence 266 sat at
+     round 6, 2 of 2 reported, unable to advance or end). Its UPDATE also
+     re-checks unscored/uncancelled at write time.
 
    Changes from 1.10.0 -- Reset Round, reviewed and approved: new
    spp_kq_transition_reset_round() + SPP_KQ_RESET_ROUND_MIN (2). Voids a
@@ -821,6 +836,16 @@ function spp_kq_transition_skip_rest_countdown( int $occurrence_id, int $expecte
 function spp_kq_transition_start_play( int $occurrence_id, int $expected_round, int $duration_seconds ) : array {
     global $wpdb;
 
+    // 1.12.0: a fully voided round (spp_kq_transition_void_round()) has
+    // nothing to score -- in_play with zero active courts could never
+    // advance, and End Event is only offered from organizing.
+    if ( spp_kq_count_active_courts( $occurrence_id, $expected_round ) === 0 ) {
+        return array(
+            'won'   => false,
+            'error' => "Every court in round {$expected_round} was voided -- there's nothing to play. Use End Event to close the day.",
+        );
+    }
+
     $understaffed = spp_kq_get_understaffed_courts( $occurrence_id, $expected_round );
     if ( ! empty( $understaffed ) ) {
         return array(
@@ -1194,6 +1219,13 @@ function spp_kq_transition_reset_round( int $occurrence_id, int $expected_round,
         return array( 'won' => false, 'error' => null );
     }
 
+    // 1.12.0: a round Void Round already cancelled has nothing left to
+    // replay. Checked under the events-row lock, so a void can't slip in.
+    if ( spp_kq_count_active_courts( $occurrence_id, $target_round ) === 0 ) {
+        $wpdb->query( 'ROLLBACK' );
+        return array( 'won' => false, 'error' => "Round {$target_round} was voided -- there's nothing in it to replay." );
+    }
+
     $ok = false !== $wpdb->query( $wpdb->prepare(
         "DELETE FROM {$assignments_table} WHERE occurrence_id = %d AND round_number > %d",
         $occurrence_id, $target_round
@@ -1216,6 +1248,117 @@ function spp_kq_transition_reset_round( int $occurrence_id, int $expected_round,
 
     $wpdb->query( 'COMMIT' );
     return array( 'won' => true, 'error' => null, 'round' => $target_round );
+}
+
+/**
+ * Courts still in play (cancelled = 0) for one round. 0 means every
+ * court that round was cancelled/voided -- nothing left to start or
+ * replay (1.12.0).
+ */
+function spp_kq_count_active_courts( int $occurrence_id, int $round_number ) : int {
+    global $wpdb;
+    return (int) $wpdb->get_var( $wpdb->prepare(
+        "SELECT COUNT(*) FROM " . spp_kq_scores_table() . " WHERE occurrence_id = %d AND round_number = %d AND cancelled = 0",
+        $occurrence_id, $round_number
+    ) );
+}
+
+/**
+ * Lowest round Void Round (below) will accept. Voiding round 1 would
+ * leave the event with no recorded score at all, and End Event's own
+ * precondition (spp_kq_has_any_recorded_score()) would then refuse to
+ * close it -- an event nobody could end.
+ */
+const SPP_KQ_VOID_ROUND_MIN = 2;
+
+/**
+ * Void Round (1.12.0): permanently mark round N and every round after
+ * it as not counting -- for closing out an event where the later rounds
+ * shouldn't count, with no replay expected. Third action alongside
+ * score correction (one court, new numbers) and Reset Round (clears one
+ * round for replay, deletes everything after it).
+ *
+ * Every spp_kq_scores row with round_number >= N gets cancelled = 1 and
+ * its scores/client_ts cleared -- the same "cancelled, no score" state
+ * spp_kq_cancel_court() produces for a single court, so every reader
+ * already skips it: spp_kq_get_full_scoreboard() (End Event archive ->
+ * spp_kq_history -> format rankings, and the recap email) and
+ * spp_kq_build_club_rating_games() both filter cancelled = 0 AND non-
+ * NULL scores. updated_by records who voided it. Nothing is deleted;
+ * assignments are untouched; rounds < N are never touched.
+ *
+ * If the event is in_play it drops to organizing (same round) in the
+ * same transaction: the current round is now fully voided, so it can
+ * never advance, and End Event is only offered from organizing. The
+ * Overview screen shows an all-voided round with no Start Play (see
+ * spp_kq_transition_start_play()'s guard) and no announcement.
+ *
+ * CONCURRENCY: SELECT ... FOR UPDATE locks the events row for the whole
+ * transaction, so every other transition (all UPDATE that row) waits
+ * and then re-evaluates against the committed result. The live submit
+ * path's own UPDATE now also requires cancelled = 0 on the score row,
+ * which InnoDB re-checks on the latest version after waiting on this
+ * transaction's row lock -- a score racing a void can't land. A second
+ * void of the same (or a later) round finds nothing left un-cancelled
+ * and is a silent no-op.
+ */
+function spp_kq_transition_void_round( int $occurrence_id, int $target_round, int $user_id ) : array {
+    global $wpdb;
+
+    if ( $target_round < SPP_KQ_VOID_ROUND_MIN ) {
+        return array( 'won' => false, 'error' => 'Round 1 can\'t be voided -- the event would have no results left to end with.' );
+    }
+
+    $events_table = spp_kq_events_table();
+    $scores_table = spp_kq_scores_table();
+
+    $wpdb->query( 'START TRANSACTION' );
+
+    $state = $wpdb->get_row( $wpdb->prepare(
+        "SELECT current_round, phase FROM {$events_table} WHERE occurrence_id = %d FOR UPDATE",
+        $occurrence_id
+    ), ARRAY_A );
+
+    if ( ! $state || ! in_array( $state['phase'], array( 'organizing', 'in_play' ), true ) ) {
+        $wpdb->query( 'ROLLBACK' );
+        return array( 'won' => false, 'error' => 'This event isn\'t in progress -- rounds can no longer be voided.' );
+    }
+    $current_round = (int) $state['current_round'];
+    if ( $target_round > $current_round ) {
+        $wpdb->query( 'ROLLBACK' );
+        return array( 'won' => false, 'error' => "Round {$target_round} hasn't started yet." );
+    }
+
+    $voided = $wpdb->query( $wpdb->prepare(
+        "UPDATE {$scores_table}
+         SET cancelled = 1, red_score = NULL, black_score = NULL, client_ts = NULL, updated_by = %d
+         WHERE occurrence_id = %d AND round_number >= %d AND cancelled = 0",
+        $user_id, $occurrence_id, $target_round
+    ) );
+
+    if ( $voided === false ) {
+        $wpdb->query( 'ROLLBACK' );
+        return array( 'won' => false, 'error' => 'Void failed -- nothing was changed. Please try again.' );
+    }
+    if ( (int) $voided === 0 ) {
+        $wpdb->query( 'ROLLBACK' );
+        return array( 'won' => false, 'error' => null ); // already voided
+    }
+
+    if ( $state['phase'] === 'in_play' ) {
+        $ok = $wpdb->query( $wpdb->prepare(
+            "UPDATE {$events_table} SET phase = 'organizing'
+             WHERE occurrence_id = %d AND current_round = %d AND phase = 'in_play'",
+            $occurrence_id, $current_round
+        ) );
+        if ( (int) $ok !== 1 ) {
+            $wpdb->query( 'ROLLBACK' );
+            return array( 'won' => false, 'error' => 'Void failed -- nothing was changed. Please try again.' );
+        }
+    }
+
+    $wpdb->query( 'COMMIT' );
+    return array( 'won' => true, 'error' => null, 'voided_courts' => (int) $voided, 'through_round' => $current_round );
 }
 
 /**
@@ -1568,6 +1711,7 @@ function spp_kq_submit_court_score( int $occurrence_id, int $round_number, strin
         "UPDATE {$scores_table} s
          SET s.red_score = %d, s.black_score = %d, s.updated_by = %d {$set_ts}
          WHERE s.occurrence_id = %d AND s.round_number = %d AND s.court_name = %s
+           AND s.cancelled = 0
            {$where_ts_guard}
            AND EXISTS (
                SELECT 1 FROM {$events_table} e
@@ -1588,6 +1732,11 @@ function spp_kq_submit_court_score( int $occurrence_id, int $round_number, strin
 
         if ( $round_moved_on ) {
             return array( 'success' => false, 'error' => 'This round is no longer accepting scores -- refresh to see the current state.' );
+        }
+        // 1.12.0: cancelled (Cancel Court or Void Round) between the
+        // precondition read above and this write.
+        if ( in_array( $court_name, spp_kq_get_cancelled_courts( $occurrence_id, $round_number ), true ) ) {
+            return array( 'success' => false, 'error' => 'This court was cancelled for this round -- no score to enter.' );
         }
 
         // Otherwise: the round is still current, so this was purely the
@@ -1950,7 +2099,20 @@ function spp_kq_fill_open_slot( int $occurrence_id, string $court_name, string $
  * "cancelled" is then excluded everywhere downstream). Only available
  * before that court has reported a score.
  *
- * @return array ['success'=>bool, 'error'=>?string]
+ * 1.12.0: afterwards, runs the same "every court reported? try to
+ * advance" step spp_kq_submit_court_score() runs after a save --
+ * cancelling the last outstanding court in an in_play round previously
+ * left it at "N of N reported" forever, never advancing and so never
+ * reaching End Event (occurrence 266, round 6). total > 0 skips a round
+ * whose every court is cancelled (nothing to compute movement from);
+ * spp_kq_transition_advance_round()'s own in_play CAS makes this a
+ * no-op while still organizing, and decides the single winner if a
+ * score submit is attempting the same advance at the same moment.
+ * The UPDATE also re-checks "not scored, not cancelled" at write time,
+ * so a score that lands between the read above and this write isn't
+ * silently cancelled out from under it.
+ *
+ * @return array ['success'=>bool, 'error'=>?string, 'advanced'=>bool]
  */
 function spp_kq_cancel_court( int $occurrence_id, string $court_name ) : array {
     $pre = spp_kq_live_roster_precondition( $occurrence_id );
@@ -1976,10 +2138,22 @@ function spp_kq_cancel_court( int $occurrence_id, string $court_name ) : array {
         return array( 'success' => false, 'error' => 'That court has already reported a score for this round -- nothing to cancel.' );
     }
 
-    $wpdb->update( $scores_table,
-        array( 'cancelled' => 1 ),
-        array( 'occurrence_id' => $occurrence_id, 'round_number' => $round, 'court_name' => $court_name )
-    );
+    $affected = $wpdb->query( $wpdb->prepare(
+        "UPDATE {$scores_table} SET cancelled = 1
+         WHERE occurrence_id = %d AND round_number = %d AND court_name = %s
+           AND cancelled = 0 AND ( red_score IS NULL OR black_score IS NULL )",
+        $occurrence_id, $round, $court_name
+    ) );
+    if ( (int) $affected !== 1 ) {
+        return array( 'success' => false, 'error' => 'That court just reported a score or was already cancelled -- refresh to see the current state.' );
+    }
 
-    return array( 'success' => true, 'error' => null, 'court_name' => $court_name, 'round' => $round );
+    $progress = spp_kq_get_round_progress( $occurrence_id, $round );
+    $advanced = false;
+    if ( $progress['total'] > 0 && $progress['reported'] === $progress['total'] ) {
+        $advance  = spp_kq_transition_advance_round( $occurrence_id, $round );
+        $advanced = $advance['won'];
+    }
+
+    return array( 'success' => true, 'error' => null, 'court_name' => $court_name, 'round' => $round, 'advanced' => $advanced );
 }

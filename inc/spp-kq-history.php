@@ -1,8 +1,17 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Permanent History, Live Scoreboard, Recap Email
-   Version: 1.10.0
-   Date: 2026-09-20
+   Version: 1.11.0
+   Date: 2026-09-25
+
+   Changes from 1.10.0: spp_kq_render_scoreboard_markup() gains an
+   optional trailing $voidable_rounds param -- each listed round gets a
+   Void Round button under its heading (spp_kq_render_void_round_button(),
+   inc/spp-kq-screens.php 1.31.0). Defaults to none, so the historical
+   Event Detail view renders exactly as before. Voided courts need no
+   change here: spp_kq_get_full_scoreboard() already skips cancelled/
+   unscored rows, which is what keeps them out of the End Event archive,
+   format rankings and the recap email.
 
    Changes from 1.9.0 (real usage feedback, reviewed and approved):
    - spp_kq_get_full_scoreboard() now also selects/returns each court's
@@ -418,7 +427,7 @@ function spp_kq_get_history_scoreboard( string $source, string $event_date ) : a
  * @param int    $occurrence_id Required when $editable is true -- every
  *                               correction AJAX call needs it.
  */
-function spp_kq_render_scoreboard_markup( array $scoreboard, string $empty_message = 'No completed rounds yet.', bool $editable = false, int $occurrence_id = 0 ) : string {
+function spp_kq_render_scoreboard_markup( array $scoreboard, string $empty_message = 'No completed rounds yet.', bool $editable = false, int $occurrence_id = 0, array $voidable_rounds = array() ) : string {
     ob_start();
     ?>
     <?php if ( empty( $scoreboard ) ) : ?>
@@ -426,6 +435,9 @@ function spp_kq_render_scoreboard_markup( array $scoreboard, string $empty_messa
     <?php else : ?>
         <?php foreach ( $scoreboard as $round_number => $courts ) : ?>
             <h3 class="kq-picker-section-heading">Round <?php echo esc_html( $round_number ); ?></h3>
+            <?php if ( in_array( (int) $round_number, $voidable_rounds, true ) ) : ?>
+                <?php echo spp_kq_render_void_round_button( (int) $round_number ); ?>
+            <?php endif; ?>
             <div class="kq-court-grid">
                 <?php foreach ( $courts as $court_name => $court ) :
                     $serving = $court['serving_team'] ?? null;
