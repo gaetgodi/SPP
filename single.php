@@ -2,8 +2,15 @@
 /**
  * Single Blog Post Template
  * File: single.php
- * Version: 1.3.1
- * Date: 2026-05-27
+ * Version: 1.3.2
+ * Date: 2026-09-26
+ *
+ * Changes from 1.3.1:
+ * - Edit/Delete links now shown only when spp_can_moderate_blog()
+ *   (functions.php -- administrator or blog_moderator), the same gate
+ *   the edit form and delete handler use (inc/spp-blog-system.php
+ *   1.6.0). Was current_user_can('publish_posts'), which editors also
+ *   hold, so they saw links that only led to "permission denied".
  *
  * Changes from 1.3.0:
  * - Edit link points to /edit-post/?post_id=X instead of wp-admin
@@ -36,7 +43,7 @@ get_header();
                     | <span class="spp-post-expiry">Expires: <?php echo date( 'F j, Y', strtotime( $expiry ) ); ?></span>
                     <?php endif; ?>
                 </p>
-                <?php if ( current_user_can( 'publish_posts' ) ): ?>
+                <?php if ( spp_can_moderate_blog() ): ?>
                 <div class="spp-post-admin-actions">
                     <a href="<?php echo esc_url( home_url( '/edit-post/?post_id=' . get_the_ID() ) ); ?>" class="spp-post-edit-link">&#9998; Edit</a>
                     <a href="#"

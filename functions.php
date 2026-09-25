@@ -142,6 +142,17 @@ function spp_is_admin() {
     return in_array('administrator', $roles);
 }
 /* =========================================================
+   BLOG MODERATION ROLE HELPER
+   Same checks-actual-roles convention. administrator or the
+   blog_moderator role (inc/blog-roles.php) -- deliberately NOT editor.
+   Gates the pending-posts screen, the front-end edit form and the
+   publish/save/reject/delete AJAX handlers (inc/spp-blog-system.php).
+   ========================================================= */
+function spp_can_moderate_blog() {
+    $roles = (array) wp_get_current_user()->roles;
+    return spp_is_admin() || in_array('blog_moderator', $roles);
+}
+/* =========================================================
    LADDER ADMIN ROLE HELPER
    Checks for roles that can access ladder admin features
    such as rank history for any player.

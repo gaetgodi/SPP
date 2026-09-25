@@ -2,8 +2,20 @@
 /**
  * SPP Blog System
  * File: inc/spp-blog-system.php
- * Version: 1.5.0
- * Date: 2026-09-07
+ * Version: 1.6.0
+ * Date: 2026-09-26
+ *
+ * Changes from 1.5.0:
+ * - All six moderation gates (spp_blog_edit_shortcode,
+ *   spp_pending_posts_shortcode, spp_ajax_publish_post,
+ *   spp_ajax_save_pending_post, spp_ajax_reject_post,
+ *   spp_ajax_delete_post) now use spp_can_moderate_blog()
+ *   (functions.php): administrator or the blog_moderator role, NOT
+ *   editor. 1.5.0's spp_is_admin_or_editor() locked out blog_moderator
+ *   -- the role built for this -- while letting editor in. The 9/7
+ *   role-level fix (publish_posts removed from subscriber) is what
+ *   closed the original hole and is untouched; a plain subscriber
+ *   holds neither role and stays denied.
  *
  * Changes from 1.4.1:
  * - SECURITY FIX (Tier 2 access-control audit, item 5): every
@@ -264,7 +276,7 @@ function spp_blog_edit_shortcode() {
     if ( ! is_user_logged_in() ) {
         return '<p>Please <a href="/login/">login</a> to edit posts.</p>';
     }
-    if ( ! spp_is_admin_or_editor() ) {
+    if ( ! spp_can_moderate_blog() ) {
         return '<p>You do not have permission to edit posts.</p>';
     }
 
@@ -443,7 +455,7 @@ function spp_pending_posts_shortcode() {
         return '<p>Please <a href="/login/">login</a> to access this page.</p>';
     }
 
-    if ( ! spp_is_admin_or_editor() ) {
+    if ( ! spp_can_moderate_blog() ) {
         return '<p>You do not have permission to view this page.</p>';
     }
 
@@ -798,7 +810,7 @@ function spp_ajax_publish_post() {
     if ( ! wp_verify_nonce( $_POST['nonce'], 'spp_pending_action' ) ) {
         wp_send_json_error( 'Invalid nonce' );
     }
-    if ( ! spp_is_admin_or_editor() ) {
+    if ( ! spp_can_moderate_blog() ) {
         wp_send_json_error( 'Permission denied' );
     }
 
@@ -839,7 +851,7 @@ function spp_ajax_save_pending_post() {
     if ( ! wp_verify_nonce( $_POST['nonce'], 'spp_pending_action' ) ) {
         wp_send_json_error( 'Invalid nonce' );
     }
-    if ( ! spp_is_admin_or_editor() ) {
+    if ( ! spp_can_moderate_blog() ) {
         wp_send_json_error( 'Permission denied' );
     }
 
@@ -868,7 +880,7 @@ function spp_ajax_reject_post() {
     if ( ! wp_verify_nonce( $_POST['nonce'], 'spp_pending_action' ) ) {
         wp_send_json_error( 'Invalid nonce' );
     }
-    if ( ! spp_is_admin_or_editor() ) {
+    if ( ! spp_can_moderate_blog() ) {
         wp_send_json_error( 'Permission denied' );
     }
 
@@ -890,7 +902,7 @@ function spp_ajax_delete_post() {
     if ( ! wp_verify_nonce( $_POST['nonce'], 'spp_delete_post' ) ) {
         wp_send_json_error( 'Invalid nonce' );
     }
-    if ( ! spp_is_admin_or_editor() ) {
+    if ( ! spp_can_moderate_blog() ) {
         wp_send_json_error( 'Permission denied' );
     }
 
