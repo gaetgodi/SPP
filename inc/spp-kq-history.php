@@ -1,8 +1,24 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Permanent History, Live Scoreboard, Recap Email
-   Version: 1.12.0
+   Version: 1.13.0
    Date: 2026-09-26
+
+   Changes from 1.12.0 -- [spp_kq_event_detail] and same-day sessions.
+   The Date dropdown listed DISTINCT dates and the lookup selected by
+   source + date, assuming at most one session of a format per day. On
+   2026-09-25 (Ace 185 at 9:00, 204 at 10:30) picking that date showed
+   the two sessions MERGED: 8 players per round-1 court, scores taken
+   from whichever session's row came first, 204 not viewable alone.
+   - spp_kq_get_history_dates_for_source() replaced by spp_kq_get_
+     history_events_for_source(): one entry per archived occurrence,
+     with its start time and how many sessions share its date.
+   - spp_kq_get_history_scoreboard( $source, $occurrence_id ): scoped to
+     one occurrence (source must still match).
+   - Form field is kq_occ; labels add the start time only when a date
+     has more than one session (spp_kq_history_event_label()), so
+     single-session days look exactly as before. A legacy kq_event_date
+     link resolves when unambiguous, otherwise asks the visitor to pick.
 
    Changes from 1.11.0: 1.11.0's per-round Void Round button (and the
    $voidable_rounds param that drove it) is removed -- it sat directly
@@ -340,23 +356,24 @@ function spp_kq_get_full_scoreboard( int $occurrence_id ) : array {
  * Same grouped shape as spp_kq_get_full_scoreboard() above, sourced from
  * the PERMANENT spp_kq_history archive instead of the live spp_kq_scores/
  * spp_kq_assignments tables -- for looking at exactly one past,
- * already-finished event by category+date (the Event Detail view,
- * [spp_kq_event_detail] below), not an in-progress one. Names are looked
- * up fresh via membership (never frozen into the archived rows), same
- * convention as spp_report_kq_history() and spp_kq_get_full_scoreboard()
- * itself.
+ * already-finished event (the Event Detail view, [spp_kq_event_detail]
+ * below), not an in-progress one. Names are looked up fresh via
+ * membership (never frozen into the archived rows), same convention as
+ * spp_report_kq_history() and spp_kq_get_full_scoreboard() itself.
  *
- * @param string $source     'ace' or 'queen' (spp_kq_history.source).
- * @param string $event_date 'Y-m-d'.
- * @return array Empty array if no matching event exists for this
- *                source+date -- callers treat that as "not found" the
- *                same way spp_kq_get_full_scoreboard() treats "no rounds
- *                recorded yet" (both are simply an empty array, no
- *                distinct error signal needed) -- see
- *                spp_kq_render_scoreboard_markup()'s own $empty_message
- *                parameter for how each caller words that case.
+ * 1.13.0: scoped to ONE occurrence. It used to select by source + date,
+ * which merged both sessions of a same-day doubleheader into a single
+ * scoreboard (2026-09-25: Ace 185 at 9:00 and 204 at 10:30 -- 8 players
+ * per round-1 court, scores taken from whichever session's row came
+ * first). $source is still required and must match, so a crafted
+ * occurrence id from the other format finds nothing.
+ *
+ * @param string $source        'ace' or 'queen' (spp_kq_history.source).
+ * @param int    $occurrence_id
+ * @return array Empty array if nothing is archived for that occurrence
+ *               in that format -- callers treat that as "not found".
  */
-function spp_kq_get_history_scoreboard( string $source, string $event_date ) : array {
+function spp_kq_get_history_scoreboard( string $source, int $occurrence_id ) : array {
     global $wpdb;
     $table = spp_kq_history_table();
 
@@ -365,9 +382,9 @@ function spp_kq_get_history_scoreboard( string $source, string $event_date ) : a
                 m.first_name, m.last_name
          FROM {$table} h
          LEFT JOIN membership m ON m.user_id = h.user_id
-         WHERE h.source = %s AND h.event_date = %s
-         ORDER BY h.round_number ASC, h.court_name ASC, h.team_color ASC",
-        $source, $event_date
+         WHERE h.source = %s AND h.occurrence_id = %d
+         ORDER BY h.round_number ASC, h.court_name ASC, h.team_color ASC, h.id ASC",
+        $source, $occurrence_id
     ), ARRAY_A );
 
     $out = array();
@@ -586,24 +603,54 @@ function spp_kq_render_scoreboard_markup( array $scoreboard, string $empty_messa
 // =============================================================
 
 /**
- * Distinct spp_kq_history event_date values for one category, within one
- * year -- powers the Event Detail view's date dropdown
- * (spp_kq_event_detail_shortcode() below), so it only ever lists dates
- * that genuinely have data for the selected category, most recent first.
+ * One entry per archived OCCURRENCE for one category within one year --
+ * powers the Event Detail view's event dropdown (spp_kq_event_detail_
+ * shortcode() below), so it only ever lists events that genuinely have
+ * data. Newest date first; sessions on the same date in start-time order.
+ *
+ * 1.13.0: was one entry per DATE (SELECT DISTINCT event_date), which
+ * assumed at most one session of a format per day -- a same-day second
+ * session could never be picked on its own.
  *
  * @param string $source 'ace' or 'queen'.
  * @param string $year   'YYYY'.
- * @return array List of 'Y-m-d' strings, most recent first.
+ * @return array List of ['occurrence_id' => int, 'event_date' => 'Y-m-d',
+ *   'event_time' => ?'H:i:s', 'same_day_count' => int] -- same_day_count
+ *   is how many archived sessions of this format share that date, so the
+ *   dropdown only needs to show a time when it's actually ambiguous.
  */
-function spp_kq_get_history_dates_for_source( string $source, string $year ) : array {
+function spp_kq_get_history_events_for_source( string $source, string $year ) : array {
     global $wpdb;
     $table = spp_kq_history_table();
-    return $wpdb->get_col( $wpdb->prepare(
-        "SELECT DISTINCT event_date FROM {$table}
-         WHERE source = %s AND YEAR( event_date ) = %d
-         ORDER BY event_date DESC",
+    $rows = $wpdb->get_results( $wpdb->prepare(
+        "SELECT h.occurrence_id, h.event_date, v.eff_event_time AS event_time
+         FROM ( SELECT DISTINCT occurrence_id, event_date FROM {$table}
+                WHERE source = %s AND YEAR( event_date ) = %d ) h
+         LEFT JOIN {$wpdb->prefix}gl_events_v v ON v.occurrence_id = h.occurrence_id
+         ORDER BY h.event_date DESC, v.eff_event_time ASC, h.occurrence_id ASC",
         $source, $year
-    ) );
+    ), ARRAY_A );
+
+    $per_date = array_count_values( array_column( $rows, 'event_date' ) );
+    return array_map( fn( $r ) => array(
+        'occurrence_id'  => (int) $r['occurrence_id'],
+        'event_date'     => $r['event_date'],
+        'event_time'     => $r['event_time'],
+        'same_day_count' => $per_date[ $r['event_date'] ],
+    ), $rows );
+}
+
+/**
+ * Dropdown/heading label for one archived event: the date, plus the start
+ * time only when another session of the same format shares that date --
+ * so a single-session day reads exactly as it always did.
+ */
+function spp_kq_history_event_label( array $e ) : string {
+    $label = date_i18n( 'F j, Y', strtotime( $e['event_date'] ) );
+    if ( $e['same_day_count'] > 1 && $e['event_time'] ) {
+        $label .= ' &ndash; ' . date_i18n( 'g:ia', strtotime( $e['event_time'] ) );
+    }
+    return $label;
 }
 
 /**
@@ -622,7 +669,8 @@ function spp_kq_get_history_dates_for_source( string $source, string $year ) : a
  * the same sensitivity level as that flat report; nothing here exposes
  * anything kq_history doesn't already show any logged-in member).
  *
- * INPUT: a plain GET form (kq_source, kq_event_date) -- a pure read/
+ * INPUT: a plain GET form (kq_source, kq_occ -- 1.13.0, was
+ * kq_event_date; see the shortcode's own comment for legacy links) -- a pure read/
  * lookup with no mutation, so GET (not a nonce-gated POST) is the right
  * tool here, same convention this theme already uses for read-only
  * navigation (e.g. spp-report-table.php's own sort/pagination links).
@@ -660,42 +708,48 @@ function spp_kq_event_detail_shortcode() : string {
 
     $current_year = current_time( 'Y' );
     $source       = isset( $_GET['kq_source'] ) ? sanitize_key( wp_unslash( $_GET['kq_source'] ) ) : '';
-    $event_date   = isset( $_GET['kq_event_date'] ) ? sanitize_text_field( wp_unslash( $_GET['kq_event_date'] ) ) : '';
+    $occ          = isset( $_GET['kq_occ'] ) ? absint( $_GET['kq_occ'] ) : 0;
+    // 1.13.0: the selection is an occurrence now (kq_occ). A legacy
+    // kq_event_date link still works when that date has exactly one
+    // session; with two, the visitor is asked to pick one.
+    $legacy_date  = isset( $_GET['kq_event_date'] ) ? sanitize_text_field( wp_unslash( $_GET['kq_event_date'] ) ) : '';
 
     $source_valid = in_array( $source, array( 'ace', 'queen' ), true );
 
-    // Date dropdown's own contents -- only ever dates that genuinely
-    // have spp_kq_history rows for the selected category, so a "not
-    // found" result is unreachable via normal dropdown use (picking a
-    // category, then a date from the list it produced -- both selects
-    // auto-submit on change, no separate button). Category-select-
-    // triggers-reload is a plain GET resubmit
-    // (onchange="this.form.submit()" below) -- same convention this
-    // theme's own report table controls already use for their "Rows per
-    // page" selector (inc/spp-report-table.php) -- not new JS/AJAX
-    // machinery invented for this.
-    $available_dates = $source_valid ? spp_kq_get_history_dates_for_source( $source, $current_year ) : array();
+    // Dropdown contents -- only events that genuinely have spp_kq_history
+    // rows for the selected category this year, so "not found" is
+    // unreachable through normal dropdown use (see docblock).
+    $events = $source_valid ? spp_kq_get_history_events_for_source( $source, $current_year ) : array();
+    $by_occ = array();
+    foreach ( $events as $e ) {
+        $by_occ[ $e['occurrence_id'] ] = $e;
+    }
 
-    $submitted  = ( $source !== '' && $event_date !== '' );
-    $notice     = '';
+    $notice = '';
+    if ( $source_valid && ! $occ && preg_match( '/^\d{4}-\d{2}-\d{2}$/', $legacy_date ) ) {
+        $matches = array_values( array_filter( $events, fn( $e ) => $e['event_date'] === $legacy_date ) );
+        if ( count( $matches ) === 1 ) {
+            $occ = $matches[0]['occurrence_id'];
+        } elseif ( count( $matches ) > 1 ) {
+            $notice = 'There were ' . count( $matches ) . ' sessions that day -- please choose one below.';
+        }
+    }
+
+    $submitted  = ( $source !== '' && $occ > 0 );
     $scoreboard = array();
+    $selected   = null;
 
     if ( $submitted ) {
         if ( ! $source_valid ) {
             $notice = 'Please choose Ace or Queen.';
-        } elseif ( ! preg_match( '/^\d{4}-\d{2}-\d{2}$/', $event_date ) ) {
-            $notice = 'Please choose a valid date.';
-        } elseif ( substr( $event_date, 0, 4 ) !== $current_year ) {
-            $notice = "Please choose a date in {$current_year} -- earlier years aren't supported yet.";
+        } elseif ( ! isset( $by_occ[ $occ ] ) ) {
+            // Server-side truth, not the dropdown's own list: an occurrence
+            // with nothing archived for this format THIS year -- a crafted
+            // id, the other format's event, or a prior year -- is refused.
+            $notice = "No {$current_year} " . ( $source === 'ace' ? 'Ace' : 'Queen' ) . ' of the Courts event found for that selection.';
         } else {
-            // Server-side truth, not the dropdown's own option list --
-            // re-queried here regardless of whether $event_date actually
-            // appeared in $available_dates, so a crafted/tampered
-            // kq_event_date (one the dropdown never offered) still
-            // resolves through the real query and correctly falls
-            // through to the "No event found" notice below rather than
-            // being trusted just because it looked like a plausible date.
-            $scoreboard = spp_kq_get_history_scoreboard( $source, $event_date );
+            $selected   = $by_occ[ $occ ];
+            $scoreboard = spp_kq_get_history_scoreboard( $source, $occ );
         }
     }
 
@@ -717,16 +771,16 @@ function spp_kq_event_detail_shortcode() : string {
             </label>
             <label>
                 Date
-                <select name="kq_event_date" onchange="this.form.submit()" <?php disabled( ! $source_valid ); ?>>
+                <select name="kq_occ" onchange="this.form.submit()" <?php disabled( ! $source_valid ); ?>>
                     <?php if ( ! $source_valid ) : ?>
                         <option value="">&mdash; Choose an event first &mdash;</option>
-                    <?php elseif ( empty( $available_dates ) ) : ?>
+                    <?php elseif ( empty( $events ) ) : ?>
                         <option value="" disabled selected>No events found</option>
                     <?php else : ?>
                         <option value="">&mdash; Select &mdash;</option>
-                        <?php foreach ( $available_dates as $d ) : ?>
-                            <option value="<?php echo esc_attr( $d ); ?>" <?php selected( $event_date, $d ); ?>>
-                                <?php echo esc_html( date_i18n( 'F j, Y', strtotime( $d ) ) ); ?>
+                        <?php foreach ( $events as $e ) : ?>
+                            <option value="<?php echo esc_attr( $e['occurrence_id'] ); ?>" <?php selected( $selected['occurrence_id'] ?? 0, $e['occurrence_id'] ); ?>>
+                                <?php echo wp_kses_post( spp_kq_history_event_label( $e ) ); ?>
                             </option>
                         <?php endforeach; ?>
                     <?php endif; ?>
@@ -742,7 +796,7 @@ function spp_kq_event_detail_shortcode() : string {
             <?php else : ?>
                 <p class="kq-round-label">
                     <?php echo esc_html( $source === 'ace' ? 'Ace of the Courts' : 'Queen of the Courts' ); ?>
-                    &mdash; <?php echo esc_html( date_i18n( 'F j, Y', strtotime( $event_date ) ) ); ?>
+                    &mdash; <?php echo wp_kses_post( spp_kq_history_event_label( $selected ) ); ?>
                 </p>
                 <?php echo spp_kq_render_scoreboard_markup( $scoreboard ); ?>
             <?php endif; ?>
