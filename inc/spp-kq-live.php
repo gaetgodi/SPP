@@ -1,8 +1,28 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Live Event Runner
-   Version: 1.12.0
-   Date: 2026-09-25
+   Version: 1.13.0
+   Date: 2026-09-26
+
+   Changes from 1.12.0 -- reviewed and approved, after the 2026-09-25
+   incident on occurrence 204 (round 2 voided when what was needed was
+   new assignments from a corrected round 1):
+   - Rebuild Round: new spp_kq_transition_rebuild_round() + SPP_KQ_
+     REBUILD_ROUND_MIN (2) + spp_kq_round_is_complete(). Deletes round N
+     and later, regenerates round N from round N-1's current scores and
+     lands on organizing/round N exactly as an advance does. Full writeup
+     in its docblock.
+   - spp_kq_transition_advance_round()'s computation and row-writing are
+     now spp_kq_compute_round_after() / spp_kq_write_computed_round(),
+     moved verbatim, so Rebuild runs the identical code. Advance's
+     behaviour is unchanged.
+   - spp_kq_transition_void_round() now refuses a round with no real
+     score ("use Rebuild Round instead"); it still cascades through
+     every later round, scored or not.
+   - spp_kq_transition_start_play() takes an optional $expected_
+     announced_at (the Overview's Start Play form now sends it): a Start
+     Play from a screen rendered before a Rebuild of the current round is
+     a silent no-op instead of starting the rebuilt round unseen.
 
    Changes from 1.11.0 -- reviewed and approved, two items:
    - Void Round: new spp_kq_transition_void_round() + SPP_KQ_VOID_ROUND_
@@ -833,7 +853,7 @@ function spp_kq_transition_skip_rest_countdown( int $occurrence_id, int $expecte
  * counting from when play actually starts rather than from the button
  * press.
  */
-function spp_kq_transition_start_play( int $occurrence_id, int $expected_round, int $duration_seconds ) : array {
+function spp_kq_transition_start_play( int $occurrence_id, int $expected_round, int $duration_seconds, ?int $expected_announced_at = null ) : array {
     global $wpdb;
 
     // 1.12.0: a fully voided round (spp_kq_transition_void_round()) has
@@ -857,14 +877,89 @@ function spp_kq_transition_start_play( int $occurrence_id, int $expected_round, 
     $events_table = spp_kq_events_table();
     $started_at   = current_time( 'timestamp', true ) + SPP_KQ_ROUND_START_DELAY_SECONDS;
 
+    // 1.13.0: $expected_announced_at is the courts_announced_at the
+    // Overview was rendered with. A Rebuild Round of the CURRENT round
+    // leaves round/phase unchanged but always moves courts_announced_at,
+    // so without this a Start Play pressed on a pre-rebuild screen would
+    // start the rebuilt round before anyone saw its new courts (found by
+    // a real parallel race test). Skip Wait only moves it EARLIER and
+    // Start Play isn't shown until the countdown ends, so an ordinary
+    // press always carries the current value. null = not checked
+    // (callers that don't send it keep the old behaviour).
+    $token_sql = ( $expected_announced_at === null ) ? '' : $wpdb->prepare( ' AND courts_announced_at = %d', $expected_announced_at );
     $affected = $wpdb->query( $wpdb->prepare(
         "UPDATE {$events_table}
          SET phase = 'in_play', round_duration_seconds = %d, round_started_at = %d
          WHERE occurrence_id = %d AND current_round = %d AND phase = 'organizing'",
         $duration_seconds, $started_at, $occurrence_id, $expected_round
-    ) );
+    ) . $token_sql );
 
     return array( 'won' => ( (int) $affected === 1 ), 'error' => null );
+}
+
+/**
+ * Compute the round that follows $from_round from its CURRENT stored
+ * assignments/scores (1.13.0, extracted unchanged from spp_kq_
+ * transition_advance_round() so Rebuild Round runs the identical
+ * computation). Cancelled courts of $from_round are filtered out before
+ * the movement algorithm sees them -- see spp_kq_transition_advance_
+ * round()'s docblock. Throws SPP_KQ_Movement_Error on a tie/missing
+ * score/bad data. Pure read, writes nothing.
+ *
+ * @return array ['next' => assignment rows, 'cancelled' => court names
+ *   cancelled in $from_round, 'full_courts' => the event's court order]
+ */
+function spp_kq_compute_round_after( int $occurrence_id, int $from_round ) : array {
+    $full_courts = spp_kq_determine_courts_order( $occurrence_id );
+    $cancelled   = spp_kq_get_cancelled_courts( $occurrence_id, $from_round );
+
+    $movement_courts = array_values( array_diff( $full_courts, $cancelled ) );
+
+    $assignments = spp_kq_get_round_assignments( $occurrence_id, $from_round );
+    $scores      = spp_kq_get_round_scores( $occurrence_id, $from_round );
+    $history     = spp_kq_get_history_through_round( $occurrence_id, $from_round );
+
+    if ( ! empty( $cancelled ) ) {
+        $assignments = array_values( array_filter( $assignments, fn( $a ) => ! in_array( $a['court_name'], $cancelled, true ) ) );
+        $scores      = array_values( array_filter( $scores,      fn( $s ) => ! in_array( $s['court_name'], $cancelled, true ) ) );
+        $history     = array_values( array_filter( $history,     fn( $h ) => ! in_array( $h['court_name'], $cancelled, true ) ) );
+    }
+
+    return array(
+        'next'        => spp_kq_compute_next_round( $movement_courts, $assignments, $scores, $history ),
+        'cancelled'   => $cancelled,
+        'full_courts' => $full_courts,
+    );
+}
+
+/**
+ * Write a computed round's rows (1.13.0, extracted unchanged from
+ * spp_kq_transition_advance_round()): the movement output's assignments,
+ * fresh empty placeholders for any court cancelled in the round before
+ * (it doesn't auto-resume with its old players -- see spp_kq_transition_
+ * advance_round()'s docblock), and score placeholders for every court.
+ */
+function spp_kq_write_computed_round( int $occurrence_id, int $round_number, array $computed ) : void {
+    global $wpdb;
+
+    $assignments_table = spp_kq_assignments_table();
+    $placeholders = array();
+    $values = array();
+    foreach ( $computed['next'] as $a ) {
+        $placeholders[] = '(%d, %d, %d, %s, %s)';
+        array_push( $values, $occurrence_id, $round_number, $a['user_id'], $a['court_name'], $a['team_color'] );
+    }
+    $wpdb->query( $wpdb->prepare(
+        "INSERT INTO {$assignments_table} (occurrence_id, round_number, user_id, court_name, team_color) VALUES "
+        . implode( ', ', $placeholders ),
+        $values
+    ) );
+
+    if ( ! empty( $computed['cancelled'] ) ) {
+        spp_kq_create_assignment_placeholders( $occurrence_id, $round_number, $computed['cancelled'] );
+    }
+
+    spp_kq_create_score_placeholders( $occurrence_id, $round_number, $computed['full_courts'] );
 }
 
 /**
@@ -908,23 +1003,8 @@ function spp_kq_transition_start_play( int $occurrence_id, int $expected_round, 
 function spp_kq_transition_advance_round( int $occurrence_id, int $expected_round ) : array {
     global $wpdb;
 
-    $full_courts = spp_kq_determine_courts_order( $occurrence_id );
-    $cancelled   = spp_kq_get_cancelled_courts( $occurrence_id, $expected_round );
-
-    $movement_courts = array_values( array_diff( $full_courts, $cancelled ) );
-
-    $assignments = spp_kq_get_round_assignments( $occurrence_id, $expected_round );
-    $scores      = spp_kq_get_round_scores( $occurrence_id, $expected_round );
-    $history     = spp_kq_get_history_through_round( $occurrence_id, $expected_round );
-
-    if ( ! empty( $cancelled ) ) {
-        $assignments = array_values( array_filter( $assignments, fn( $a ) => ! in_array( $a['court_name'], $cancelled, true ) ) );
-        $scores      = array_values( array_filter( $scores,      fn( $s ) => ! in_array( $s['court_name'], $cancelled, true ) ) );
-        $history     = array_values( array_filter( $history,     fn( $h ) => ! in_array( $h['court_name'], $cancelled, true ) ) );
-    }
-
     try {
-        $next_assignments = spp_kq_compute_next_round( $movement_courts, $assignments, $scores, $history );
+        $computed = spp_kq_compute_round_after( $occurrence_id, $expected_round );
     } catch ( SPP_KQ_Movement_Error $e ) {
         return array( 'won' => false, 'error' => $e->getMessage() );
     }
@@ -948,29 +1028,7 @@ function spp_kq_transition_advance_round( int $occurrence_id, int $expected_roun
     }
 
     $next_round_number = $expected_round + 1;
-
-    $assignments_table = spp_kq_assignments_table();
-    $placeholders = array();
-    $values = array();
-    foreach ( $next_assignments as $a ) {
-        $placeholders[] = '(%d, %d, %d, %s, %s)';
-        array_push( $values, $occurrence_id, $next_round_number, $a['user_id'], $a['court_name'], $a['team_color'] );
-    }
-    $wpdb->query( $wpdb->prepare(
-        "INSERT INTO {$assignments_table} (occurrence_id, round_number, user_id, court_name, team_color) VALUES "
-        . implode( ', ', $placeholders ),
-        $values
-    ) );
-
-    // Re-create any cancelled court's slot as fresh, empty placeholders
-    // (NULL user_id, same shape round 1's own draw starts from) rather
-    // than dropping it from the event -- see this function's own
-    // docblock.
-    if ( ! empty( $cancelled ) ) {
-        spp_kq_create_assignment_placeholders( $occurrence_id, $next_round_number, $cancelled );
-    }
-
-    spp_kq_create_score_placeholders( $occurrence_id, $next_round_number, $full_courts );
+    spp_kq_write_computed_round( $occurrence_id, $next_round_number, $computed );
 
     return array( 'won' => true, 'error' => null, 'round' => $next_round_number );
 }
@@ -1328,6 +1386,25 @@ function spp_kq_transition_void_round( int $occurrence_id, int $target_round, in
         $wpdb->query( 'ROLLBACK' );
         return array( 'won' => false, 'error' => "Round {$target_round} hasn't started yet." );
     }
+    // Already voided (a double press, or two devices): nothing left
+    // un-cancelled from here on -- a silent no-op, checked BEFORE the
+    // "no scores" rule below so a double press doesn't get that message.
+    $pending = (int) $wpdb->get_var( $wpdb->prepare(
+        "SELECT COUNT(*) FROM {$scores_table} WHERE occurrence_id = %d AND round_number >= %d AND cancelled = 0",
+        $occurrence_id, $target_round
+    ) );
+    if ( $pending === 0 ) {
+        $wpdb->query( 'ROLLBACK' );
+        return array( 'won' => false, 'error' => null );
+    }
+    // 1.13.0: only a round that was actually played (at least one real,
+    // uncancelled score) can be voided. A scoreless round has nothing to
+    // void -- new assignments for it is Rebuild Round, which is what the
+    // 2026-09-25 incident (occurrence 204) actually needed.
+    if ( spp_kq_get_round_progress( $occurrence_id, $target_round )['reported'] === 0 ) {
+        $wpdb->query( 'ROLLBACK' );
+        return array( 'won' => false, 'error' => "Round {$target_round} has no scores to void. To get new court assignments for it, use Rebuild Round instead." );
+    }
 
     $voided = $wpdb->query( $wpdb->prepare(
         "UPDATE {$scores_table}
@@ -1359,6 +1436,127 @@ function spp_kq_transition_void_round( int $occurrence_id, int $target_round, in
 
     $wpdb->query( 'COMMIT' );
     return array( 'won' => true, 'error' => null, 'voided_courts' => (int) $voided, 'through_round' => $current_round );
+}
+
+/**
+ * Whether every court still in play in a round has a real score, and
+ * there's at least one such court -- i.e. the round could be advanced
+ * from (1.13.0). Same count spp_kq_submit_court_score() uses to decide
+ * whether to advance.
+ */
+function spp_kq_round_is_complete( int $occurrence_id, int $round_number ) : bool {
+    $p = spp_kq_get_round_progress( $occurrence_id, $round_number );
+    return $p['total'] > 0 && $p['reported'] === $p['total'];
+}
+
+/**
+ * Lowest round Rebuild Round (below) will accept -- round 1 comes from
+ * the card draw, not from a previous round's result.
+ */
+const SPP_KQ_REBUILD_ROUND_MIN = 2;
+
+/**
+ * Rebuild Round (1.13.0): throw away round N and everything after it,
+ * then regenerate round N's court assignments fresh from round N-1's
+ * CURRENT scores -- the exact computation a normal advance runs
+ * (spp_kq_compute_round_after() + spp_kq_write_computed_round(), shared
+ * with spp_kq_transition_advance_round()). For when round N was built
+ * from a result that has since been corrected, or round N was voided
+ * and the group wants to replay it. Contrast:
+ *   - Reset Round keeps round N's assignments and only clears scores;
+ *   - Void Round deletes nothing and regenerates nothing.
+ *
+ * Round N-1 must be complete (spp_kq_round_is_complete()); a movement
+ * error (a tie, bad data) is reported before anything is written.
+ * Deletes every assignment/score row with round_number >= N, writes the
+ * new round N, and lands on organizing/round N with courts_announced_at
+ * = now + SPP_KQ_COURTS_REST_SECONDS -- the same state an advance
+ * leaves, so the Overview's rest countdown / Skip Wait / "Go to your
+ * courts." / Start Play all run as normal. Roster Adjust swaps made in
+ * round N or later are not carried over (round N-1's players are the
+ * input); the Overview flags anyone who's no longer registered.
+ *
+ * CAS + TRANSACTION: SELECT ... FOR UPDATE on the events row, then the
+ * caller's $expected_round and $expected_announced_at (the Overview/
+ * scoreboard's view of the state) must still match -- courts_announced_
+ * at changes on every rebuild/advance, so a double press or a second
+ * device acting on a stale screen is a silent no-op rather than a second
+ * regeneration. Everything runs in one InnoDB transaction; a live score
+ * submit's UPDATE targets rows this deletes and re-checks the events
+ * row, so it can't land in the rebuilt round.
+ */
+function spp_kq_transition_rebuild_round( int $occurrence_id, int $target_round, int $expected_round, ?int $expected_announced_at ) : array {
+    global $wpdb;
+
+    if ( $target_round < SPP_KQ_REBUILD_ROUND_MIN ) {
+        return array( 'won' => false, 'error' => 'Round 1 comes from the card draw and can\'t be rebuilt.' );
+    }
+
+    $events_table = spp_kq_events_table();
+
+    $wpdb->query( 'START TRANSACTION' );
+
+    $state = $wpdb->get_row( $wpdb->prepare(
+        "SELECT current_round, phase, courts_announced_at FROM {$events_table} WHERE occurrence_id = %d FOR UPDATE",
+        $occurrence_id
+    ), ARRAY_A );
+
+    if ( ! $state || ! in_array( $state['phase'], array( 'organizing', 'in_play' ), true ) ) {
+        $wpdb->query( 'ROLLBACK' );
+        return array( 'won' => false, 'error' => 'This event isn\'t in progress -- rounds can no longer be rebuilt.' );
+    }
+    $current_round  = (int) $state['current_round'];
+    $announced_now  = $state['courts_announced_at'] === null ? null : (int) $state['courts_announced_at'];
+    if ( $current_round !== $expected_round || $announced_now !== $expected_announced_at ) {
+        $wpdb->query( 'ROLLBACK' );
+        return array( 'won' => false, 'error' => null ); // stale screen / already rebuilt
+    }
+    if ( $target_round > $current_round ) {
+        $wpdb->query( 'ROLLBACK' );
+        return array( 'won' => false, 'error' => "Round {$target_round} hasn't been reached yet." );
+    }
+
+    $from_round = $target_round - 1;
+    if ( ! spp_kq_round_is_complete( $occurrence_id, $from_round ) ) {
+        $wpdb->query( 'ROLLBACK' );
+        $why = spp_kq_count_active_courts( $occurrence_id, $from_round ) === 0
+            ? "round {$from_round} was voided"
+            : "not every court in round {$from_round} has a score";
+        return array( 'won' => false, 'error' => "Can't rebuild round {$target_round}: {$why}." );
+    }
+
+    try {
+        $computed = spp_kq_compute_round_after( $occurrence_id, $from_round );
+    } catch ( SPP_KQ_Movement_Error $e ) {
+        $wpdb->query( 'ROLLBACK' );
+        return array( 'won' => false, 'error' => "Can't rebuild round {$target_round}: " . $e->getMessage() );
+    }
+
+    $ok = false !== $wpdb->query( $wpdb->prepare(
+        "DELETE FROM " . spp_kq_assignments_table() . " WHERE occurrence_id = %d AND round_number >= %d",
+        $occurrence_id, $target_round
+    ) );
+    $ok = $ok && false !== $wpdb->query( $wpdb->prepare(
+        "DELETE FROM " . spp_kq_scores_table() . " WHERE occurrence_id = %d AND round_number >= %d",
+        $occurrence_id, $target_round
+    ) );
+    if ( $ok ) {
+        $wpdb->last_error = '';
+        spp_kq_write_computed_round( $occurrence_id, $target_round, $computed );
+        $ok = ( $wpdb->last_error === '' );
+    }
+    $ok = $ok && false !== $wpdb->query( $wpdb->prepare(
+        "UPDATE {$events_table} SET current_round = %d, phase = 'organizing', courts_announced_at = %d WHERE occurrence_id = %d",
+        $target_round, current_time( 'timestamp', true ) + SPP_KQ_COURTS_REST_SECONDS, $occurrence_id
+    ) );
+
+    if ( ! $ok ) {
+        $wpdb->query( 'ROLLBACK' );
+        return array( 'won' => false, 'error' => 'Rebuild failed -- nothing was changed. Please try again.' );
+    }
+
+    $wpdb->query( 'COMMIT' );
+    return array( 'won' => true, 'error' => null, 'round' => $target_round );
 }
 
 /**

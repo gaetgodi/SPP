@@ -1,8 +1,36 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Screens
-   Version: 1.31.0
-   Date: 2026-09-25
+   Version: 1.32.0
+   Date: 2026-09-26
+
+   Changes from 1.31.0 -- reviewed and approved, after the 2026-09-25
+   incident: on occurrence 204 a round-1 score was corrected after round
+   2 was generated, and "Void Round 2" -- the only round-2 control on the
+   Full Scoreboard, sitting right under round 1's Save Correction
+   buttons -- was tapped when what was needed was new assignments. Round
+   2 was voided with no way back.
+   - Rebuild Round (inc/spp-kq-live.php 1.13.0, spp_kq_transition_
+     rebuild_round()): new 'rebuild_round' POST action. Offered on the
+     Overview for the current round (whenever the round before it is
+     complete, including a voided current round) and on the Full
+     Scoreboard for any round 2..current. confirm() then AJAX; lands on
+     the rebuilt round's Overview with the normal rest countdown.
+   - Void Round redesigned: only offered for a round that has real
+     scores (the transition enforces this too); no longer a button under
+     each round heading -- it's in a red "permanent" box at the bottom of
+     a separate "Fix a round" panel, below Rebuild. Button and confirm()
+     say it is permanent, removes the games from history/ratings/
+     rankings, does NOT rebuild or replay, and point to Rebuild instead.
+     Posts through the shared action dispatcher ('void_round' case); the
+     1.31.0 wp_ajax_spp_kq_void_round endpoint and spp_kq_render_void_
+     round_button() are gone.
+   - Start Play form now sends the courts_announced_at it was rendered
+     with (spp_kq_transition_start_play(), inc/spp-kq-live.php 1.13.0) so
+     it can't start a round that was rebuilt after the screen loaded.
+   - Overview flags anyone dealt into the round who is no longer a
+     confirmed registrant (a swap made in a round that was later rebuilt
+     or reset isn't carried over).
 
    Changes from 1.30.0 -- Void Round, reviewed and approved (the stuck-
    round fix it ships with is inc/spp-kq-live.php 1.12.0):
@@ -1874,6 +1902,12 @@ function spp_kq_styles() : string {
         .kq-start-play-form { display:flex; align-items:flex-end; gap:12px; flex-wrap:wrap; }
         .kq-duration-label { font-size:13px; color:#555; }
         .kq-reset-round { margin-top:24px; padding-top:12px; border-top:1px solid #ddd; }
+        .kq-round-actions { margin-top:40px; padding-top:8px; border-top:3px solid #ccc; }
+        .kq-round-action { margin-top:16px; }
+        .kq-round-action .kq-inline-form { display:flex; flex-wrap:wrap; align-items:flex-end; gap:10px; }
+        .kq-round-action-select { font-size:16px; padding:6px 8px; max-width:100%; }
+        .kq-danger-zone { margin-top:28px; border:2px solid #c0392b; border-radius:8px; padding:12px 14px; background:#fdf0ef; }
+        .kq-danger-zone strong { color:#a93226; }
         .kq-reset-round .kq-inline-form { display:flex; flex-wrap:wrap; align-items:flex-end; gap:10px; }
         .kq-reset-round-select { font-size:16px; padding:6px 8px; }
         .kq-duration-input { display:block; width:70px; padding:8px; font-size:16px; text-align:center; border:1px solid #bbb; border-radius:6px; margin-top:4px; }
@@ -2701,6 +2735,22 @@ function spp_kq_render_overview_screen( int $occurrence_id, int $round, ?int $co
     // 1.31.0: every court voided (Void Round) -- nothing to announce or
     // start; only End Event (below) applies.
     $all_voided    = spp_kq_count_active_courts( $occurrence_id, $round ) === 0;
+    // 1.32.0: Rebuild Round for THIS round -- offered whenever the round
+    // before it is complete (spp_kq_transition_rebuild_round() re-checks).
+    $can_rebuild   = $round >= SPP_KQ_REBUILD_ROUND_MIN && spp_kq_round_is_complete( $occurrence_id, $round - 1 );
+    // 1.32.0: anyone dealt into this round who is no longer a confirmed
+    // registrant -- normally impossible (a swap withdraws the old player
+    // and assigns the new one together), but a Rebuild/Reset regenerates
+    // from an earlier round's players, so a swap made later is lost.
+    $confirmed_ids = spp_kq_confirmed_user_ids( $occurrence_id );
+    $not_registered = array();
+    foreach ( spp_kq_get_round_slots_detailed( $occurrence_id, $round ) as $court_slots ) {
+        foreach ( $court_slots as $slot ) {
+            if ( $slot['user_id'] !== null && ! in_array( (int) $slot['user_id'], $confirmed_ids, true ) ) {
+                $not_registered[] = $slot['name'];
+            }
+        }
+    }
 
     ob_start();
     ?>
@@ -2724,10 +2774,13 @@ function spp_kq_render_overview_screen( int $occurrence_id, int $round, ?int $co
         <?php endforeach; ?>
     </div>
     <p class="kq-hint">Swap a player, or cancel a court's game for this round, via <a href="<?php echo esc_url( add_query_arg( 'kq_view', 'roster' ) ); ?>">Roster Adjust</a>.</p>
+    <?php if ( ! empty( $not_registered ) ) : ?>
+        <p class="kq-warn">No longer registered for this event: <?php echo esc_html( implode( ', ', $not_registered ) ); ?>. Swap them out via <a href="<?php echo esc_url( add_query_arg( 'kq_view', 'roster' ) ); ?>">Roster Adjust</a> before starting play.</p>
+    <?php endif; ?>
 
     <?php if ( $all_voided ) : ?>
 
-        <p class="kq-hint">This round was voided from the Full Scoreboard, so there's nothing left to play. End Event closes the day with the results that still count.</p>
+        <p class="kq-hint">This round was voided, so there's nothing left to play in it. To play it again with new court assignments, use <strong>Rebuild Round <?php echo esc_html( $round ); ?></strong> below. Or End Event closes the day with the results that still count.</p>
 
     <?php elseif ( ! empty( $understaffed ) ) : ?>
 
@@ -2818,6 +2871,7 @@ function spp_kq_render_overview_screen( int $occurrence_id, int $round, ?int $co
                     <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
                     <input type="hidden" name="spp_kq_action" value="start_play">
                     <input type="hidden" name="spp_kq_round" value="<?php echo esc_attr( $round ); ?>">
+                    <input type="hidden" name="spp_kq_expected_announced" value="<?php echo esc_attr( (int) $courts_announced_at ); ?>">
                     <label class="kq-duration-label">Round length (minutes)<br>
                         <input type="number" name="spp_kq_round_minutes" class="kq-duration-input"
                                value="<?php echo esc_attr( SPP_KQ_DEFAULT_ROUND_MINUTES ); ?>"
@@ -2971,6 +3025,45 @@ function spp_kq_render_overview_screen( int $occurrence_id, int $round, ?int $co
             }
         });
         SppKqLiveApp.wireAjaxForm('.kq-reset-round-form', 'kq-reset-round-msg');
+    })();
+    </script>
+    <?php endif; ?>
+
+    <?php if ( $can_rebuild ) : ?>
+    <?php
+    // 1.32.0: Rebuild Round for the current round -- see spp_kq_
+    // transition_rebuild_round() (inc/spp-kq-live.php). AJAX like Reset
+    // Round, so this device keeps its announcer for the rest countdown
+    // that follows. The Full Scoreboard's "Fix a round" panel can also
+    // rebuild an earlier round.
+    ?>
+    <div class="kq-reset-round">
+        <p class="kq-hint">Changed a round <?php echo esc_html( $round - 1 ); ?> score after this round was set up, or voided this round? <strong>Rebuild Round <?php echo esc_html( $round ); ?></strong> works out brand-new court assignments from round <?php echo esc_html( $round - 1 ); ?>'s current scores.</p>
+        <div class="kq-notice kq-notice-err" id="kq-rebuild-round-msg" style="display:none;"></div>
+        <form method="post" class="kq-inline-form kq-rebuild-round-form">
+            <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
+            <input type="hidden" name="spp_kq_action" value="rebuild_round">
+            <input type="hidden" name="spp_kq_round" value="<?php echo esc_attr( $round ); ?>">
+            <input type="hidden" name="spp_kq_target_round" value="<?php echo esc_attr( $round ); ?>">
+            <input type="hidden" name="spp_kq_expected_announced" value="<?php echo esc_attr( $courts_announced_at ?? '' ); ?>">
+            <button type="submit" class="kq-btn kq-btn-secondary">Rebuild Round <?php echo esc_html( $round ); ?></button>
+        </form>
+    </div>
+    <script>
+    (function() {
+        var form = document.querySelector('.kq-rebuild-round-form');
+        if (!form) return;
+        form.addEventListener('submit', function(e) {
+            if (!confirm(<?php echo wp_json_encode( "REBUILD round {$round}?
+
+Round {$round} gets brand-new court assignments from round " . ( $round - 1 ) . "'s current scores, then the usual rest countdown starts.
+
+Any Roster Adjust swaps made in round {$round} will need to be redone." ); ?>)) {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+            }
+        });
+        SppKqLiveApp.wireAjaxForm('.kq-rebuild-round-form', 'kq-rebuild-round-msg');
     })();
     </script>
     <?php endif; ?>
@@ -3597,13 +3690,37 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date, ?st
             $r = spp_kq_transition_reset_round( $occurrence_id, $round, $target );
             return ( ! $r['won'] && $r['error'] ) ? $r['error'] : '';
 
+        case 'rebuild_round':
+            // 1.32.0: any facilitator. The expected round + courts_
+            // announced_at the screen was rendered with are the CAS token
+            // -- see spp_kq_transition_rebuild_round() (inc/spp-kq-
+            // live.php); a stale/double submit is a silent no-op.
+            $target       = isset( $_POST['spp_kq_target_round'] ) ? intval( $_POST['spp_kq_target_round'] ) : 0;
+            $expected_raw = isset( $_POST['spp_kq_expected_announced'] ) ? sanitize_text_field( wp_unslash( $_POST['spp_kq_expected_announced'] ) ) : '';
+            $expected_ann = ( $expected_raw === '' ) ? null : intval( $expected_raw );
+            $r = spp_kq_transition_rebuild_round( $occurrence_id, $target, $round, $expected_ann );
+            return ( ! $r['won'] && $r['error'] ) ? $r['error'] : '';
+
+        case 'void_round':
+            // 1.32.0: moved here from its own AJAX endpoint so the Full
+            // Scoreboard's "Fix a round" panel posts both of its actions
+            // the same way. Same access (any facilitator) and the same
+            // transition, which now refuses a scoreless round.
+            $target = isset( $_POST['spp_kq_target_round'] ) ? intval( $_POST['spp_kq_target_round'] ) : 0;
+            $r = spp_kq_transition_void_round( $occurrence_id, $target, get_current_user_id() );
+            return ( ! $r['won'] && $r['error'] ) ? $r['error'] : '';
+
         case 'start_play':
             // 1.10.0: facilitator-set match-timer length, locked in for
             // the round the instant this transition wins -- see
             // spp_kq_transition_start_play()'s own docblock
             // (inc/spp-kq-live.php).
             $round_minutes = spp_kq_sanitize_round_minutes( $_POST['spp_kq_round_minutes'] ?? null );
-            $r = spp_kq_transition_start_play( $occurrence_id, $round, $round_minutes * MINUTE_IN_SECONDS );
+            // 1.32.0: the courts_announced_at this form was rendered with
+            // -- see spp_kq_transition_start_play()'s own comment. Absent
+            // (an old cached page) means unchecked, as before.
+            $sp_expected = ( isset( $_POST['spp_kq_expected_announced'] ) && $_POST['spp_kq_expected_announced'] !== '' ) ? intval( $_POST['spp_kq_expected_announced'] ) : null;
+            $r = spp_kq_transition_start_play( $occurrence_id, $round, $round_minutes * MINUTE_IN_SECONDS, $sp_expected );
             return ( ! $r['won'] && $r['error'] ) ? $r['error'] : '';
 
         case 'end_event':
@@ -4578,31 +4695,35 @@ function spp_kq_render_full_scoreboard_screen( int $occurrence_id ) : string {
     $state      = spp_kq_get_event_state( $occurrence_id );
     $editable   = ! $state || ! in_array( $state['phase'], array( 'complete', 'cancelled' ), true );
 
-    // 1.31.0: Void Round -- offered for every round from SPP_KQ_VOID_
-    // ROUND_MIN through the current one that still has an active
-    // (uncancelled) court, only while the event is actually underway
-    // (spp_kq_transition_void_round() re-checks all of this server-side).
-    // A round with active courts but no scores yet (typically the
-    // current one) isn't on the scoreboard, so it gets its own line
-    // below instead of a button under a heading.
-    $voidable = array();
-    if ( $state && in_array( $state['phase'], array( 'organizing', 'in_play' ), true ) ) {
-        for ( $n = SPP_KQ_VOID_ROUND_MIN; $n <= (int) $state['current_round']; $n++ ) {
-            if ( spp_kq_count_active_courts( $occurrence_id, $n ) > 0 ) {
-                $voidable[] = $n;
+    // 1.32.0: "Fix a round" panel, BELOW and visually apart from the
+    // score-correction controls (the 2026-09-25 incident on occurrence
+    // 204: a Void button sat right under round 1's Save Correction
+    // buttons and was tapped when new assignments were what was needed).
+    // Both lists are re-checked server-side by the transitions themselves.
+    //   Rebuild: round N (from SPP_KQ_REBUILD_ROUND_MIN to the current
+    //     round) whose round N-1 is complete.
+    //   Void: round N >= SPP_KQ_VOID_ROUND_MIN with at least one real
+    //     score -- never a scoreless round.
+    $in_progress    = $state && in_array( $state['phase'], array( 'organizing', 'in_play' ), true );
+    $current_round  = $state ? (int) $state['current_round'] : 0;
+    $rebuild_rounds = array();
+    $void_rounds    = array();
+    if ( $in_progress ) {
+        for ( $n = $current_round; $n >= SPP_KQ_REBUILD_ROUND_MIN; $n-- ) {
+            if ( spp_kq_round_is_complete( $occurrence_id, $n - 1 ) ) {
+                $rebuild_rounds[] = $n;
+            }
+        }
+        for ( $n = $current_round; $n >= SPP_KQ_VOID_ROUND_MIN; $n-- ) {
+            if ( spp_kq_get_round_progress( $occurrence_id, $n )['reported'] > 0 ) {
+                $void_rounds[] = $n;
             }
         }
     }
-    $unlisted_voidable = array_values( array_diff( $voidable, array_map( 'intval', array_keys( $scoreboard ) ) ) );
 
     ob_start();
     ?>
-    <div id="kq-scoreboard-screen">
     <p class="kq-round-label">Full Scoreboard</p>
-    <?php if ( ! empty( $voidable ) ) : ?>
-        <p class="kq-hint">Scores can be corrected in place. <strong>Void Round</strong> makes a round and every round after it stop counting (no replay) &mdash; for closing out a day whose later rounds shouldn't count.</p>
-        <div class="kq-notice kq-notice-err" id="kq-void-round-msg" style="display:none;"></div>
-    <?php endif; ?>
     <?php
     // 1.27.0: "No scores entered yet." (was "No completed rounds yet.")
     // -- this message is now reachable from the very first moment a live
@@ -4611,69 +4732,111 @@ function spp_kq_render_full_scoreboard_screen( int $occurrence_id ) : string {
     // rare edge case, so it's worded for that: the plain, expected state
     // of a not-yet-played event, not a "something's missing" read.
     ?>
-    <?php echo spp_kq_render_scoreboard_markup( $scoreboard, 'No scores entered yet.', $editable, $occurrence_id, $voidable ); ?>
-    <?php foreach ( $unlisted_voidable as $n ) : ?>
-        <h3 class="kq-picker-section-heading">Round <?php echo esc_html( $n ); ?></h3>
-        <p class="kq-hint">No scores entered yet.</p>
-        <?php echo spp_kq_render_void_round_button( $n ); ?>
-    <?php endforeach; ?>
+    <?php echo spp_kq_render_scoreboard_markup( $scoreboard, 'No scores entered yet.', $editable, $occurrence_id ); ?>
+
+    <?php if ( $rebuild_rounds || $void_rounds ) : ?>
+    <div class="kq-round-actions" id="kq-round-actions">
+        <h3 class="kq-picker-section-heading">Fix a round</h3>
+        <p class="kq-hint">Correcting a score above only changes that score. The actions below change whole rounds.</p>
+        <div class="kq-notice kq-notice-err" id="kq-round-action-msg" style="display:none;"></div>
+
+        <?php if ( $rebuild_rounds ) : ?>
+        <div class="kq-round-action">
+            <p><strong>Rebuild a round</strong> &mdash; new court assignments worked out from the previous round's current scores, then that round is played again. Use this after correcting a score, or to replay a voided round. The rebuilt round and every round after it are deleted first.</p>
+            <form method="post" class="kq-inline-form kq-round-action-form" data-kind="rebuild">
+                <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
+                <input type="hidden" name="spp_kq_action" value="rebuild_round">
+                <input type="hidden" name="spp_kq_round" value="<?php echo esc_attr( $current_round ); ?>">
+                <input type="hidden" name="spp_kq_expected_announced" value="<?php echo esc_attr( $state['courts_announced_at'] ?? '' ); ?>">
+                <label class="kq-duration-label">Round to rebuild<br>
+                    <select name="spp_kq_target_round" class="kq-round-action-select">
+                        <?php foreach ( $rebuild_rounds as $n ) : ?>
+                            <option value="<?php echo esc_attr( $n ); ?>">Round <?php echo esc_html( $n ); ?> (from round <?php echo esc_html( $n - 1 ); ?>)</option>
+                        <?php endforeach; ?>
+                    </select>
+                </label>
+                <button type="submit" class="kq-btn kq-btn-primary">Rebuild Round</button>
+            </form>
+        </div>
+        <?php endif; ?>
+
+        <?php if ( $void_rounds ) : ?>
+        <div class="kq-round-action kq-danger-zone">
+            <p><strong>Void a played round &mdash; permanent</strong><br>
+            Throws out every game in that round <em>and every round after it</em>: removed from history, Club Ratings and rankings. Nothing is rebuilt or replayed, and it can't be undone. For new court assignments, use Rebuild instead.</p>
+            <form method="post" class="kq-inline-form kq-round-action-form" data-kind="void">
+                <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
+                <input type="hidden" name="spp_kq_action" value="void_round">
+                <input type="hidden" name="spp_kq_round" value="<?php echo esc_attr( $current_round ); ?>">
+                <label class="kq-duration-label">Round to void<br>
+                    <select name="spp_kq_target_round" class="kq-round-action-select">
+                        <?php foreach ( $void_rounds as $n ) : ?>
+                            <option value="<?php echo esc_attr( $n ); ?>">Round <?php echo esc_html( $n ); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </label>
+                <button type="submit" class="kq-btn kq-btn-danger">Void Round Permanently</button>
+            </form>
+        </div>
+        <?php endif; ?>
     </div>
-    <?php if ( ! empty( $voidable ) ) : ?>
     <script>
     (function() {
-        var wrap = document.getElementById('kq-scoreboard-screen');
-        if (!wrap) return;
-        var ajaxUrl = <?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>;
-        var nonce   = <?php echo wp_json_encode( wp_create_nonce( 'spp_kq_live_action' ) ); ?>;
-        var occ     = <?php echo (int) $occurrence_id; ?>;
-        var lastRound = <?php echo (int) $state['current_round']; ?>;
-        var gameUrl = <?php echo wp_json_encode( esc_url_raw( remove_query_arg( 'kq_view' ) ) ); ?>;
-        var msgEl   = document.getElementById('kq-void-round-msg');
-        wrap.addEventListener('click', function(e) {
-            var btn = e.target.closest('.kq-void-round-btn');
-            if (!btn) return;
-            var n = parseInt(btn.getAttribute('data-round'), 10);
+        var ajaxUrl   = <?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>;
+        var occ       = <?php echo (int) $occurrence_id; ?>;
+        var lastRound = <?php echo (int) $current_round; ?>;
+        var gameUrl   = <?php echo wp_json_encode( esc_url_raw( remove_query_arg( 'kq_view' ) ) ); ?>;
+        var msgEl     = document.getElementById('kq-round-action-msg');
+
+        function confirmText(kind, n) {
+            var later = n < lastRound ? ' Rounds ' + (n + 1) + (n + 1 < lastRound ? ' to ' + lastRound : '') + ' are deleted too.' : '';
+            if (kind === 'rebuild') {
+                return 'REBUILD round ' + n + '?\n\nRound ' + n + ' gets brand-new court assignments from round ' + (n - 1) + "'s current scores, and is then played again." + later +
+                    '\n\nAny Roster Adjust swaps made in round ' + n + ' or later will need to be redone.';
+            }
             var span = n < lastRound ? 'rounds ' + n + ' to ' + lastRound : 'round ' + n;
-            if (!confirm('Void ' + span + '? Every court in ' + span + ' stops counting: scores are cleared and nothing gets replayed. Earlier rounds are not affected.')) return;
-            btn.disabled = true;
-            if (msgEl) msgEl.style.display = 'none';
-            var data = new FormData();
-            data.append('action', 'spp_kq_void_round');
-            data.append('nonce', nonce);
-            data.append('occ', occ);
-            data.append('round', n);
-            fetch(ajaxUrl, { method: 'POST', body: data, credentials: 'same-origin' })
-                .then(function(r) { return r.json(); })
-                .then(function(res) {
-                    if (!res.success) {
+            return 'PERMANENTLY VOID ' + span + '?\n\nEvery game in ' + span + ' is thrown out: removed from history, Club Ratings and rankings.' +
+                '\n\nThis does NOT rebuild or replay anything, and it cannot be undone. For new court assignments instead, cancel and use Rebuild.';
+        }
+
+        document.querySelectorAll('.kq-round-action-form').forEach(function(form) {
+            form.addEventListener('submit', function(e) {
+                e.preventDefault();
+                var kind = form.getAttribute('data-kind');
+                var n = parseInt(form.querySelector('.kq-round-action-select').value, 10);
+                if (!confirm(confirmText(kind, n))) return;
+                var btn = form.querySelector('button[type="submit"]');
+                btn.disabled = true;
+                if (msgEl) msgEl.style.display = 'none';
+                var data = new FormData(form);
+                data.append('action', 'spp_kq_live_action');
+                data.append('occ', occ);
+                fetch(ajaxUrl, { method: 'POST', body: data, credentials: 'same-origin' })
+                    .then(function(r) { return r.json(); })
+                    .then(function(res) {
+                        if (!res.success) {
+                            btn.disabled = false;
+                            if (msgEl) { msgEl.textContent = res.data || 'That didn\'t work.'; msgEl.style.display = 'block'; }
+                            return;
+                        }
+                        // Back to the game screen (the rebuilt round's Overview,
+                        // or End Event after a void). Inside the persistent app
+                        // this is a passive swap; the rest countdown still runs
+                        // and announces "Go to your courts." when it ends.
+                        if (window.SppKqLiveApp && SppKqLiveApp.refreshNow) SppKqLiveApp.refreshNow();
+                        else window.location.href = gameUrl;
+                    })
+                    .catch(function() {
                         btn.disabled = false;
-                        if (msgEl) { msgEl.textContent = res.data || 'Void failed.'; msgEl.style.display = 'block'; }
-                        return;
-                    }
-                    // Back to the game screen, where End Event now is. Passive
-                    // swap inside the persistent app (no announcements);
-                    // plain navigation from the standalone scoreboard page.
-                    if (window.SppKqLiveApp && SppKqLiveApp.refreshNow) SppKqLiveApp.refreshNow();
-                    else window.location.href = gameUrl;
-                })
-                .catch(function() {
-                    btn.disabled = false;
-                    if (msgEl) { msgEl.textContent = 'Network error -- try again.'; msgEl.style.display = 'block'; }
-                });
+                        if (msgEl) { msgEl.textContent = 'Network error -- try again.'; msgEl.style.display = 'block'; }
+                    });
+            });
         });
     })();
     </script>
     <?php endif; ?>
     <?php
     return ob_get_clean();
-}
-
-/**
- * One round's Void Round button (1.31.0) -- wired by the delegated click
- * handler in spp_kq_render_full_scoreboard_screen() above.
- */
-function spp_kq_render_void_round_button( int $round ) : string {
-    return '<p><button type="button" class="kq-btn kq-btn-secondary kq-btn-small kq-void-round-btn" data-round="' . esc_attr( $round ) . '">Void Round ' . esc_html( $round ) . '&hellip;</button></p>';
 }
 
 /**
@@ -4906,30 +5069,6 @@ add_action( 'wp_ajax_spp_kq_correct_score', function() {
         wp_send_json_error( $result['error'] );
     }
 
-    wp_send_json_success( $result );
-} );
-
-// 1.31.0: Void Round -- same access as score correction above
-// (spp_kq_can_facilitate()); bounds, phase and the lock all live in
-// spp_kq_transition_void_round() (inc/spp-kq-live.php). A lost race /
-// already-voided round is success, not an error -- the caller just
-// refreshes to the real state either way.
-add_action( 'wp_ajax_spp_kq_void_round', function() {
-    if ( ! spp_kq_can_facilitate() ) {
-        wp_send_json_error( 'Not authorized' );
-    }
-    check_ajax_referer( 'spp_kq_live_action', 'nonce' );
-
-    $occurrence_id = isset( $_POST['occ'] ) ? absint( $_POST['occ'] ) : 0;
-    $round         = isset( $_POST['round'] ) ? absint( $_POST['round'] ) : 0;
-    if ( ! $occurrence_id || ! $round ) {
-        wp_send_json_error( 'Missing parameters.' );
-    }
-
-    $result = spp_kq_transition_void_round( $occurrence_id, $round, get_current_user_id() );
-    if ( ! $result['won'] && $result['error'] ) {
-        wp_send_json_error( $result['error'] );
-    }
     wp_send_json_success( $result );
 } );
 

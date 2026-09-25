@@ -1,8 +1,16 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Permanent History, Live Scoreboard, Recap Email
-   Version: 1.11.0
-   Date: 2026-09-25
+   Version: 1.12.0
+   Date: 2026-09-26
+
+   Changes from 1.11.0: 1.11.0's per-round Void Round button (and the
+   $voidable_rounds param that drove it) is removed -- it sat directly
+   among the score-correction controls, and on 2026-09-25 was tapped
+   (occurrence 204) when new assignments were what was needed. Void and
+   the new Rebuild Round now live in a separate "Fix a round" panel below
+   the scoreboard (spp_kq_render_full_scoreboard_screen(), inc/spp-kq-
+   screens.php 1.32.0). This renderer is back to its 1.10.0 signature.
 
    Changes from 1.10.0: spp_kq_render_scoreboard_markup() gains an
    optional trailing $voidable_rounds param -- each listed round gets a
@@ -427,7 +435,7 @@ function spp_kq_get_history_scoreboard( string $source, string $event_date ) : a
  * @param int    $occurrence_id Required when $editable is true -- every
  *                               correction AJAX call needs it.
  */
-function spp_kq_render_scoreboard_markup( array $scoreboard, string $empty_message = 'No completed rounds yet.', bool $editable = false, int $occurrence_id = 0, array $voidable_rounds = array() ) : string {
+function spp_kq_render_scoreboard_markup( array $scoreboard, string $empty_message = 'No completed rounds yet.', bool $editable = false, int $occurrence_id = 0 ) : string {
     ob_start();
     ?>
     <?php if ( empty( $scoreboard ) ) : ?>
@@ -435,9 +443,6 @@ function spp_kq_render_scoreboard_markup( array $scoreboard, string $empty_messa
     <?php else : ?>
         <?php foreach ( $scoreboard as $round_number => $courts ) : ?>
             <h3 class="kq-picker-section-heading">Round <?php echo esc_html( $round_number ); ?></h3>
-            <?php if ( in_array( (int) $round_number, $voidable_rounds, true ) ) : ?>
-                <?php echo spp_kq_render_void_round_button( (int) $round_number ); ?>
-            <?php endif; ?>
             <div class="kq-court-grid">
                 <?php foreach ( $courts as $court_name => $court ) :
                     $serving = $court['serving_team'] ?? null;
