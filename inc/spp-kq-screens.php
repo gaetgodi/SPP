@@ -1,8 +1,14 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Screens
-   Version: 1.33.0
+   Version: 1.34.0
    Date: 2026-09-26
+
+   Changes from 1.33.0: new 'roster_swap_positions' case in spp_kq_
+   handle_post_actions() -- hands two already-assigned user_ids to
+   spp_kq_swap_positions() (inc/spp-kq-live.php 1.14.0), which does all
+   the validation. Posted by the Swap Positions control on the live
+   Swap/Cancel screen (inc/spp-kq-roster.php 1.3.0).
 
    Changes from 1.32.0: Complete screen "Final round winners (Aces)"
    (spp_kq_render_complete_screen()) now reads the last round with a
@@ -3959,6 +3965,14 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date, ?st
             $swap_new = isset( $_POST['spp_kq_swap_new_user_id'] ) ? absint( $_POST['spp_kq_swap_new_user_id'] ) : 0;
             $swap_result = spp_kq_swap_player( $occurrence_id, $swap_old, $swap_new );
             return $swap_result['success'] ? '' : ( $swap_result['error'] ?? '' );
+
+        case 'roster_swap_positions':
+            // 1.34.0 -- trade two already-assigned players' slots. See
+            // spp_kq_swap_positions()'s own docblock (inc/spp-kq-live.php).
+            $pos_a = isset( $_POST['spp_kq_swap_pos_user_a'] ) ? absint( $_POST['spp_kq_swap_pos_user_a'] ) : 0;
+            $pos_b = isset( $_POST['spp_kq_swap_pos_user_b'] ) ? absint( $_POST['spp_kq_swap_pos_user_b'] ) : 0;
+            $pos_result = spp_kq_swap_positions( $occurrence_id, $pos_a, $pos_b );
+            return $pos_result['success'] ? '' : ( $pos_result['error'] ?? '' );
 
         case 'roster_fill_slot':
             // 1.1.0 -- re-staffs one EMPTY slot on a court

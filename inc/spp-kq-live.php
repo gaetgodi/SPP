@@ -1,8 +1,22 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Live Event Runner
-   Version: 1.13.0
+   Version: 1.14.0
    Date: 2026-09-26
+
+   Changes from 1.13.0 -- Swap Positions, reviewed and approved: new
+   spp_kq_swap_positions() trades two players who are BOTH already on a
+   court this round (same court or different courts), for a round where
+   everyone is present but lined up wrong. Replaces the 3-step
+   substitution workaround (placeholder in, A to B's slot, B to A's),
+   which briefly put a stranger on a court and could misattribute a
+   game if a score landed mid-rotation. Neither court may have reported
+   or be cancelled; re-checked under FOR UPDATE locks in one
+   transaction, one UPDATE for both rows (it trades court_name/team_
+   color, not user_id -- uq_slot makes a user_id CASE swap fail). No
+   gl_registrations change. Nothing else touched: movement, history,
+   Rebuild/Void/Reset and spp_kq_swap_player() are unchanged. UI: inc/
+   spp-kq-roster.php 1.3.0, POST case inc/spp-kq-screens.php 1.34.0.
 
    Changes from 1.12.0 -- reviewed and approved, after the 2026-09-25
    incident on occurrence 204 (round 2 voided when what was needed was
@@ -2233,6 +2247,124 @@ function spp_kq_swap_player( int $occurrence_id, int $old_user_id, int $new_user
     );
 
     return array( 'success' => true, 'error' => null, 'court_name' => $slot['court_name'], 'round' => $round );
+}
+
+/**
+ * 1.14.0: trade two ALREADY-assigned players' court/team_color slots in
+ * the current round -- for players who lined up wrong, where everyone
+ * who should be playing is there. Same court (a partner/team mix-up) or
+ * two different courts. Unlike spp_kq_swap_player() nobody is added or
+ * withdrawn: gl_registrations is never touched, no third person is ever
+ * on a court, and spp_kq_compute_next_round()/history/Rebuild never see
+ * anything but the corrected rows (they read spp_kq_assignments fresh).
+ *
+ * Neither court may have reported a score or be cancelled. Checked
+ * once up front for a friendly error, then again under lock:
+ *
+ * CONCURRENCY: one transaction. SELECT ... FOR UPDATE on the events row
+ * (current_round/phase still what the precondition saw -- every
+ * transition UPDATEs that row, so none can land mid-swap), then on both
+ * courts' score rows (a racing spp_kq_submit_court_score() UPDATE either
+ * committed first -- we see the score and refuse -- or waits and lands
+ * on the swapped lineup), then on both assignment rows (a racing
+ * spp_kq_swap_player() substitution can't remove either player between
+ * the check and the write). The write itself is a single CASE UPDATE
+ * that trades the two rows' court_name/team_color (see the comment on
+ * it for why not user_id), so the rows can never be left half-swapped;
+ * it must change exactly 2 rows or everything rolls back. Two players
+ * already on the same team of the same court are refused up front --
+ * trading them changes nothing.
+ *
+ * @return array ['success'=>bool, 'error'=>?string]
+ */
+function spp_kq_swap_positions( int $occurrence_id, int $user_a, int $user_b ) : array {
+    $pre = spp_kq_live_roster_precondition( $occurrence_id );
+    if ( $pre['error'] ) {
+        return array( 'success' => false, 'error' => $pre['error'] );
+    }
+    $round = $pre['round'];
+
+    if ( $user_a <= 0 || $user_b <= 0 ) {
+        return array( 'success' => false, 'error' => 'Please select a player to swap with.' );
+    }
+    if ( $user_a === $user_b ) {
+        return array( 'success' => false, 'error' => 'Pick a different player to swap with.' );
+    }
+
+    global $wpdb;
+    $events_table      = spp_kq_events_table();
+    $scores_table      = spp_kq_scores_table();
+    $assignments_table = spp_kq_assignments_table();
+
+    $wpdb->query( 'START TRANSACTION' );
+
+    $state = $wpdb->get_row( $wpdb->prepare(
+        "SELECT current_round, phase FROM {$events_table} WHERE occurrence_id = %d FOR UPDATE",
+        $occurrence_id
+    ), ARRAY_A );
+    if ( ! $state || (int) $state['current_round'] !== $round || ! in_array( $state['phase'], array( 'organizing', 'in_play' ), true ) ) {
+        $wpdb->query( 'ROLLBACK' );
+        return array( 'success' => false, 'error' => 'The round just changed -- refresh to see the current state.' );
+    }
+
+    $slots = $wpdb->get_results( $wpdb->prepare(
+        "SELECT id, user_id, court_name, team_color FROM {$assignments_table}
+         WHERE occurrence_id = %d AND round_number = %d AND user_id IN (%d, %d)
+         FOR UPDATE",
+        $occurrence_id, $round, $user_a, $user_b
+    ), ARRAY_A );
+    if ( count( $slots ) !== 2 ) {
+        $wpdb->query( 'ROLLBACK' );
+        return array( 'success' => false, 'error' => 'Both players must be on a court this round -- refresh to see the current state.' );
+    }
+
+    if ( $slots[0]['court_name'] === $slots[1]['court_name'] && $slots[0]['team_color'] === $slots[1]['team_color'] ) {
+        $wpdb->query( 'ROLLBACK' );
+        return array( 'success' => false, 'error' => 'Those two are already partners on the same team -- swapping them changes nothing.' );
+    }
+
+    $courts = array_values( array_unique( array_column( $slots, 'court_name' ) ) );
+    foreach ( $courts as $court ) {
+        $row = $wpdb->get_row( $wpdb->prepare(
+            "SELECT red_score, black_score, cancelled FROM {$scores_table}
+             WHERE occurrence_id = %d AND round_number = %d AND court_name = %s
+             FOR UPDATE",
+            $occurrence_id, $round, $court
+        ), ARRAY_A );
+        if ( $row && (int) $row['cancelled'] === 1 ) {
+            $wpdb->query( 'ROLLBACK' );
+            return array( 'success' => false, 'error' => "{$court} is cancelled for this round -- positions can't be swapped there." );
+        }
+        if ( $row && $row['red_score'] !== null && $row['black_score'] !== null ) {
+            $wpdb->query( 'ROLLBACK' );
+            return array( 'success' => false, 'error' => "{$court} has already reported its score for this round -- swap is no longer available." );
+        }
+    }
+
+    // Swap the two rows' SLOTS (court_name/team_color), not their
+    // user_ids: uq_slot is UNIQUE (occurrence_id, round_number, user_id)
+    // and MariaDB checks it row by row, so "SET user_id = CASE ..." fails
+    // with a duplicate key on the first row every time. Same end state --
+    // each player now sits in the other's slot -- and the values are
+    // current because both rows are locked above.
+    $s0 = $slots[0];
+    $s1 = $slots[1];
+    $affected = $wpdb->query( $wpdb->prepare(
+        "UPDATE {$assignments_table}
+         SET court_name = CASE id WHEN %d THEN %s WHEN %d THEN %s END,
+             team_color = CASE id WHEN %d THEN %s WHEN %d THEN %s END
+         WHERE occurrence_id = %d AND round_number = %d AND id IN (%d, %d) AND user_id IN (%d, %d)",
+        $s0['id'], $s1['court_name'], $s1['id'], $s0['court_name'],
+        $s0['id'], $s1['team_color'], $s1['id'], $s0['team_color'],
+        $occurrence_id, $round, $s0['id'], $s1['id'], $user_a, $user_b
+    ) );
+    if ( (int) $affected !== 2 ) {
+        $wpdb->query( 'ROLLBACK' );
+        return array( 'success' => false, 'error' => 'Swap failed -- nothing was changed. Please try again.' );
+    }
+
+    $wpdb->query( 'COMMIT' );
+    return array( 'success' => true, 'error' => null, 'courts' => $courts, 'round' => $round );
 }
 
 /**

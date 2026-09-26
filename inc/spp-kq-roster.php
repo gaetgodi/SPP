@@ -1,8 +1,20 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — KQ-Specific Roster Adjust
-   Version: 1.2.0
-   Date: 2026-09-17
+   Version: 1.3.0
+   Date: 2026-09-26
+
+   Changes from 1.2.0 -- Swap Positions, reviewed and approved: every
+   occupied slot on the live Swap/Cancel screen (spp_kq_render_live_
+   swap_screen()) gets a "Swap positions" button beside "Swap out". Its
+   dropdown lists only OTHER players already on a court this round whose
+   court hasn't reported and isn't cancelled (minus the player's own
+   teammate -- trading partners changes nothing), labelled with court and
+   team. Posts 'roster_swap_positions' (inc/spp-kq-screens.php 1.34.0)
+   -> spp_kq_swap_positions() (inc/spp-kq-live.php 1.14.0). For a round
+   where everyone is present but lined up wrong -- no registration
+   change, unlike Swap out. The screen only renders; the server
+   re-validates everything.
 
    Changes from 1.1.0 (Guest registrant, for a non-member filling in at a
    short-handed event -- reviewed/approved same day, needed for a live
@@ -485,10 +497,25 @@ function spp_kq_render_live_swap_screen( int $occurrence_id ) : string {
         ARRAY_A
     );
 
+    // 1.3.0: Swap Positions targets -- players on a court that can
+    // still change (not reported, not cancelled).
+    $swappable = array();
+    foreach ( $courts_order as $court ) {
+        if ( in_array( $court, $cancelled, true ) || spp_kq_court_has_reported( $occurrence_id, $round, $court ) ) {
+            continue;
+        }
+        foreach ( $slots[ $court ] ?? array() as $s ) {
+            if ( $s['user_id'] !== null ) {
+                $swappable[] = array( 'court' => $court ) + $s;
+            }
+        }
+    }
+
     ob_start();
     ?>
     <p class="kq-round-label">Round <?php echo esc_html( $round ); ?> &mdash; Swap / Cancel</p>
     <p class="kq-hint">Swap a player out for a replacement, or cancel a court's game for this round -- both only before that court reports its score.</p>
+    <p class="kq-hint">Everyone's here but lined up wrong? Use <strong>Swap positions</strong> to trade two players' spots -- nobody is added or removed.</p>
 
     <template id="kq-swap-options-template">
         <option value="">&mdash; Select &mdash;</option>
@@ -523,6 +550,9 @@ function spp_kq_render_live_swap_screen( int $occurrence_id ) : string {
                         <button type="button" class="kq-btn kq-btn-secondary kq-btn-small kq-swap-toggle" data-target="<?php echo esc_attr( $row_id ); ?>">
                             <?php echo $slot['user_id'] ? 'Swap out' : 'Assign'; ?>
                         </button>
+                        <?php if ( $slot['user_id'] ) : ?>
+                            <button type="button" class="kq-btn kq-btn-secondary kq-btn-small kq-swap-pos-toggle" data-target="<?php echo esc_attr( $row_id . '-pos' ); ?>">Swap positions</button>
+                        <?php endif; ?>
                         <form method="post" class="kq-inline-form kq-swap-form" id="<?php echo esc_attr( $row_id ); ?>" hidden>
                             <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
                             <?php if ( $slot['user_id'] ) : ?>
@@ -537,6 +567,23 @@ function spp_kq_render_live_swap_screen( int $occurrence_id ) : string {
                             <?php endif; ?>
                             <button type="submit" class="kq-btn kq-btn-primary kq-btn-small">Confirm</button>
                         </form>
+                        <?php if ( $slot['user_id'] ) : ?>
+                            <form method="post" class="kq-inline-form kq-swap-form" id="<?php echo esc_attr( $row_id . '-pos' ); ?>" hidden>
+                                <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
+                                <input type="hidden" name="spp_kq_action" value="roster_swap_positions">
+                                <input type="hidden" name="spp_kq_swap_pos_user_a" value="<?php echo esc_attr( $slot['user_id'] ); ?>">
+                                <select class="kq-swap-select" name="spp_kq_swap_pos_user_b" required>
+                                    <option value="">&mdash; Trade spots with &mdash;</option>
+                                    <?php foreach ( $swappable as $t ) :
+                                        if ( $t['user_id'] === $slot['user_id'] ) continue;
+                                        if ( $t['court'] === $court && $t['team_color'] === $slot['team_color'] ) continue; // own teammate
+                                    ?>
+                                        <option value="<?php echo esc_attr( $t['user_id'] ); ?>"><?php echo esc_html( $t['name'] . ' (' . $t['court'] . ', ' . ucfirst( $t['team_color'] ) . ')' ); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <button type="submit" class="kq-btn kq-btn-primary kq-btn-small">Confirm</button>
+                            </form>
+                        <?php endif; ?>
                     </div>
                 <?php endforeach; ?>
 
@@ -563,6 +610,12 @@ function spp_kq_render_live_swap_screen( int $occurrence_id ) : string {
                     select.dataset.populated = '1';
                 }
                 form.hidden = !form.hidden;
+            });
+        });
+        document.querySelectorAll('.kq-swap-pos-toggle').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                var form = document.getElementById(this.dataset.target);
+                if (form) form.hidden = !form.hidden;
             });
         });
     })();
