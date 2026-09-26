@@ -111,9 +111,12 @@ require_once get_stylesheet_directory() . '/inc/spp-kq-screens.php'; // [spp_kq_
 // outright (see inc/shortcodes.php's [spp_events] fix, same day, for
 // the fuller TEC-removal writeup).
 
-// Restrict category archive pages to published posts only
+// Restrict category archive pages to published posts only -- also the
+// /all-categories/ view (spp_blog_is_all_view_query(), inc/spp-blog-system.php).
+// Runs after the "Create and Assign Categories for Pages" plugin's own
+// pre_get_posts (theme loads later, same priority), so post_type=post wins.
 add_action('pre_get_posts', function($query) {
-    if ($query->is_category() && $query->is_main_query() && !is_admin()) {
+    if (($query->is_category() || spp_blog_is_all_view_query($query)) && $query->is_main_query() && !is_admin()) {
         $query->set('post_type', 'post');
         $query->set('post_status', 'publish');
     }

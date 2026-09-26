@@ -2,8 +2,44 @@
 /**
  * SPP Blog System
  * File: inc/spp-blog-system.php
- * Version: 1.6.0
+ * Version: 1.8.0
  * Date: 2026-09-26
+ *
+ * Changes from 1.7.0:
+ * - "All Categories" view at /all-categories/: every live post across
+ *   all categories, newest first, rendered by category.php (1.2.0) with
+ *   its own loop. Routed through the `request` filter (no rewrite rule,
+ *   nothing to flush); the query is post_type=post, publish, no paging
+ *   limit (category.php has no pagination), and functions.php's existing
+ *   category-archive pre_get_posts limit now also covers it. Never sets
+ *   cat/category_name, so the Categories-for-Pages plugin can't add pages.
+ * - Divi Theme Builder would otherwise treat it as the posts home and
+ *   apply template 20009628's body layout; et_theme_builder_template_
+ *   layouts drops only that body override for this view (header/footer
+ *   unchanged -- identical to what a category archive gets).
+ * - The /blog/ strip leads with "All Categories (N)", N = live posts
+ *   counted by spp_blog_live_category_count() with no term (null).
+ *
+ * Changes from 1.6.0:
+ * - Moderator "+ Add new category" under the category multi-select on
+ *   /edit-post/ ([spp_blog_edit]) and on every /pending-posts/ card
+ *   ([spp_pending_posts]): reveals a name field + Add, creates the
+ *   category over AJAX (spp_add_blog_category, wp_insert_term) and
+ *   selects it in place -- no reload. A name matching an existing
+ *   category case-insensitively (or colliding on slug) selects that
+ *   one instead. Gated by spp_can_moderate_blog() on both the screens
+ *   and the handler; never on [spp_blog_submit]. On pending-posts the
+ *   select fires its usual change event, so the existing auto-save
+ *   stores the new selection; edit-post still saves on submit.
+ * - /blog/ category filter strip: links to each /category/<slug>/
+ *   page with at least one live post, injected directly above the
+ *   page's Divi Blog module via render_block (page content and module
+ *   settings untouched).
+ * - spp_blog_live_category_count() / spp_blog_live_categories(): the
+ *   live-post count SQL, moved verbatim from single.php so the strip
+ *   and single.php (1.4.0) share it.
+ * - New css/spp-blog-categories.css, enqueued here, holds the pill
+ *   styles (moved from single.php), the strip and the add control.
  *
  * Changes from 1.5.0:
  * - All six moderation gates (spp_blog_edit_shortcode,
@@ -64,6 +100,7 @@
  *   [spp_blog_submit]    — frontend blog post submission form for all logged-in users
  *   [spp_blog_edit]      — frontend edit form for moderators/admins (reads ?post_id=)
  *   [spp_pending_posts]  — frontend moderator review interface (blog_moderator only)
+ *   (no shortcode)       — /blog/ category strip, via render_block on the Divi Blog module
  *
  * Features:
  *   - Author submits title, content, category, optional expiry date
@@ -379,6 +416,7 @@ function spp_blog_edit_shortcode() {
                     <option value="<?php echo $cat->term_id; ?>"<?php echo $selected; ?>><?php echo esc_html( $cat->name ); ?></option>
                     <?php endforeach; ?>
                 </select>
+                <?php echo spp_blog_add_category_control( '#spp_post_category' ); ?>
             </div>
 
             <div class="spp-blog-field">
@@ -519,6 +557,7 @@ function spp_pending_posts_shortcode() {
                         }
                         ?>
                     </select>
+                    <?php echo spp_blog_add_category_control( '.spp-pending-cat[data-post-id="' . $post->ID . '"]' ); ?>
                 </div>
                 <div class="spp-pending-field">
                     <label class="spp-pending-label">Expiry Date <span class="spp-blog-hint">(optional)</span></label>
@@ -914,4 +953,308 @@ function spp_ajax_delete_post() {
     } else {
         wp_send_json_error( 'Failed to delete post.' );
     }
+}
+
+// ============================================================
+// 1.7.0 — live-post category counts (shared by single.php and the
+// /blog/ strip). SQL moved verbatim from single.php 1.3.2: published
+// posts with no spp_blog_expiry or one not yet past -- the same set
+// category.php lists.
+// ============================================================
+// 1.8.0: $term_id null = live posts in any category or none (the
+// /all-categories/ total) -- same rule, just without the term join.
+function spp_blog_live_category_count( ?int $term_id ) : int {
+    global $wpdb;
+    $term_join  = $term_id === null ? '' : "JOIN {$wpdb->term_relationships} tr ON p.ID = tr.object_id
+         JOIN {$wpdb->term_taxonomy} tt ON tr.term_taxonomy_id = tt.term_taxonomy_id";
+    $term_where = $term_id === null ? '' : $wpdb->prepare( 'tt.term_id = %d AND', $term_id );
+    return (int) $wpdb->get_var( $wpdb->prepare(
+        "SELECT COUNT(DISTINCT p.ID) FROM {$wpdb->posts} p
+         {$term_join}
+         LEFT JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id AND pm.meta_key = 'spp_blog_expiry'
+         WHERE {$term_where}
+         p.post_type = 'post'
+         AND p.post_status = 'publish'
+         AND (pm.meta_value IS NULL OR pm.meta_value >= %s)",
+        date( 'Y-m-d' )
+    ) );
+}
+
+/**
+ * Every category with at least one live post, name order.
+ *
+ * @return array[] each ['term' => WP_Term, 'count' => int]
+ */
+function spp_blog_live_categories() : array {
+    $out = array();
+    foreach ( get_categories( array( 'hide_empty' => true ) ) as $cat ) {
+        $count = spp_blog_live_category_count( $cat->term_id );
+        if ( $count > 0 ) {
+            $out[] = array( 'term' => $cat, 'count' => $count );
+        }
+    }
+    return $out;
+}
+
+// ============================================================
+// 1.7.0 — /blog/ category filter strip, directly above the page's
+// Divi Blog module. Injected through render_block on that one module
+// so neither the page content nor the module's settings are touched;
+// each link is the existing /category/<slug>/ archive (category.php).
+// ============================================================
+const SPP_BLOG_PAGE_ID = 20009057;
+
+function spp_blog_category_strip_html() : string {
+    $live = spp_blog_live_categories();
+    if ( empty( $live ) ) {
+        return '';
+    }
+    $links = '<a href="' . esc_url( home_url( '/' . SPP_BLOG_ALL_SLUG . '/' ) ) . '" class="spp-cat-tag spp-cat-tag--outline">'
+           . 'All Categories <span class="spp-cat-count">(' . spp_blog_live_category_count( null ) . ')</span></a>';
+    foreach ( $live as $l ) {
+        $links .= '<a href="' . esc_url( get_category_link( $l['term']->term_id ) ) . '" class="spp-cat-tag spp-cat-tag--outline">'
+                . esc_html( $l['term']->name ) . ' <span class="spp-cat-count">(' . $l['count'] . ')</span></a>';
+    }
+    return '<nav class="spp-blog-cat-strip" aria-label="Blog categories">'
+         . '<span class="spp-filed-label">Browse by category:</span>'
+         . '<div class="spp-cat-tags">' . $links . '</div>'
+         . '</nav>';
+}
+
+add_filter( 'render_block', function ( $html, $block ) {
+    if ( ( $block['blockName'] ?? '' ) !== 'divi/blog' || is_admin() || ! is_page( SPP_BLOG_PAGE_ID ) ) {
+        return $html;
+    }
+    return spp_blog_category_strip_html() . $html;
+}, 10, 2 );
+
+// ============================================================
+// 1.8.0 — /all-categories/: every live post, rendered by category.php
+// ============================================================
+const SPP_BLOG_ALL_SLUG = 'all-categories';
+
+/**
+ * Whether $query (default: the main query) is the All Categories view.
+ */
+function spp_blog_is_all_view_query( ?WP_Query $query = null ) : bool {
+    $query = $query ?? $GLOBALS['wp_query'] ?? null;
+    return $query instanceof WP_Query && (bool) $query->get( 'spp_blog_all' );
+}
+
+// With the /%postname%/ permalink structure a bare /all-categories/
+// parses as name= or pagename= (no such post/page exists). Swap that for
+// the all-posts query before WP_Query runs -- no rewrite rule to flush.
+// Only an exact match with nothing else in the request (no paging, no
+// other vars) is taken over.
+add_filter( 'request', function ( $qv ) {
+    $slug = $qv['name'] ?? $qv['pagename'] ?? null;
+    if ( $slug !== SPP_BLOG_ALL_SLUG || array_diff( array_keys( $qv ), array( 'name', 'pagename', 'page' ) ) || ! empty( $qv['page'] ) ) {
+        return $qv;
+    }
+    return array(
+        'spp_blog_all'   => 1,
+        'post_type'      => 'post',
+        'post_status'    => 'publish',
+        'posts_per_page' => -1,
+        'orderby'        => 'date',
+        'order'          => 'DESC',
+    );
+} );
+
+add_filter( 'template_include', function ( $template ) {
+    if ( spp_blog_is_all_view_query() ) {
+        return locate_template( 'category.php' ) ?: $template;
+    }
+    return $template;
+} );
+
+// Divi Theme Builder: this query is is_home(), which matches template
+// 20009628's "archive:post_type:post" condition and would swap in its
+// body layout (20009622) instead of category.php. Give this view exactly
+// what a category archive gets -- same header/footer, no body override.
+add_filter( 'et_theme_builder_template_layouts', function ( $layouts ) {
+    if ( spp_blog_is_all_view_query() && isset( $layouts['et_body_layout'] ) ) {
+        $layouts['et_body_layout'] = array( 'id' => 0, 'enabled' => true, 'override' => false );
+    }
+    return $layouts;
+} );
+
+add_filter( 'document_title_parts', function ( $parts ) {
+    if ( spp_blog_is_all_view_query() ) {
+        $parts['title'] = 'All Categories';
+    }
+    return $parts;
+} );
+
+add_action( 'wp_enqueue_scripts', function () {
+    if ( is_singular( 'post' ) || is_page( array( SPP_BLOG_PAGE_ID, 'edit-post', 'pending-posts' ) ) ) {
+        wp_enqueue_style(
+            'spp-blog-categories',
+            get_stylesheet_directory_uri() . '/css/spp-blog-categories.css',
+            array( 'spp-tokens' ),
+            filemtime( get_stylesheet_directory() . '/css/spp-blog-categories.css' )
+        );
+    }
+} );
+
+// ============================================================
+// 1.7.0 — moderator "+ Add new category" (edit-post + pending-posts)
+// ============================================================
+
+/**
+ * Existing category whose name matches case-insensitively (and
+ * ignoring surrounding space / HTML-entity encoding -- WP stores "&"
+ * as "&amp;"), or null.
+ */
+function spp_blog_find_category_by_name( string $name ) : ?WP_Term {
+    $needle = mb_strtolower( trim( html_entity_decode( $name, ENT_QUOTES ) ) );
+    foreach ( get_categories( array( 'hide_empty' => false ) ) as $cat ) {
+        if ( mb_strtolower( trim( html_entity_decode( $cat->name, ENT_QUOTES ) ) ) === $needle ) {
+            return $cat;
+        }
+    }
+    return null;
+}
+
+/**
+ * The control, rendered under a category <select>. $target is a CSS
+ * selector for that select. Only ever called from the two moderator
+ * screens, after their spp_can_moderate_blog() gate -- never from
+ * [spp_blog_submit]. The AJAX handler re-checks the gate itself.
+ */
+function spp_blog_add_category_control( string $target ) : string {
+    static $script_done = false;
+    ob_start();
+    ?>
+    <div class="spp-add-cat" data-target="<?php echo esc_attr( $target ); ?>">
+        <button type="button" class="spp-add-cat-toggle">+ Add new category</button>
+        <div class="spp-add-cat-form" hidden>
+            <input type="text" class="spp-add-cat-input" placeholder="New category name" maxlength="100" aria-label="New category name">
+            <button type="button" class="spp-add-cat-btn">Add</button>
+            <span class="spp-add-cat-msg" role="status"></span>
+        </div>
+    </div>
+    <?php
+    if ( ! $script_done ) :
+        $script_done = true;
+    ?>
+    <script>
+    (function () {
+        var ajaxUrl = <?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>;
+        var nonce   = <?php echo wp_json_encode( wp_create_nonce( 'spp_add_blog_category' ) ); ?>;
+
+        // Put the option in every category select on the page (so other
+        // pending cards can use it too), in name order; select it only in
+        // the target.
+        function addOption(sel, id, name) {
+            var opt = sel.querySelector('option[value="' + id + '"]');
+            if (!opt) {
+                opt = new Option(name, id);
+                var before = null;
+                Array.prototype.some.call(sel.options, function (o) {
+                    if (o.value && o.text.localeCompare(name, undefined, {sensitivity: 'base'}) > 0) { before = o; return true; }
+                    return false;
+                });
+                sel.insertBefore(opt, before);
+            }
+            return opt;
+        }
+
+        function submit(wrap) {
+            var input = wrap.querySelector('.spp-add-cat-input');
+            var btn   = wrap.querySelector('.spp-add-cat-btn');
+            var msg   = wrap.querySelector('.spp-add-cat-msg');
+            var name  = input.value.trim();
+            if (!name) { input.focus(); return; }
+            btn.disabled = true;
+            msg.className = 'spp-add-cat-msg';
+            msg.textContent = 'Adding...';
+            var body = new FormData();
+            body.append('action', 'spp_add_blog_category');
+            body.append('nonce', nonce);
+            body.append('name', name);
+            fetch(ajaxUrl, {method: 'POST', body: body, credentials: 'same-origin'})
+                .then(function (r) { return r.json(); })
+                .then(function (res) {
+                    if (!res || !res.success) { throw new Error((res && res.data) || 'Could not add category.'); }
+                    var d = res.data;
+                    document.querySelectorAll('.spp-pending-cat, #spp_post_category').forEach(function (sel) {
+                        addOption(sel, d.term_id, d.name);
+                    });
+                    var target = document.querySelector(wrap.dataset.target);
+                    if (target) {
+                        addOption(target, d.term_id, d.name).selected = true;
+                        // Pending-posts auto-saves on change; edit-post saves on submit.
+                        target.dispatchEvent(new Event('change', {bubbles: true}));
+                    }
+                    msg.className = 'spp-add-cat-msg is-ok';
+                    msg.textContent = d.existed ? '"' + d.name + '" already exists -- selected it.' : 'Added "' + d.name + '" and selected it.';
+                    input.value = '';
+                })
+                .catch(function (e) {
+                    msg.className = 'spp-add-cat-msg is-err';
+                    msg.textContent = e.message;
+                })
+                .then(function () { btn.disabled = false; });
+        }
+
+        document.addEventListener('click', function (e) {
+            var t = e.target;
+            if (t.classList.contains('spp-add-cat-toggle')) {
+                var form = t.parentNode.querySelector('.spp-add-cat-form');
+                form.hidden = !form.hidden;
+                if (!form.hidden) { form.querySelector('.spp-add-cat-input').focus(); }
+            } else if (t.classList.contains('spp-add-cat-btn')) {
+                submit(t.closest('.spp-add-cat'));
+            }
+        });
+        // Enter adds the category instead of submitting the edit-post form.
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter' && e.target.classList.contains('spp-add-cat-input')) {
+                e.preventDefault();
+                submit(e.target.closest('.spp-add-cat'));
+            }
+        });
+    })();
+    </script>
+    <?php
+    endif;
+    return ob_get_clean();
+}
+
+add_action( 'wp_ajax_spp_add_blog_category', 'spp_ajax_add_blog_category' );
+function spp_ajax_add_blog_category() {
+    if ( ! wp_verify_nonce( $_POST['nonce'] ?? '', 'spp_add_blog_category' ) ) {
+        wp_send_json_error( 'Invalid nonce' );
+    }
+    if ( ! spp_can_moderate_blog() ) {
+        wp_send_json_error( 'Permission denied' );
+    }
+
+    $name = trim( sanitize_text_field( wp_unslash( $_POST['name'] ?? '' ) ) );
+    if ( $name === '' ) {
+        wp_send_json_error( 'Please enter a category name.' );
+    }
+    if ( mb_strlen( $name ) > 100 ) {
+        wp_send_json_error( 'Category name is too long (100 characters max).' );
+    }
+
+    $existing = spp_blog_find_category_by_name( $name );
+    if ( $existing ) {
+        wp_send_json_success( array( 'term_id' => (int) $existing->term_id, 'name' => html_entity_decode( $existing->name, ENT_QUOTES ), 'existed' => true ) );
+    }
+
+    $result = wp_insert_term( $name, 'category' );
+    if ( is_wp_error( $result ) ) {
+        // Different name, same slug (e.g. "Ladder!" vs "Ladder"): use that one.
+        $dupe_id = $result->get_error_data( 'term_exists' );
+        if ( $dupe_id ) {
+            $term = get_term( (int) $dupe_id, 'category' );
+            wp_send_json_success( array( 'term_id' => (int) $term->term_id, 'name' => html_entity_decode( $term->name, ENT_QUOTES ), 'existed' => true ) );
+        }
+        wp_send_json_error( 'Could not create category: ' . $result->get_error_message() );
+    }
+
+    $term = get_term( (int) $result['term_id'], 'category' );
+    wp_send_json_success( array( 'term_id' => (int) $term->term_id, 'name' => html_entity_decode( $term->name, ENT_QUOTES ), 'existed' => false ) );
 }

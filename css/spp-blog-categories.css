@@ -1,0 +1,151 @@
+/* =========================================================
+   SPP Blog — category pills, /blog/ filter strip, moderator
+   "+ Add new category" control
+   File: css/spp-blog-categories.css
+   Version: 1.0.0
+   Date: 2026-09-26
+
+   The pill rules (.spp-filed-under through the mobile block) moved
+   here verbatim from single.php 1.3.2's inline <style> so single.php
+   and the /blog/ strip share one copy. Enqueued by inc/spp-blog-
+   system.php on single posts, the /blog/ page, /edit-post/ and
+   /pending-posts/.
+   ========================================================= */
+
+/* ── Filed under / Browse categories ─────────────────── */
+.spp-filed-under,
+.spp-browse-cats {
+    margin: 1.5rem 0 0.5rem;
+    padding: 14px 16px;
+    background: var(--spp-item-bg, #eef7f6);
+    border-left: 4px solid var(--spp-primary, #00897B);
+    border-radius: 0 6px 6px 0;
+}
+
+.spp-browse-cats {
+    margin-top: 0.75rem;
+    border-left-color: var(--spp-accent, #004D40);
+}
+
+.spp-filed-label {
+    display: block;
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--spp-text-subtle, #555);
+    margin-bottom: 8px;
+}
+
+.spp-cat-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+}
+
+.spp-cat-tags--wrap {
+    margin-top: 6px;
+}
+
+/* Filled tag — "Filed under" */
+.spp-cat-tag {
+    display: inline-block;
+    background: var(--spp-primary, #00897B);
+    color: #fff !important;
+    text-decoration: none !important;
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-size: 0.88rem;
+    font-weight: 600;
+    transition: background 0.2s;
+    white-space: nowrap;
+}
+.spp-cat-tag:hover {
+    background: var(--spp-accent, #004D40) !important;
+    color: #fff !important;
+}
+
+/* Outline tag — "Browse all" */
+.spp-cat-tag--outline {
+    background: transparent;
+    color: var(--spp-primary, #00897B) !important;
+    border: 2px solid var(--spp-primary, #00897B);
+    padding: 3px 10px;
+}
+.spp-cat-tag--outline:hover {
+    background: var(--spp-primary, #00897B) !important;
+    color: #fff !important;
+}
+
+.spp-cat-count {
+    font-weight: 400;
+    font-size: 0.82rem;
+    opacity: 0.85;
+}
+
+/* Mobile */
+@media (max-width: 600px) {
+    .spp-filed-under,
+    .spp-browse-cats {
+        padding: 12px;
+    }
+    .spp-cat-tag {
+        font-size: 0.85rem;
+        padding: 5px 12px;
+        min-height: 36px;
+        display: inline-flex;
+        align-items: center;
+    }
+}
+
+/* ── /blog/ category filter strip (above the Divi Blog module) ── */
+.spp-blog-cat-strip {
+    margin: 0 0 1.5rem;
+    padding: 14px 16px;
+    background: var(--spp-item-bg, #eef7f6);
+    border-left: 4px solid var(--spp-accent, #004D40);
+    border-radius: 0 6px 6px 0;
+}
+
+/* ── Moderator "+ Add new category" control ── */
+.spp-add-cat { margin-top: 6px; font-size: 0.9rem; }
+.spp-add-cat-toggle {
+    background: none !important;
+    border: none !important;
+    padding: 0 !important;
+    color: var(--spp-primary, #00897B) !important;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 0.9rem !important;
+}
+.spp-add-cat-toggle:hover { text-decoration: underline; }
+.spp-add-cat-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+    margin-top: 6px;
+}
+.spp-add-cat-form[hidden] { display: none; }
+.spp-add-cat-input {
+    flex: 1 1 160px;
+    max-width: 260px;
+    padding: 6px 8px !important;
+    border: 1px solid #ccc !important;
+    border-radius: 4px !important;
+    font-size: 0.9rem !important;
+}
+.spp-add-cat-btn {
+    background: var(--spp-primary, #00897B) !important;
+    color: #fff !important;
+    border: none !important;
+    border-radius: 4px !important;
+    padding: 6px 14px !important;
+    font-size: 0.9rem !important;
+    cursor: pointer;
+}
+.spp-add-cat-btn:disabled { opacity: 0.6; cursor: default; }
+.spp-add-cat-msg { font-size: 0.85rem; }
+.spp-add-cat-msg.is-ok { color: green; }
+.spp-add-cat-msg.is-err { color: #c0392b; }

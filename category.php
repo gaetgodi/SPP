@@ -2,8 +2,14 @@
 /**
  * Blog Category Template
  * File: category.php
- * Version: 1.1.0
- * Date: 2026-05-27
+ * Version: 1.2.0
+ * Date: 2026-09-26
+ *
+ * Changes from 1.1.0:
+ * - Also renders /all-categories/ (every live post, no category
+ *   restriction -- see spp_blog_is_all_view_query(), inc/spp-blog-
+ *   system.php 1.8.0). Only the <h1> differs ("All Categories"); the
+ *   loop, including its skip-expired check, is shared unchanged.
  *
  * Changes from 1.0.0:
  * - Excludes expired posts from listing
@@ -14,7 +20,7 @@ get_header();
 <div id="et-main-area" style="background-color: var(--spp-bg-page); padding: 2rem 0;">
     <div class="et_pb_row et_flex_row spp-two-col-row">
         <div class="et_pb_column et_flex_column et_flex_column_18_24" id="content_column">
-            <h1 class="entry-title"><?php single_cat_title('Category: '); ?></h1>
+            <h1 class="entry-title"><?php if ( spp_blog_is_all_view_query() ) { echo 'All Categories'; } else { single_cat_title('Category: '); } ?></h1>
             <?php if ( have_posts() ) : while ( have_posts() ) : the_post();
                 // Skip expired posts
                 $expiry = get_post_meta( get_the_ID(), 'spp_blog_expiry', true );

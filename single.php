@@ -2,8 +2,16 @@
 /**
  * Single Blog Post Template
  * File: single.php
- * Version: 1.3.2
+ * Version: 1.4.0
  * Date: 2026-09-26
+ *
+ * Changes from 1.3.2 (no visible change):
+ * - "Filed under" / "Browse all blog categories" counts now call
+ *   spp_blog_live_category_count() / spp_blog_live_categories()
+ *   (inc/spp-blog-system.php 1.7.0) -- the same SQL, moved verbatim so
+ *   the new /blog/ category strip shares it instead of copying it.
+ * - Category pill CSS moved verbatim to css/spp-blog-categories.css
+ *   (enqueued on single posts) so the /blog/ strip shares it.
  *
  * Changes from 1.3.1:
  * - Edit/Delete links now shown only when spp_can_moderate_blog()
@@ -61,25 +69,12 @@ get_header();
                 <?php endif; ?>
 
                 <?php
-                $today_date = date('Y-m-d');
-                global $wpdb;
-
                 // ── Filed under ──────────────────────────────
-                $categories = get_the_category();
+                // Live-post counting is spp_blog_live_category_count()
+                // (inc/spp-blog-system.php), shared with the /blog/ strip.
                 $filed_cats = [];
-                foreach ($categories as $cat) {
-                    $count = $wpdb->get_var($wpdb->prepare(
-                        "SELECT COUNT(DISTINCT p.ID) FROM {$wpdb->posts} p
-                         JOIN {$wpdb->term_relationships} tr ON p.ID = tr.object_id
-                         JOIN {$wpdb->term_taxonomy} tt ON tr.term_taxonomy_id = tt.term_taxonomy_id
-                         LEFT JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id AND pm.meta_key = 'spp_blog_expiry'
-                         WHERE tt.term_id = %d
-                         AND p.post_type = 'post'
-                         AND p.post_status = 'publish'
-                         AND (pm.meta_value IS NULL OR pm.meta_value >= %s)",
-                        $cat->term_id, $today_date
-                    ));
-                    if ($count > 0) {
+                foreach (get_the_category() as $cat) {
+                    if (spp_blog_live_category_count($cat->term_id) > 0) {
                         $filed_cats[] = '<a href="' . get_category_link($cat->term_id) . '" class="spp-cat-tag">' . esc_html($cat->name) . '</a>';
                     }
                 }
@@ -92,24 +87,10 @@ get_header();
 
                 <?php
                 // ── Browse all categories ────────────────────
-                $all_cats = get_categories(['hide_empty' => true]);
                 $browse_cats = [];
-                foreach ($all_cats as $cat) {
-                    $count = $wpdb->get_var($wpdb->prepare(
-                        "SELECT COUNT(DISTINCT p.ID) FROM {$wpdb->posts} p
-                         JOIN {$wpdb->term_relationships} tr ON p.ID = tr.object_id
-                         JOIN {$wpdb->term_taxonomy} tt ON tr.term_taxonomy_id = tt.term_taxonomy_id
-                         LEFT JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id AND pm.meta_key = 'spp_blog_expiry'
-                         WHERE tt.term_id = %d
-                         AND p.post_type = 'post'
-                         AND p.post_status = 'publish'
-                         AND (pm.meta_value IS NULL OR pm.meta_value >= %s)",
-                        $cat->term_id, $today_date
-                    ));
-                    if ($count > 0) {
-                        $browse_cats[] = '<a href="' . get_category_link($cat->term_id) . '" class="spp-cat-tag spp-cat-tag--outline">'
-                            . esc_html($cat->name) . ' <span class="spp-cat-count">(' . $count . ')</span></a>';
-                    }
+                foreach (spp_blog_live_categories() as $live) {
+                    $browse_cats[] = '<a href="' . get_category_link($live['term']->term_id) . '" class="spp-cat-tag spp-cat-tag--outline">'
+                        . esc_html($live['term']->name) . ' <span class="spp-cat-count">(' . $live['count'] . ')</span></a>';
                 }
                 if (!empty($browse_cats)): ?>
                 <div class="spp-browse-cats">
@@ -134,92 +115,6 @@ get_header();
     font-weight: 600;
 }
 
-/* ── Filed under / Browse categories ─────────────────── */
-.spp-filed-under,
-.spp-browse-cats {
-    margin: 1.5rem 0 0.5rem;
-    padding: 14px 16px;
-    background: var(--spp-item-bg, #eef7f6);
-    border-left: 4px solid var(--spp-primary, #00897B);
-    border-radius: 0 6px 6px 0;
-}
-
-.spp-browse-cats {
-    margin-top: 0.75rem;
-    border-left-color: var(--spp-accent, #004D40);
-}
-
-.spp-filed-label {
-    display: block;
-    font-size: 0.78rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--spp-text-subtle, #555);
-    margin-bottom: 8px;
-}
-
-.spp-cat-tags {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    align-items: center;
-}
-
-.spp-cat-tags--wrap {
-    margin-top: 6px;
-}
-
-/* Filled tag — "Filed under" */
-.spp-cat-tag {
-    display: inline-block;
-    background: var(--spp-primary, #00897B);
-    color: #fff !important;
-    text-decoration: none !important;
-    padding: 4px 12px;
-    border-radius: 999px;
-    font-size: 0.88rem;
-    font-weight: 600;
-    transition: background 0.2s;
-    white-space: nowrap;
-}
-.spp-cat-tag:hover {
-    background: var(--spp-accent, #004D40) !important;
-    color: #fff !important;
-}
-
-/* Outline tag — "Browse all" */
-.spp-cat-tag--outline {
-    background: transparent;
-    color: var(--spp-primary, #00897B) !important;
-    border: 2px solid var(--spp-primary, #00897B);
-    padding: 3px 10px;
-}
-.spp-cat-tag--outline:hover {
-    background: var(--spp-primary, #00897B) !important;
-    color: #fff !important;
-}
-
-.spp-cat-count {
-    font-weight: 400;
-    font-size: 0.82rem;
-    opacity: 0.85;
-}
-
-/* Mobile */
-@media (max-width: 600px) {
-    .spp-filed-under,
-    .spp-browse-cats {
-        padding: 12px;
-    }
-    .spp-cat-tag {
-        font-size: 0.85rem;
-        padding: 5px 12px;
-        min-height: 36px;
-        display: inline-flex;
-        align-items: center;
-    }
-}
 </style>
 
 <script>
