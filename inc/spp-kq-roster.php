@@ -1,8 +1,18 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — KQ-Specific Roster Adjust
-   Version: 1.3.0
-   Date: 2026-09-26
+   Version: 1.4.0
+   Date: 2026-09-27
+
+   Changes from 1.3.0 -- Swap Positions on a played round: new
+   spp_kq_get_past_swap_rounds() and spp_kq_render_past_swap_round(),
+   the round list and per-round roster picker for the Full Scoreboard's
+   "Fix a round" panel (inc/spp-kq-screens.php 1.35.0). Same Swap
+   positions toggle/dropdown as the live Swap/Cancel screen, for any
+   round 1..current, scored courts included; cancelled courts and empty
+   slots are shown but not swappable. Posts 'past_swap_positions' ->
+   spp_kq_swap_positions_past_round() (inc/spp-kq-live.php 1.15.0). The
+   live Swap/Cancel screen itself is unchanged.
 
    Changes from 1.2.0 -- Swap Positions, reviewed and approved: every
    occupied slot on the live Swap/Cancel screen (spp_kq_render_live_
@@ -620,6 +630,136 @@ function spp_kq_render_live_swap_screen( int $occurrence_id ) : string {
         });
     })();
     </script>
+    <?php
+    return ob_get_clean();
+}
+
+// =============================================================
+// Past-round Swap Positions picker (1.4.0) -- rendered inside the Full
+// Scoreboard's "Fix a round" panel (spp_kq_render_full_scoreboard_
+// screen(), inc/spp-kq-screens.php), not on this file's own screens.
+// =============================================================
+
+/**
+ * Rounds the "Fix a round" Swap Positions picker offers: 1..current,
+ * newest first, each with at least two players on non-cancelled courts
+ * (anything less has nothing to trade). Round 1 is left out while its
+ * draw is unfinished -- spp_kq_live_roster_precondition() would refuse.
+ *
+ * @return int[]
+ */
+function spp_kq_get_past_swap_rounds( int $occurrence_id, int $current_round ) : array {
+    $rounds = array();
+    for ( $n = $current_round; $n >= 1; $n-- ) {
+        if ( $n === 1 && spp_kq_count_unclaimed( $occurrence_id, 1 ) > 0 ) {
+            continue;
+        }
+        $cancelled = spp_kq_get_cancelled_courts( $occurrence_id, $n );
+        $players   = 0;
+        foreach ( spp_kq_get_round_slots_detailed( $occurrence_id, $n ) as $court => $court_slots ) {
+            if ( in_array( $court, $cancelled, true ) ) {
+                continue;
+            }
+            foreach ( $court_slots as $s ) {
+                if ( $s['user_id'] !== null ) {
+                    $players++;
+                }
+            }
+        }
+        if ( $players >= 2 ) {
+            $rounds[] = $n;
+        }
+    }
+    return $rounds;
+}
+
+/**
+ * One round's roster for the "Fix a round" Swap Positions picker: every
+ * court card (score or "no score yet", cancelled courts and empty slots
+ * shown but not swappable), and on each occupied slot the same "Swap
+ * positions" toggle + trade-with dropdown as the live Swap/Cancel screen
+ * above -- minus the player's own teammate. Rendered hidden; the panel's
+ * round <select> reveals one. Posts 'past_swap_positions' ->
+ * spp_kq_swap_positions_past_round() (inc/spp-kq-live.php 1.15.0), which
+ * re-validates everything. data-reported (on the wrapper) lists courts
+ * that already have a score, so the panel's script can ask for
+ * confirmation before crediting a recorded score to someone else.
+ */
+function spp_kq_render_past_swap_round( int $occurrence_id, int $round, int $current_round ) : string {
+    $courts_order = spp_kq_determine_courts_order( $occurrence_id );
+    $slots        = spp_kq_get_round_slots_detailed( $occurrence_id, $round );
+    $cancelled    = spp_kq_get_cancelled_courts( $occurrence_id, $round );
+
+    $swappable = array();
+    $scores    = array();
+    $reported  = array();
+    foreach ( $courts_order as $court ) {
+        $scores[ $court ] = spp_kq_get_court_score( $occurrence_id, $round, $court );
+        if ( $scores[ $court ] && $scores[ $court ]['red_score'] !== null && $scores[ $court ]['black_score'] !== null ) {
+            $reported[] = $court;
+        }
+        if ( in_array( $court, $cancelled, true ) ) {
+            continue;
+        }
+        foreach ( $slots[ $court ] ?? array() as $s ) {
+            if ( $s['user_id'] !== null ) {
+                $swappable[] = array( 'court' => $court ) + $s;
+            }
+        }
+    }
+
+    ob_start();
+    ?>
+    <div class="kq-past-swap-round" data-round="<?php echo esc_attr( $round ); ?>" data-reported="<?php echo esc_attr( implode( '|', $reported ) ); ?>" hidden>
+        <div class="kq-court-grid">
+        <?php foreach ( $courts_order as $court ) :
+            $is_cancelled = in_array( $court, $cancelled, true );
+            $score        = $scores[ $court ];
+        ?>
+            <div class="kq-court-card">
+                <div class="kq-court-name"><?php echo esc_html( $court ); ?></div>
+                <?php if ( $is_cancelled ) : ?>
+                    <p class="kq-hint">Cancelled for this round &mdash; can't swap here.</p>
+                <?php elseif ( in_array( $court, $reported, true ) ) : ?>
+                    <p class="kq-hint">Scored: Red <?php echo esc_html( $score['red_score'] ); ?> &ndash; Black <?php echo esc_html( $score['black_score'] ); ?></p>
+                <?php else : ?>
+                    <p class="kq-hint">No score yet.</p>
+                <?php endif; ?>
+
+                <?php foreach ( $slots[ $court ] ?? array() as $i => $slot ) :
+                    $row_id = 'kq-pswap-' . $round . '-' . sanitize_title( $court ) . '-' . $i;
+                ?>
+                    <div class="kq-swap-row">
+                        <span class="kq-team-<?php echo esc_attr( $slot['team_color'] ); ?>">
+                            <?php echo esc_html( ucfirst( $slot['team_color'] ) ); ?>:
+                            <?php echo $slot['name'] ? esc_html( $slot['name'] ) : '(empty)'; ?>
+                        </span>
+                        <?php if ( $slot['user_id'] && ! $is_cancelled ) : ?>
+                            <button type="button" class="kq-btn kq-btn-secondary kq-btn-small kq-past-swap-toggle" data-target="<?php echo esc_attr( $row_id ); ?>">Swap positions</button>
+                            <form method="post" class="kq-inline-form kq-swap-form kq-past-swap-form" id="<?php echo esc_attr( $row_id ); ?>" data-court="<?php echo esc_attr( $court ); ?>" hidden>
+                                <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
+                                <input type="hidden" name="spp_kq_action" value="past_swap_positions">
+                                <input type="hidden" name="spp_kq_round" value="<?php echo esc_attr( $current_round ); ?>">
+                                <input type="hidden" name="spp_kq_swap_target_round" value="<?php echo esc_attr( $round ); ?>">
+                                <input type="hidden" name="spp_kq_swap_pos_user_a" value="<?php echo esc_attr( $slot['user_id'] ); ?>">
+                                <select class="kq-swap-select" name="spp_kq_swap_pos_user_b" required>
+                                    <option value="">&mdash; Trade spots with &mdash;</option>
+                                    <?php foreach ( $swappable as $t ) :
+                                        if ( $t['user_id'] === $slot['user_id'] ) continue;
+                                        if ( $t['court'] === $court && $t['team_color'] === $slot['team_color'] ) continue; // own teammate
+                                    ?>
+                                        <option value="<?php echo esc_attr( $t['user_id'] ); ?>" data-court="<?php echo esc_attr( $t['court'] ); ?>"><?php echo esc_html( $t['name'] . ' (' . $t['court'] . ', ' . ucfirst( $t['team_color'] ) . ')' ); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <button type="submit" class="kq-btn kq-btn-primary kq-btn-small">Confirm</button>
+                            </form>
+                        <?php endif; ?>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+        <?php endforeach; ?>
+        </div>
+    </div>
     <?php
     return ob_get_clean();
 }

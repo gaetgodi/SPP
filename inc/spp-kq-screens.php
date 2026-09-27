@@ -1,8 +1,31 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Screens
-   Version: 1.34.0
-   Date: 2026-09-26
+   Version: 1.35.0
+   Date: 2026-09-27
+
+   Changes from 1.34.0 -- Swap Positions on a played round, from the
+   Full Scoreboard's "Fix a round" panel:
+   - New "Swap positions in a round" section, first in the panel (any
+     facilitator, same gate as the panel). A round <select> (1..current,
+     spp_kq_get_past_swap_rounds()) reveals that round's roster
+     (spp_kq_render_past_swap_round(), inc/spp-kq-roster.php 1.4.0) with
+     the live screen's Swap positions picker. If either affected court
+     already has a score, confirm() first: "Round N already has scores.
+     Swapping will not change any scores -- only which players are
+     credited with them."
+   - New 'past_swap_positions' POST case -> spp_kq_swap_positions_past_
+     round() (inc/spp-kq-live.php 1.15.0). The live-round 'roster_swap_
+     positions' case is unchanged and still refuses a scored court.
+   - After a swap the scoreboard re-renders with kq_swapped=N (query arg
+     on the standalone page, POST field on the fragment endpoint;
+     SppKqLiveApp.showScoreboard() takes optional extra fields for it):
+     a success notice, plus "Rebuild Round N+1 now" when round N+1
+     exists and round N is complete. That button is an ordinary
+     'rebuild_round' form handled by the panel's existing Rebuild script
+     (same confirm, same spp_kq_transition_rebuild_round()) -- nothing
+     about Rebuild itself changed. The standalone page strips kq_swapped
+     from the address bar so a reload can't re-offer a stale prompt.
 
    Changes from 1.33.0: new 'roster_swap_positions' case in spp_kq_
    handle_post_actions() -- hands two already-assigned user_ids to
@@ -3974,6 +3997,18 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date, ?st
             $pos_result = spp_kq_swap_positions( $occurrence_id, $pos_a, $pos_b );
             return $pos_result['success'] ? '' : ( $pos_result['error'] ?? '' );
 
+        case 'past_swap_positions':
+            // 1.35.0 -- Full Scoreboard "Fix a round": trade two players'
+            // slots in any round 1..current, scored courts included.
+            // $round is the current round the scoreboard was rendered
+            // with. See spp_kq_swap_positions_past_round()
+            // (inc/spp-kq-live.php).
+            $past_target = isset( $_POST['spp_kq_swap_target_round'] ) ? absint( $_POST['spp_kq_swap_target_round'] ) : 0;
+            $past_a      = isset( $_POST['spp_kq_swap_pos_user_a'] ) ? absint( $_POST['spp_kq_swap_pos_user_a'] ) : 0;
+            $past_b      = isset( $_POST['spp_kq_swap_pos_user_b'] ) ? absint( $_POST['spp_kq_swap_pos_user_b'] ) : 0;
+            $past_result = spp_kq_swap_positions_past_round( $occurrence_id, $past_target, $round, $past_a, $past_b );
+            return $past_result['success'] ? '' : ( $past_result['error'] ?? '' );
+
         case 'roster_fill_slot':
             // 1.1.0 -- re-staffs one EMPTY slot on a court
             // spp_kq_transition_advance_round() re-created after a
@@ -4317,13 +4352,16 @@ function spp_kq_render_live_app( int $occurrence_id, array $state ) : string {
         // NOT touch lastSignature: the scoreboard is a client-side
         // overlay on top of whatever the real structural state is, not
         // itself a structural state poll() should ever compare against.
-        function showScoreboard() {
+        function showScoreboard(extra) {
             if (swapping) return;
             swapping = true;
             var data = new FormData();
             data.append('action', 'spp_kq_render_scoreboard_fragment');
             data.append('nonce', nonce);
             data.append('occ', occ);
+            // 1.35.0: optional extra fields (kq_swapped after a "Fix a
+            // round" swap). The link's own click passes none.
+            if (extra) Object.keys(extra).forEach(function(k) { data.append(k, extra[k]); });
             fetch(ajaxUrl, { method: 'POST', body: data, credentials: 'same-origin' })
                 .then(function(r) { return r.json(); })
                 .then(function(res) {
@@ -4654,7 +4692,8 @@ function spp_kq_live_shortcode() : string {
     }
 
     if ( $viewing_scoreboard ) {
-        echo spp_kq_render_full_scoreboard_screen( $occurrence_id );
+        $kq_swapped = isset( $_GET['kq_swapped'] ) ? absint( $_GET['kq_swapped'] ) : 0;
+        echo spp_kq_render_full_scoreboard_screen( $occurrence_id, $kq_swapped );
     } elseif ( $viewing_roster ) {
         echo spp_kq_render_roster_screen( $occurrence_id );
     } else {
@@ -4736,7 +4775,7 @@ function spp_kq_live_shortcode() : string {
  * this visibility check and that function's real enforcement can never
  * disagree about when correction is allowed.
  */
-function spp_kq_render_full_scoreboard_screen( int $occurrence_id ) : string {
+function spp_kq_render_full_scoreboard_screen( int $occurrence_id, int $swapped_round = 0 ) : string {
     $scoreboard = spp_kq_get_full_scoreboard( $occurrence_id );
     $state      = spp_kq_get_event_state( $occurrence_id );
     $editable   = ! $state || ! in_array( $state['phase'], array( 'complete', 'cancelled' ), true );
@@ -4767,6 +4806,16 @@ function spp_kq_render_full_scoreboard_screen( int $occurrence_id ) : string {
         }
     }
 
+    // 1.35.0: Swap positions in any round 1..current (scored courts
+    // included), and -- right after one ($swapped_round, see the
+    // dispatcher/fragment endpoint) -- a one-click Rebuild of the round
+    // after it, offered only when Rebuild itself would accept it.
+    $swap_rounds    = $in_progress ? spp_kq_get_past_swap_rounds( $occurrence_id, $current_round ) : array();
+    $just_swapped   = ( $in_progress && $swapped_round >= 1 && $swapped_round <= $current_round ) ? $swapped_round : 0;
+    $rebuild_prompt = ( $just_swapped && $just_swapped < $current_round && spp_kq_round_is_complete( $occurrence_id, $just_swapped ) )
+        ? $just_swapped + 1
+        : 0;
+
     ob_start();
     ?>
     <p class="kq-round-label">Full Scoreboard</p>
@@ -4780,11 +4829,45 @@ function spp_kq_render_full_scoreboard_screen( int $occurrence_id ) : string {
     ?>
     <?php echo spp_kq_render_scoreboard_markup( $scoreboard, 'No scores entered yet.', $editable, $occurrence_id ); ?>
 
-    <?php if ( $rebuild_rounds || $void_rounds ) : ?>
+    <?php if ( $rebuild_rounds || $void_rounds || $swap_rounds || $just_swapped ) : ?>
     <div class="kq-round-actions" id="kq-round-actions">
         <h3 class="kq-picker-section-heading">Fix a round</h3>
         <p class="kq-hint">Correcting a score above only changes that score. The actions below change whole rounds.</p>
         <div class="kq-notice kq-notice-err" id="kq-round-action-msg" style="display:none;"></div>
+
+        <?php if ( $just_swapped ) : ?>
+        <div class="kq-notice kq-notice-ok" id="kq-past-swap-done">
+            Positions swapped in round <?php echo esc_html( $just_swapped ); ?>. Scores are unchanged.
+            <?php if ( $rebuild_prompt ) : ?>
+                <br>Round <?php echo esc_html( $rebuild_prompt ); ?> was set up from the old round <?php echo esc_html( $just_swapped ); ?> lineup.
+                <form method="post" class="kq-inline-form kq-round-action-form" data-kind="rebuild" style="margin-top:8px;">
+                    <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
+                    <input type="hidden" name="spp_kq_action" value="rebuild_round">
+                    <input type="hidden" name="spp_kq_round" value="<?php echo esc_attr( $current_round ); ?>">
+                    <input type="hidden" name="spp_kq_expected_announced" value="<?php echo esc_attr( $state['courts_announced_at'] ?? '' ); ?>">
+                    <input type="hidden" name="spp_kq_target_round" class="kq-round-action-select" value="<?php echo esc_attr( $rebuild_prompt ); ?>">
+                    <button type="submit" class="kq-btn kq-btn-primary">Rebuild Round <?php echo esc_html( $rebuild_prompt ); ?> now</button>
+                </form>
+            <?php endif; ?>
+        </div>
+        <?php endif; ?>
+
+        <?php if ( $swap_rounds ) : ?>
+        <div class="kq-round-action">
+            <p><strong>Swap positions in a round</strong> &mdash; two players lined up in each other's spots? Trade them. Scores stay exactly as entered; only which players they count for changes. Nobody is added or removed.</p>
+            <label class="kq-duration-label">Round<br>
+                <select id="kq-past-swap-round-select">
+                    <option value="">&mdash; Pick a round &mdash;</option>
+                    <?php foreach ( $swap_rounds as $n ) : ?>
+                        <option value="<?php echo esc_attr( $n ); ?>">Round <?php echo esc_html( $n ); ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </label>
+            <?php foreach ( $swap_rounds as $n ) {
+                echo spp_kq_render_past_swap_round( $occurrence_id, $n, $current_round );
+            } ?>
+        </div>
+        <?php endif; ?>
 
         <?php if ( $rebuild_rounds ) : ?>
         <div class="kq-round-action">
@@ -4843,6 +4926,79 @@ function spp_kq_render_full_scoreboard_screen( int $occurrence_id ) : string {
             var span = n < lastRound ? 'rounds ' + n + ' to ' + lastRound : 'round ' + n;
             return 'PERMANENTLY VOID ' + span + '?\n\nEvery game in ' + span + ' is thrown out: removed from history, Club Ratings and rankings.' +
                 '\n\nThis does NOT rebuild or replay anything, and it cannot be undone. For new court assignments instead, cancel and use Rebuild.';
+        }
+
+        // 1.35.0: Swap positions in a round.
+        var swapSel = document.getElementById('kq-past-swap-round-select');
+        if (swapSel) {
+            swapSel.addEventListener('change', function() {
+                var v = swapSel.value;
+                document.querySelectorAll('.kq-past-swap-round').forEach(function(el) {
+                    el.hidden = el.getAttribute('data-round') !== v;
+                });
+            });
+        }
+        document.querySelectorAll('.kq-past-swap-toggle').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                var form = document.getElementById(this.dataset.target);
+                if (form) form.hidden = !form.hidden;
+            });
+        });
+        document.querySelectorAll('.kq-past-swap-form').forEach(function(form) {
+            form.addEventListener('submit', function(e) {
+                e.preventDefault();
+                var select = form.querySelector('.kq-swap-select');
+                var opt = select.options[select.selectedIndex];
+                if (!select.value) return;
+                var n = parseInt(form.querySelector('[name="spp_kq_swap_target_round"]').value, 10);
+                var wrap = form.closest('.kq-past-swap-round');
+                var reported = (wrap.getAttribute('data-reported') || '').split('|');
+                if (reported.indexOf(form.dataset.court) !== -1 || reported.indexOf(opt.dataset.court) !== -1) {
+                    if (!confirm('Round ' + n + ' already has scores. Swapping will not change any scores \u2014 only which players are credited with them.')) return;
+                }
+                var btn = form.querySelector('button[type="submit"]');
+                btn.disabled = true;
+                if (msgEl) msgEl.style.display = 'none';
+                var data = new FormData(form);
+                data.append('action', 'spp_kq_live_action');
+                data.append('occ', occ);
+                fetch(ajaxUrl, { method: 'POST', body: data, credentials: 'same-origin' })
+                    .then(function(r) { return r.json(); })
+                    .then(function(res) {
+                        if (!res.success) {
+                            btn.disabled = false;
+                            if (msgEl) { msgEl.textContent = res.data || 'That didn\'t work.'; msgEl.style.display = 'block'; msgEl.scrollIntoView({ block: 'center' }); }
+                            return;
+                        }
+                        // Re-render the scoreboard with the success notice
+                        // (and the Rebuild prompt, when there's a later round).
+                        if (window.SppKqLiveApp && SppKqLiveApp.showScoreboard) {
+                            SppKqLiveApp.showScoreboard({ kq_swapped: n });
+                        } else {
+                            var u = new URL(window.location.href);
+                            u.searchParams.set('kq_view', 'scoreboard');
+                            u.searchParams.set('kq_swapped', n);
+                            window.location.href = u.toString();
+                        }
+                    })
+                    .catch(function() {
+                        btn.disabled = false;
+                        if (msgEl) { msgEl.textContent = 'Network error -- try again.'; msgEl.style.display = 'block'; }
+                    });
+            });
+        });
+        var swapDone = document.getElementById('kq-past-swap-done');
+        if (swapDone) {
+            swapDone.scrollIntoView({ block: 'center' });
+            // Standalone page: drop kq_swapped so a reload can't re-offer
+            // a Rebuild prompt that's already been used.
+            try {
+                var cu = new URL(window.location.href);
+                if (cu.searchParams.has('kq_swapped')) {
+                    cu.searchParams.delete('kq_swapped');
+                    history.replaceState(history.state, '', cu.toString());
+                }
+            } catch (err) {}
         }
 
         document.querySelectorAll('.kq-round-action-form').forEach(function(form) {
@@ -4909,11 +5065,11 @@ function spp_kq_render_full_scoreboard_screen( int $occurrence_id ) : string {
  * this fragment's own "Back to game" link by a day and was never
  * reconciled with it -- see that function's own 1.26.0 docblock note).
  */
-function spp_kq_render_scoreboard_fragment( int $occurrence_id ) : string {
+function spp_kq_render_scoreboard_fragment( int $occurrence_id, int $swapped_round = 0 ) : string {
     ob_start();
     ?>
     <p class="kq-hint"><a href="#" id="kq-back-to-game-link">&laquo; Back to game</a></p>
-    <?php echo spp_kq_render_full_scoreboard_screen( $occurrence_id ); ?>
+    <?php echo spp_kq_render_full_scoreboard_screen( $occurrence_id, $swapped_round ); ?>
     <script>
     (function() {
         var backLink = document.getElementById('kq-back-to-game-link');
@@ -5295,7 +5451,9 @@ add_action( 'wp_ajax_spp_kq_render_scoreboard_fragment', function() {
         wp_send_json_error( 'Missing parameters.' );
     }
 
-    wp_send_json_success( array( 'html' => spp_kq_render_scoreboard_fragment( $occurrence_id ) ) );
+    // 1.35.0: kq_swapped -- the round a "Fix a round" swap just changed.
+    $swapped_round = isset( $_POST['kq_swapped'] ) ? absint( $_POST['kq_swapped'] ) : 0;
+    wp_send_json_success( array( 'html' => spp_kq_render_scoreboard_fragment( $occurrence_id, $swapped_round ) ) );
 } );
 
 /**

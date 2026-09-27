@@ -1,8 +1,23 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Live Event Runner
-   Version: 1.14.0
-   Date: 2026-09-26
+   Version: 1.15.0
+   Date: 2026-09-27
+
+   Changes from 1.14.0 -- Swap Positions on a played round: new
+   spp_kq_swap_positions_past_round(), the Full Scoreboard "Fix a round"
+   entry point (inc/spp-kq-screens.php 1.35.0). Same trade as the live-
+   round swap, for any round 1..current, with the "court has already
+   reported" refusal skipped -- scores are never written, so the swap
+   only changes which players a recorded score is credited to. Every
+   other guard is kept (precondition, cancelled court, same-team
+   partners, locked re-check, round/phase unchanged since the screen
+   loaded -- checked against the scoreboard's current round, not the
+   target round). The locked body moved verbatim into the new shared
+   spp_kq_swap_positions_locked(); spp_kq_swap_positions() calls it with
+   the reported-court refusal ON and behaves exactly as in 1.14.0. A
+   later round built from the old lineup is left alone -- the scoreboard
+   offers the existing, unchanged Rebuild Round for it.
 
    Changes from 1.13.0 -- Swap Positions, reviewed and approved: new
    spp_kq_swap_positions() trades two players who are BOTH already on a
@@ -2283,7 +2298,54 @@ function spp_kq_swap_positions( int $occurrence_id, int $user_a, int $user_b ) :
         return array( 'success' => false, 'error' => $pre['error'] );
     }
     $round = $pre['round'];
+    return spp_kq_swap_positions_locked( $occurrence_id, $round, $round, $user_a, $user_b, false );
+}
 
+/**
+ * 1.15.0: Swap Positions on ANY round 1..current, including one whose
+ * courts have already reported -- the Full Scoreboard's "Fix a round"
+ * entry point, for a round that was played with two players credited to
+ * the wrong slots. Scores stay exactly as recorded (spp_kq_scores is
+ * never written); only which players they're credited to changes. A
+ * later round built from the wrong lineup is NOT touched -- the caller
+ * offers Rebuild Round (spp_kq_transition_rebuild_round(), unchanged)
+ * for that.
+ *
+ * Every guard of spp_kq_swap_positions() still applies except "court has
+ * already reported": same live-roster precondition, cancelled courts
+ * refused, same-team partners refused, same locked re-check. The round/
+ * phase check under lock compares against $expected_current_round (the
+ * current round the scoreboard was rendered with) instead of the target
+ * round, so an advance/rebuild/end landing after the screen loaded is
+ * refused rather than acted on unseen.
+ *
+ * @return array ['success'=>bool, 'error'=>?string, 'round'=>int,
+ *   'courts'=>array, 'had_scores'=>bool]
+ */
+function spp_kq_swap_positions_past_round( int $occurrence_id, int $target_round, int $expected_current_round, int $user_a, int $user_b ) : array {
+    $pre = spp_kq_live_roster_precondition( $occurrence_id );
+    if ( $pre['error'] ) {
+        return array( 'success' => false, 'error' => $pre['error'] );
+    }
+    if ( $pre['round'] !== $expected_current_round ) {
+        return array( 'success' => false, 'error' => 'The round just changed -- refresh to see the current state.' );
+    }
+    if ( $target_round < 1 || $target_round > $pre['round'] ) {
+        return array( 'success' => false, 'error' => 'Pick a round that has been played or is being played.' );
+    }
+    return spp_kq_swap_positions_locked( $occurrence_id, $target_round, $expected_current_round, $user_a, $user_b, true );
+}
+
+/**
+ * The locked read-check-write both Swap Positions entry points share
+ * (1.15.0, extracted from spp_kq_swap_positions() 1.14.0 -- see its
+ * docblock for the concurrency design). $round is the round whose
+ * assignments are traded; $expected_current_round is what the events
+ * row's current_round must still be. $allow_reported skips ONLY the
+ * "court has already reported" refusal -- false for the live-round flow,
+ * true for spp_kq_swap_positions_past_round().
+ */
+function spp_kq_swap_positions_locked( int $occurrence_id, int $round, int $expected_current_round, int $user_a, int $user_b, bool $allow_reported ) : array {
     if ( $user_a <= 0 || $user_b <= 0 ) {
         return array( 'success' => false, 'error' => 'Please select a player to swap with.' );
     }
@@ -2302,7 +2364,7 @@ function spp_kq_swap_positions( int $occurrence_id, int $user_a, int $user_b ) :
         "SELECT current_round, phase FROM {$events_table} WHERE occurrence_id = %d FOR UPDATE",
         $occurrence_id
     ), ARRAY_A );
-    if ( ! $state || (int) $state['current_round'] !== $round || ! in_array( $state['phase'], array( 'organizing', 'in_play' ), true ) ) {
+    if ( ! $state || (int) $state['current_round'] !== $expected_current_round || ! in_array( $state['phase'], array( 'organizing', 'in_play' ), true ) ) {
         $wpdb->query( 'ROLLBACK' );
         return array( 'success' => false, 'error' => 'The round just changed -- refresh to see the current state.' );
     }
@@ -2323,6 +2385,7 @@ function spp_kq_swap_positions( int $occurrence_id, int $user_a, int $user_b ) :
         return array( 'success' => false, 'error' => 'Those two are already partners on the same team -- swapping them changes nothing.' );
     }
 
+    $had_scores = false;
     $courts = array_values( array_unique( array_column( $slots, 'court_name' ) ) );
     foreach ( $courts as $court ) {
         $row = $wpdb->get_row( $wpdb->prepare(
@@ -2336,8 +2399,11 @@ function spp_kq_swap_positions( int $occurrence_id, int $user_a, int $user_b ) :
             return array( 'success' => false, 'error' => "{$court} is cancelled for this round -- positions can't be swapped there." );
         }
         if ( $row && $row['red_score'] !== null && $row['black_score'] !== null ) {
-            $wpdb->query( 'ROLLBACK' );
-            return array( 'success' => false, 'error' => "{$court} has already reported its score for this round -- swap is no longer available." );
+            if ( ! $allow_reported ) {
+                $wpdb->query( 'ROLLBACK' );
+                return array( 'success' => false, 'error' => "{$court} has already reported its score for this round -- swap is no longer available." );
+            }
+            $had_scores = true;
         }
     }
 
@@ -2364,7 +2430,7 @@ function spp_kq_swap_positions( int $occurrence_id, int $user_a, int $user_b ) :
     }
 
     $wpdb->query( 'COMMIT' );
-    return array( 'success' => true, 'error' => null, 'courts' => $courts, 'round' => $round );
+    return array( 'success' => true, 'error' => null, 'courts' => $courts, 'round' => $round, 'had_scores' => $had_scores );
 }
 
 /**
