@@ -43,15 +43,14 @@ This is the heart of the codebase (most of the line count in `inc/`). It runs a 
 roughly in pipeline order:
 
 1. **Registration** — players register for an event via GL Events plugin
-   (`{$wpdb->prefix}gl_registrations`, `gl_event_occurrences`). A legacy path via The Events Calendar
-   Pro (`{$wpdb->prefix}rtec_entries`) still exists in `spp-schedule-production.php` for older/parallel
-   flows — don't assume one table is the only source of truth; check which file you're in.
+   (`{$wpdb->prefix}gl_registrations`, `gl_event_occurrences`). This is the only registration path:
+   the old The Events Calendar Pro / `rtec_entries` path and its `spp-schedule-production.php` were
+   removed (2026-10-01; the file was no longer loaded and `rtec_entries` no longer exists).
 2. **Schedule production** (`gl-schedule-production.php`, shortcode `[spp_create_schedule]`) — the
    main algorithm. Reads registrants, builds `Master`/`Groups`/`Courts`/`Times`/`Schedules` tables,
    then runs multiple ranked "phases" (distribution, carpool pairing, travel-time preference swaps,
    rank-tolerance-bounded swaps) to balance groups by skill (`Rank`) while respecting travel-time
-   preferences and carpool pairings. `spp-schedule-production.php` is the older/parallel version of
-   this same pipeline (rtec_entries-based) — the version-history comment block at the top of
+   preferences and carpool pairings. The version-history comment block at the top of
    `gl-schedule-production.php` is the best source of truth for current algorithm behavior; read it
    before changing scheduling logic.
 3. **Publishing** (`gl-publish-schedule.php`, `[gl_publish_schedule]`) and **player-facing view**
