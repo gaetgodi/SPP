@@ -62,6 +62,87 @@ function spp_media_curator_render_page() {
             current album(s) too — copying is additive, never a move).
         </p>
 
+        <details class="spp-curator-help" style="background:#fff; border:1px solid #c3c4c7; border-left:4px solid #2271b1; padding:12px 20px; margin:15px 0 20px; max-width:980px;">
+            <summary style="cursor:pointer; font-size:15px; font-weight:600;">How photos and albums work (click to open)</summary>
+            <div style="font-size:14px; line-height:1.6;">
+
+                <h3>What an album is</h3>
+                <p>
+                    An <strong>album is a label</strong> you put on photos, not a folder. A photo can carry
+                    <strong>several album labels at once</strong>: the same picture can be in
+                    <em>All Photos</em> and <em>Ice Cream Social 2025</em> without being copied twice.
+                    Taking a photo out of an album only removes that label; the photo itself stays in the
+                    Media Library and in its other albums.
+                </p>
+                <p>
+                    Galleries on the website show whatever photos carry a given album label
+                    (<em>Media &rarr; Gallery Builder</em> makes the code you paste onto a page).
+                </p>
+
+                <h3>Add a photo to an album (or take it out)</h3>
+                <ol>
+                    <li>Go to <em>Media &rarr; Library</em> and click the photo.</li>
+                    <li>In the details on the right, find the <strong>Albums</strong> box. It lists the albums the photo is
+                        already in, by their short names (for example <em>all-photos</em>), separated by commas.</li>
+                    <li>To <strong>add</strong> it to an album, type a comma and then the album's name, for example
+                        <em>, Ice Cream Social 2025</em>. Either the full name or the short name works.</li>
+                    <li>To <strong>take it out</strong> of an album, delete that album's name from the box.</li>
+                    <li>Click anywhere outside the box. It saves on its own (on the full <em>Edit Media</em> screen, click
+                        <strong>Update</strong>).</li>
+                </ol>
+                <p>
+                    <strong>Watch for &ldquo;Created new album&rdquo;.</strong> If the name you type doesn't match an existing
+                    album exactly, a <em>new</em> album is made, and a green message saying
+                    <em>Created new album: &hellip;</em> appears in the bottom-right corner. If you didn't mean to make a new one,
+                    it was probably a spelling slip: take the photo out of the new album, add it to the right one, and delete
+                    the stray album on the Albums screen (see below).
+                </p>
+
+                <h3>Media Curator (this page): work on many photos at once</h3>
+                <ol>
+                    <li><strong>Pick a Source album</strong> at the top. Its photos are listed with their Title and Caption.</li>
+                    <li><strong>Edit titles and captions</strong> by typing in the boxes. Each change saves on its own when you
+                        click away. Titles also decide the order of a gallery set to sort by name.</li>
+                    <li><strong>Captions from titles:</strong> an empty caption shows the title in grey as a suggestion. Tick the
+                        <strong>Flag</strong> box on those rows (or the box at the top of the column for all of them) and click
+                        <strong>Copy title &rarr; caption for flagged rows</strong> to make them real captions.</li>
+                    <li><strong>Copy photos into another album:</strong> tick <strong>Select</strong> on the rows you want (or click
+                        their pictures), type or pick an album in <strong>Copy selected to</strong>, and click
+                        <strong>Copy selected &rarr;</strong>. The <strong>Copy</strong> button on a row does the same for just
+                        that photo.</li>
+                </ol>
+                <p>
+                    Copying only <strong>adds</strong> the album label: the photos stay in the album you're looking at too.
+                    Nothing is moved or duplicated. Typing a name that doesn't exist yet in <em>Copy selected to</em> creates a
+                    new album, and you'll see the <em>Created new album</em> message. Media Curator doesn't take photos out of
+                    albums; use the Albums box in the Media Library for that.
+                </p>
+
+                <h3>Deleting a photo is permanent</h3>
+                <p>
+                    This site has <strong>no Trash for photos</strong>. <em>Delete permanently</em> in the Media Library removes
+                    the photo from the website for good, <strong>from every album it was in</strong>, and it cannot be undone.
+                </p>
+                <p>
+                    If what you mean is &ldquo;this photo shouldn't be in <em>this</em> album&rdquo;, don't delete it:
+                    <strong>remove the album's name from its Albums box</strong> instead. The photo stays in the library and in
+                    its other albums.
+                </p>
+
+                <h3>Managing albums themselves</h3>
+                <p>Go to <em>Media &rarr; Albums</em>. There you can:</p>
+                <ul style="list-style:disc; margin-left:20px;">
+                    <li>see every album and how many photos it has;</li>
+                    <li><strong>add</strong> a new, empty album;</li>
+                    <li><strong>rename</strong> an album (hover over it and click <em>Edit</em>). Changing the <strong>Name</strong>
+                        is safe. Leave the <strong>Slug</strong> alone: changing it stops galleries on pages that show that album
+                        from finding it;</li>
+                    <li><strong>delete</strong> an album you don't need (for example one created by a typo). Deleting an album only
+                        removes the label. The photos stay in the Media Library and in their other albums.</li>
+                </ul>
+            </div>
+        </details>
+
         <div class="spp-curator-toolbar">
             <label><strong>Source album:</strong>
                 <select id="spp-curator-source">
