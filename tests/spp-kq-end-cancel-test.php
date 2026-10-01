@@ -1,4 +1,7 @@
 <?php
+// Command line only: these scripts load WordPress and/or write test data, so
+// a web request must never run them (the theme folder is web-reachable).
+if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
 /**
  * Ace/Queen of the Courts — End Event / Cancel Event behavioral tests.
  *
