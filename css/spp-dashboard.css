@@ -228,10 +228,6 @@ All tokens defined in spp-drawers.css :root
 .et_pb_blog .entry-title {
     display: block !important;
 }
-/* Hide past events section in event list views */
-.tribe-events-calendar-latest-past {
-    display: none;
-}
 .spp-event-registrations {
     overflow-x: auto;
 }
