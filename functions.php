@@ -39,6 +39,7 @@ add_action( 'wp_enqueue_scripts', 'divi_spp_child_enqueue_styles' );
 require_once get_stylesheet_directory() . '/inc/menus.php';
 require_once get_stylesheet_directory() . '/inc/shortcodes.php';
 require_once get_stylesheet_directory() . '/inc/spp-album-taxonomy.php'; // must load before flickr-import/media-curator/gallery below
+require_once get_stylesheet_directory() . '/inc/spp-album-notices.php';
 require_once get_stylesheet_directory() . '/inc/spp-flickr-import.php';
 require_once get_stylesheet_directory() . '/inc/spp-media-curator.php';
 require_once get_stylesheet_directory() . '/inc/spp-gallery.php';
