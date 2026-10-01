@@ -1,4 +1,7 @@
 <?php
+// Command line only: these scripts load WordPress and/or write test data, so
+// a web request must never run them (the theme folder is web-reachable).
+if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
 // Standalone checks; no WordPress connection and no real email is sent.
 define( 'ABSPATH', __DIR__ );
 define( 'MINUTE_IN_SECONDS', 60 );
