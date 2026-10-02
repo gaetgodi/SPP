@@ -282,6 +282,27 @@ add_action('wp_enqueue_scripts', function() {
     );
 });
 /**
+ * UM profile pages (/user/<login>/, core page 1434) are members-only.
+ * Profiles show members' names, phone numbers and Travel. UM's global
+ * "Global Site Access" is Everyone, and its per-page restriction
+ * metabox is disabled site-wide (so um_content_restriction meta on the
+ * page is ignored), which left every profile readable by anonymous
+ * visitors. This wasn't noticed while 1434 sat in the trash
+ * (2026-09-21 to 2026-10-02); it was caught when the page was restored.
+ * Logged-out visitors go to the login page instead, with a redirect back.
+ */
+add_action( 'template_redirect', function() {
+    if ( is_user_logged_in() ) return;
+    if ( ! function_exists( 'um_is_core_page' ) || ! um_is_core_page( 'user' ) ) return;
+
+    $login = um_get_core_page( 'login' );
+    $back  = home_url( wp_unslash( $_SERVER['REQUEST_URI'] ?? '/' ) );
+    nocache_headers();
+    wp_safe_redirect( add_query_arg( 'redirect_to', rawurlencode( $back ), $login ) );
+    exit;
+}, 1 );
+
+/**
  * Auto-redirect to edit mode on UM profile pages for admins and editors
  */
 add_action( 'template_redirect', function() {
