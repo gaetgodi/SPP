@@ -1,8 +1,23 @@
 <?php
 /* =========================================================
    SPP Membership Editor
-   Version: 1.2.0
-   Date: 2026-08-27
+   Version: 1.2.1
+   Date: 2026-10-02
+
+   Changes from 1.2.0 (BUG FIX: stale Ultimate Member profile cache):
+   - The save handler now calls UM()->user()->remove_cache() for the
+     member it just updated. UM keeps its own per-user copy of profile
+     data (option um_cache_userdata_<id>), and a direct
+     update_user_meta() from here never refreshed it. UM's Account >
+     My Profile tab (/account/my-profile/) then showed the OLD value,
+     and that member's next save there wrote it straight back over this
+     edit. Found 2026-10-01 while testing the UM 2.14.0 nonce fix
+     (spp-um-account-tabs-nonce-fix.php): 6 members had a stale Travel
+     value cached, e.g. +5:30 edited here but -5:30 still cached, which
+     would have flipped "want 5:30" to "avoid 5:30" on save, and 1 had a
+     stale Rating. Those 7 cached copies were cleared once, by hand, the
+     same day. Guarded by function_exists('UM') so this file still works
+     if UM is ever deactivated.
 
    Changes from 1.1.0:
    - dupr_rating now hard-validates its range: 2.000-8.000, DUPR's actual
@@ -490,6 +505,14 @@ add_action( 'wp_ajax_spp_save_membership_field', function() {
     }
 
     update_user_meta( $target_uid, $meta_keys[ $field ], $value );
+
+    // Ultimate Member keeps its own per-user copy of profile data
+    // (um_cache_userdata_<id>) that a direct update_user_meta() never
+    // refreshes -- without this, UM's Account > My Profile tab would keep
+    // showing the old value and write it back on that member's next save.
+    if ( function_exists( 'UM' ) ) {
+        UM()->user()->remove_cache( $target_uid );
+    }
 
     wp_send_json_success( array( 'value' => $value ) );
 } );
