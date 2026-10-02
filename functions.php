@@ -45,6 +45,7 @@ require_once get_stylesheet_directory() . '/inc/spp-media-curator.php';
 require_once get_stylesheet_directory() . '/inc/spp-gallery.php';
 require_once get_stylesheet_directory() . '/inc/spp-gallery-builder.php'; // depends on spp_gallery_get_ids() above
 require_once get_stylesheet_directory() . '/inc/blog-roles.php';
+require_once get_stylesheet_directory() . '/inc/spp-um-account-tabs-nonce-fix.php'; // UM 2.14.0 vs um-account-tabs-main 1.0.5 profile_nonce mismatch on /account/my-profile/
 require_once get_stylesheet_directory() . '/inc/score-scanner.php';
 // require_once get_stylesheet_directory() . '/inc/spp-registrant-list.php'; // Superseded by gl-events plugin
 require_once get_stylesheet_directory() . '/inc/spp-blog-reminder.php';
