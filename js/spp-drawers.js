@@ -3,8 +3,15 @@
 spp-drawers.js
 Mobile drawer navigation
 Site: pickleballstouffville.ca
-Version: 2.0
-Date: 2026-06-04
+Version: 2.1
+Date: 2026-10-05
+
+Changes from 2.0:
+- Removed the "WPDA table scroll management" block (mirrored top
+  scrollbar for .MuiTableContainer-root). Those containers only came
+  from WP Data Access, which was uninstalled and its tables dropped
+  2026-10-05 -- the block's document-wide MutationObserver was firing
+  on every DOM change on every page for nothing.
 
 Changes from 1.0:
 - Added footer/tools drawer open/close handling
@@ -142,71 +149,3 @@ document.addEventListener("DOMContentLoaded", function () {
     });
 
 });
-
-// =====================================================
-// WPDA TABLE SCROLL MANAGEMENT
-// - Adds mirrored top scrollbar
-// - Hides bottom scrollbar when content fits
-// =====================================================
-(function() {
-
-    function addTopScroll(container) {
-        if (container.dataset.topScrollAdded) return;
-        container.dataset.topScrollAdded = '1';
-
-        var topScroll = document.createElement('div');
-        topScroll.style.cssText = 'overflow-x:auto;overflow-y:hidden;height:12px;margin-bottom:4px;';
-        var inner = document.createElement('div');
-        inner.style.height = '1px';
-        topScroll.appendChild(inner);
-        container.parentNode.insertBefore(topScroll, container);
-
-        function syncWidth() {
-            var table = container.querySelector('table');
-            var tableWidth = table ? table.offsetWidth : container.scrollWidth;
-            inner.style.width = tableWidth + 'px';
-            topScroll.style.display = tableWidth > container.clientWidth ? 'block' : 'none';
-        }
-        syncWidth();
-        setTimeout(syncWidth, 500);
-        setTimeout(syncWidth, 1500);
-
-        topScroll.addEventListener('scroll', function() { container.scrollLeft = topScroll.scrollLeft; });
-        container.addEventListener('scroll', function() { topScroll.scrollLeft = container.scrollLeft; });
-        window.addEventListener('resize', syncWidth);
-    }
-
-    function manageBottomScroll(container) {
-        if (container.dataset.bottomScrollManaged) return;
-        container.dataset.bottomScrollManaged = '1';
-
-        var resizeTimer;
-        function check() {
-            var table = container.querySelector('table');
-            var tableWidth = table ? table.offsetWidth : 0;
-            if (tableWidth <= container.clientWidth + 20) {
-                container.parentElement.classList.add('spp-no-hscroll');
-            } else {
-                container.parentElement.classList.remove('spp-no-hscroll');
-            }
-        }
-        check();
-        setTimeout(check, 500);
-        setTimeout(check, 1500);
-
-        window.addEventListener('resize', function() {
-            clearTimeout(resizeTimer);
-            resizeTimer = setTimeout(check, 150);
-        });
-    }
-
-    var observer = new MutationObserver(function() {
-        document.querySelectorAll('.MuiTableContainer-root').forEach(function(el) {
-            addTopScroll(el);
-            manageBottomScroll(el);
-        });
-    });
-
-    observer.observe(document.body, { childList: true, subtree: true });
-
-})();
