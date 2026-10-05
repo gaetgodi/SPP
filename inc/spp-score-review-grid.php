@@ -1,8 +1,17 @@
 <?php
 /* =========================================================
    Score Review Grid
-   Version: 1.2.0
+   Version: 1.3.0
    Date: 2026-10-05
+
+   Changes from 1.2.0:
+   - Original-group-size colour scheme fixed. It read group_id from
+     schedules_w_score_review, but that view had no group_id column
+     (spp-create-view.php < 1.1.0), so every group looked up size 0,
+     fell back to its displayed row count, and a 5-player group with
+     a no-play/no-show player hidden got the 4-player scheme. The view
+     now carries group_id; this read also tolerates its absence
+     (falls back to the row count, as before) instead of warning.
 
    Changes from 1.1.0:
    - SECURITY FIX: the grid had no access check at all. Its page,
@@ -181,7 +190,7 @@ function spp_score_review_grid() {
         }
 
         $gpname_   = $all[ $x ]['GP_name'];
-        $gp_id_cur = (int) $all[ $x ]['group_id'];
+        $gp_id_cur = isset( $all[ $x ]['group_id'] ) ? (int) $all[ $x ]['group_id'] : null;
 
         if ( $first ) {
             $gpname        = $gpname_;

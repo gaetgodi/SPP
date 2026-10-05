@@ -1,8 +1,23 @@
 <?php
 /* =========================================================
    Create View (schedules_w)
-   Version: 1.0.0
-   Date: 2026-09-05
+   Version: 1.1.0
+   Date: 2026-10-05
+
+   Changes from 1.0.0:
+   - The view now includes `group_id` (from the source table).
+     spp-score-review-grid.php reads it to look up each group's
+     ORIGINAL scheduled size, so a 5-player group with a no-play/
+     no-show player hidden still gets the 5-player colour scheme.
+     Without it every row read group_id as 0, the lookup never
+     matched, and such groups fell back to the 4-player scheme
+     (plus one PHP warning per row). Every other reader names its
+     columns or reads rows into PHP arrays, so the extra column is
+     harmless to them.
+   - The "already points at this table, skip" guard now also requires
+     group_id in the existing definition, so views built by 1.0.0 are
+     rebuilt once on their next call instead of keeping the old shape
+     until their source table changes.
    Based on: Code Manager snippet "Create View" (CM254)
 
    PURPOSE:
@@ -150,14 +165,16 @@ function spp_create_view( string $table = 'Schedules', string $view_name = 'sche
         $view_name
     ) );
 
-    if ( $current_definition !== null && spp_create_view_current_table( $current_definition ) === $table ) {
+    if ( $current_definition !== null
+        && spp_create_view_current_table( $current_definition ) === $table
+        && strpos( $current_definition, '`group_id` AS `group_id`' ) !== false ) {
         return;
     }
 
     $wpdb->query( "DROP VIEW IF EXISTS `$view_name`" );
     $wpdb->query( "
         CREATE ALGORITHM=UNDEFINED  /* SQL SECURITY DEFINER */ VIEW `$view_name`  AS
-        SELECT `schedules`.`Sequence` AS `Sequence`, cast(`schedules`.`Rank` as unsigned) AS `Rank`, `schedules`.`user_id` AS `user_id`, `schedules`.`first_name` AS `first_name`, `schedules`.`last_name` AS `last_name`, CONCAT(`schedules`.`first_name`, ' ', `schedules`.`last_name`) AS `full_name`, `schedules`.`user_phone` AS `user_phone`, `schedules`.`user_email` AS `user_email`,
+        SELECT `schedules`.`Sequence` AS `Sequence`, cast(`schedules`.`Rank` as unsigned) AS `Rank`, `schedules`.`user_id` AS `user_id`, `schedules`.`first_name` AS `first_name`, `schedules`.`last_name` AS `last_name`, CONCAT(`schedules`.`first_name`, ' ', `schedules`.`last_name`) AS `full_name`, `schedules`.`user_phone` AS `user_phone`, `schedules`.`user_email` AS `user_email`, `schedules`.`group_id` AS `group_id`,
         NULLIF(`schedules`.`Game1`,0) AS `Game1`, NULLIF(`schedules`.`Game2`,0) AS `Game2`, NULLIF(`schedules`.`Game3`,0) AS `Game3`, NULLIF(`schedules`.`Game4`,0) AS `Game4`, NULLIF(`schedules`.`Game5`,0) AS `Game5`,
         `schedules`.`travel` AS `Travel`, `Times`.`T_desc` AS `T_desc`, `Times`.`T_ID` AS `t_ID`, `Groups`.`GP_name` AS `GP_name`, `Courts`.`Crt_name` AS `Crt_name`,
         CASE WHEN `schedules`.`Game1` IS NULL AND `schedules`.`Game2` IS NULL AND `schedules`.`Game3` IS NULL AND `schedules`.`Game4` IS NULL AND `schedules`.`Game5` IS NULL
