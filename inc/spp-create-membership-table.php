@@ -1,10 +1,35 @@
 <?php
 /* =========================================================
    Create Membership Table
-   Version: 1.5.0
-   Date: 2026-09-17
+   Version: 1.6.0
+   Date: 2026-10-05
    Based on: Code Manager snippet "Create membership table" (CM102),
    version 1.1
+
+   Changes from 1.5.0:
+   - RACE FIX: the rebuild is now serialized with a MariaDB named lock,
+     GET_LOCK('spp_membership_rebuild', 30). Two overlapping rebuilds
+     (seen 2026-10-04 via a double-submitted Create Schedule, see
+     gl-schedule-production.php 2.0.9) share the fixed-name `tmp` table:
+     one run's final DROP TABLE tmp killed the other's mid-way, so its
+     four CREATE ... FROM tmp all failed AFTER their DROP TABLE had
+     already removed the live Master/membership tables.
+   - Waits (up to 30s) instead of refusing outright like the schedule-
+     production lock does, on purpose: this function is idempotent and
+     takes ~0.5s, and its callers (schedule production, score correction,
+     apply override, copy ranks, change new-user rank, assign ranks, KQ
+     end/cancel) carry straight on to read membership/Master afterward.
+     Refusing would let a caller read those tables while another
+     request has them dropped -- the exact failure being fixed. Queuing
+     behind the other rebuild means the caller always sees complete
+     tables.
+   - Original body unchanged, renamed to
+     spp_create_membership_table_locked(); spp_create_membership_table()
+     is the lock wrapper (try/finally release; on a PHP fatal the lock
+     still drops when the request's DB connection closes). Now returns
+     true if the rebuild ran, false if the lock wait timed out (red
+     notice echoed, nothing touched). Every existing caller ignores the
+     return value, so this is additive.
 
    Changes from 1.4.0:
    - Added two new pivot columns, following the exact same ClubRating/
@@ -203,6 +228,24 @@
 defined( 'ABSPATH' ) || exit;
 
 function spp_create_membership_table() {
+    global $wpdb;
+
+    // Serialize rebuilds -- see 1.6.0 changelog for why this waits
+    // rather than refusing.
+    if ( $wpdb->get_var( "SELECT GET_LOCK('spp_membership_rebuild', 30)" ) !== '1' ) {
+        echo "<p style='color:red;'>⚠ Membership tables are being rebuilt by another request and it didn't finish within 30 seconds -- skipped this rebuild, nothing was changed. Try again shortly.</p>";
+        return false;
+    }
+
+    try {
+        spp_create_membership_table_locked();
+    } finally {
+        $wpdb->query( "SELECT RELEASE_LOCK('spp_membership_rebuild')" );
+    }
+    return true;
+}
+
+function spp_create_membership_table_locked() {
     global $wpdb;
 
     ini_set( 'display_errors', 0 );
