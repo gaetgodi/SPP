@@ -1,8 +1,16 @@
 <?php
 /* =========================================================
    Score Review Grid
-   Version: 1.0.0
-   Date: 2026-09-05
+   Version: 1.1.0
+   Date: 2026-10-05
+
+   Changes from 1.0.0:
+   - Removed the defensive unset($wpda_shortcode_args['file']) /
+     $_SESSION['wpda_shortcode_args'] cleanup after the Create View
+     call, and $wpda_shortcode_args from the global list. It existed to
+     protect later [cmruncode] calls on the same page from a stale
+     'file' key; Code Manager is uninstalled, so nothing sets or reads
+     that global or session key any more. No behavior change.
    Based on: Code Manager snippet "Black for scores - colour" (CM215)
 
    PURPOSE:
@@ -68,7 +76,7 @@
 defined( 'ABSPATH' ) || exit;
 
 function spp_score_review_grid() {
-    global $wpdb, $Event, $name, $wpda_shortcode_args;
+    global $wpdb, $Event, $name;
 
     if ( ! $Event ) {
         echo '<p>Please select a ladder event above to view scores.</p>';
@@ -92,10 +100,6 @@ function spp_score_review_grid() {
 
     // Create view for scoring tables
     spp_create_view( $table, 'schedules_w_score_review' );
-    unset( $wpda_shortcode_args['file'] );
-    if ( isset( $_SESSION['wpda_shortcode_args'] ) ) {
-        unset( $_SESSION['wpda_shortcode_args']['file'] );
-    }
 
     // ── Pre-load original group sizes from unfiltered table ──────────────
     // NP/NS players (Game1 < 0) are excluded from display but the group

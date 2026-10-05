@@ -1,8 +1,15 @@
 <?php
 /* =========================================================
    GL Schedule Production
-   Version: 2.2.0
+   Version: 2.2.1
    Date: 2026-10-05
+
+   Changes from 2.2.0:
+   - Removed the dead "Carpool rank tolerance: N" echo gated on
+     $wpda_shortcode_args['show_tolerance'] -- a Code Manager global
+     nothing sets since CM was uninstalled, so it never printed. The
+     tolerance itself is unchanged (still from the dropdown's
+     $GLOBALS['carpool_rank_tolerance'], default 15).
 
    Changes from 2.1.1:
    - Removed every WP Data Access write: the 5 wpda_project_page
@@ -450,10 +457,6 @@ if (isset($Event) and $Event <> 0) {
 
     if (!isset($carpool_rank_tolerance) || $carpool_rank_tolerance <= 0) {
         $carpool_rank_tolerance = 15;
-    }
-    global $wpda_shortcode_args;
-    if (!empty($wpda_shortcode_args['show_tolerance'])) {
-        echo "Carpool rank tolerance: <strong>$carpool_rank_tolerance</strong><br>";
     }
 
     $event = $Event;
