@@ -1,8 +1,22 @@
 <?php
 /* =========================================================
    SPP Create Results (for Override)
-   Version: 3.2.1
-   Date: 2026-09-24
+   Version: 3.3.0
+   Date: 2026-10-05
+
+   Changes from 3.2.1:
+   - Step 15 fixed: it did DROP TABLE preferred, then RENAME TABLE
+     preferred_temp TO preferred -- but nothing has created
+     preferred_temp since schedule production renamed it to
+     preferred_new (its variable there is still $pref_temp). So every
+     run left preferred MISSING until Apply Override was run by hand
+     (errors logged Oct 2025 - Aug 2026). Now calls
+     spp_promote_preferred_new() (spp-table-swap.php): copies
+     preferred_new into preferred_build and swaps it in with one
+     atomic RENAME. preferred_new itself is left in place (the
+     Preferred page / WPDA app 29 reads it). An empty preferred_new
+     gives an empty (but existing) preferred; a missing one leaves
+     preferred untouched.
    Based on: Create Results for Override (Main Path) 2.0
 
    Changes from 3.2.0:
@@ -855,11 +869,10 @@ $wpdb->query("INSERT INTO Results SELECT * FROM {$table} ORDER BY RankOverride, 
 $wpdb->query("ALTER TABLE Results DROP PRIMARY KEY");
 $wpdb->query("ALTER TABLE Results ADD PRIMARY KEY (user_id)");
 
-// Step 15: Rotate preferred tables (live, unchanged)
-$pref_temp   = "preferred_temp";
-$pref_active = "preferred";
-$wpdb->query("DROP TABLE IF EXISTS {$pref_active}");
-$wpdb->query("RENAME TABLE {$pref_temp} TO {$pref_active}");
+// Step 15: Make next week's preferred list (preferred_new, built by
+// schedule production) the live preferred table -- build-then-swap,
+// never dropped first. See 3.3.0.
+spp_promote_preferred_new();
 
 unset($GLOBALS['$Event']);
 
