@@ -1,8 +1,21 @@
 <?php
 /* =========================================================
    Score Review Grid
-   Version: 1.1.0
+   Version: 1.2.0
    Date: 2026-10-05
+
+   Changes from 1.1.0:
+   - SECURITY FIX: the grid had no access check at all. Its page,
+     /show-scores-600/ (20006331), was fully public -- every scheduled
+     player's full name, rank, scores AND phone number, served to
+     logged-out visitors and crawlers (Meta's crawler fetched it
+     2026-10-05, 200). Now requires a logged-in member, the same
+     is_user_logged_in() floor the [spp_report] shortcode uses for
+     member-facing reports.
+   - Phone column removed from this grid's output: user_phone is
+     excluded from the Schedules_layout columns read here. The
+     Schedules_layout row itself is unchanged, because the blank
+     paper score sheets (spp-blank-scores-colour.php) share it.
 
    Changes from 1.0.0:
    - Removed the defensive unset($wpda_shortcode_args['file']) /
@@ -78,6 +91,11 @@ defined( 'ABSPATH' ) || exit;
 function spp_score_review_grid() {
     global $wpdb, $Event, $name;
 
+    if ( ! is_user_logged_in() ) {
+        echo '<p>Please log in to view scores.</p>';
+        return;
+    }
+
     if ( ! $Event ) {
         echo '<p>Please select a ladder event above to view scores.</p>';
         return;
@@ -117,7 +135,7 @@ function spp_score_review_grid() {
     $all_cols     = array();
     $all_class    = array();
 
-    $sql    = "SELECT COLUMN_NAME, Description, Visible, OrdOrder, cssClass FROM Schedules_layout WHERE Visible = 'Yes' ORDER BY OrdOrder";
+    $sql    = "SELECT COLUMN_NAME, Description, Visible, OrdOrder, cssClass FROM Schedules_layout WHERE Visible = 'Yes' AND COLUMN_NAME <> 'user_phone' ORDER BY OrdOrder";
     $result = $wpdb->get_results( $sql, ARRAY_A );
 
     $columnArr = array_column( $result, 'Description' );
@@ -141,7 +159,7 @@ function spp_score_review_grid() {
     }
     echo '</thead>';
 
-    $sql    = "SELECT group_concat('s.',l.COLUMN_NAME separator ',') as f FROM Schedules_layout l WHERE Visible = 'Yes' ORDER BY ordOrder";
+    $sql    = "SELECT group_concat('s.',l.COLUMN_NAME separator ',') as f FROM Schedules_layout l WHERE Visible = 'Yes' AND l.COLUMN_NAME <> 'user_phone' ORDER BY ordOrder";
     $result = $wpdb->get_results( $sql, ARRAY_A );
     $fields = $result[0]['f'];
 
