@@ -1,8 +1,35 @@
 <?php
 /* =========================================================
    GL Schedule Production
-   Version: 2.0.9
+   Version: 2.1.0
    Date: 2026-10-05
+
+   Changes from 2.0.9:
+   - BUILD-THEN-SWAP for Schedules. The staging table is now a TEMPORARY
+     table, tmp_schedules (was the shared permanent `tmp` that
+     spp_create_membership_table() and spp_copy_ranks_to_user_profile()
+     also used -- neither is covered by this file's production lock).
+     A TEMPORARY table can't be RENAMEd into a permanent one (it stays
+     temporary; verified on MariaDB 10.5), so the new
+     spp_build_schedules_from_staging() copies it into Schedules_new,
+     applies the same finishing ALTERs the old code applied AFTER its
+     DROP+RENAME (Rank smallint, PK, generated Score, RankPrime,
+     Game1-5 SMALLINT), then swaps Schedules_new in with one atomic
+     RENAME TABLE (spp_swap_in_new_tables(), inc/spp-table-swap.php).
+     Before: DROP TABLE Schedules then RENAME -- a failure in between
+     left no Schedules table at all.
+   - Behavior change on failure: every one of those steps used to fail
+     silently. Now any error stops the production run right there
+     with a red notice, the live Schedules untouched. Continuing would
+     run every later phase (travel swaps, carpool, etc.) against the
+     PREVIOUS week's Schedules. Note what the run has already done by
+     that point, same as any mid-run stop: spp_current_event and the
+     WPDA schedule page names point at the new event, preference tables
+     rotated -- re-running Create Schedule for the event fixes it
+     (this file already handles re-runs).
+   - New action 'spp_schedules_table_built' ($Schedules) fires after
+     Schedules_new is fully built, before the swap -- test hook for
+     simulating a mid-build failure; no production listener.
 
    Changes from 2.0.8:
    - RACE FIX: a whole production run is now serialized with a MariaDB
@@ -237,6 +264,58 @@ function spp_run_schedule_production() {
         spp_run_schedule_production_locked();
     } finally {
         $wpdb->query( "SELECT RELEASE_LOCK('spp_schedule_production')" );
+    }
+}
+
+/**
+ * Build the live Schedules table from the production run's staging table
+ * via build-then-swap: copy into "{$Schedules}_new" (a TEMPORARY table
+ * can't be RENAMEd into a permanent one -- it stays temporary, verified on
+ * this MariaDB 10.5), apply the same finishing ALTERs the old code applied
+ * after its RENAME, then swap it in with one atomic RENAME TABLE.
+ *
+ * @return bool True if swapped in. False on any error -- red notice echoed,
+ *              "{$Schedules}_new" dropped, live table untouched.
+ */
+function spp_build_schedules_from_staging( string $staging, string $Schedules ) : bool {
+    global $wpdb;
+    $new = "{$Schedules}_new";
+
+    $steps = array(
+        "CREATE TABLE `$new` AS SELECT * FROM `$staging`",
+        "ALTER TABLE `$new` MODIFY COLUMN Rank smallint",
+        "ALTER TABLE `$new` ADD PRIMARY KEY(user_id)",
+        "ALTER TABLE `$new` DROP Score",
+        "ALTER TABLE `$new` ADD Score int GENERATED ALWAYS AS (COALESCE(Game1,0)+COALESCE(Game2,0)+COALESCE(Game3,0)+COALESCE(Game4,0)+COALESCE(Game5,0))",
+        "ALTER TABLE `$new` ADD RankPrime varchar(3)",
+        "UPDATE `$new` SET RankPrime = Rank",
+    );
+    for ( $x = 1; $x <= 5; $x++ ) {
+        $steps[] = "ALTER TABLE `$new` MODIFY Game$x SMALLINT";
+    }
+
+    try {
+        spp_drop_new_tables( array( $Schedules ) ); // leftover from an interrupted run
+        foreach ( $steps as $sql ) {
+            $wpdb->query( $sql );
+            if ( $wpdb->last_error ) {
+                throw new RuntimeException( "$Schedules creation error: " . $wpdb->last_error );
+            }
+        }
+        // Test hook: throw from here to simulate a mid-build failure.
+        do_action( 'spp_schedules_table_built', $Schedules );
+
+        if ( ! spp_swap_in_new_tables( array( $Schedules ) ) ) {
+            throw new RuntimeException( "$Schedules swap error: " . $wpdb->last_error );
+        }
+        return true;
+
+    } catch ( Throwable $e ) {
+        echo '<p style="color:red;">⚠ ' . esc_html( $e->getMessage() ) . '</p>';
+        return false;
+
+    } finally {
+        spp_drop_new_tables( array( $Schedules ) ); // no-op after a successful swap
     }
 }
 
@@ -1296,9 +1375,12 @@ if (isset($Event) and $Event <> 0) {
     ");
     $wpdb->query("ALTER TABLE $table ADD COLUMN Sequence int(10) NOT NULL PRIMARY KEY AUTO_INCREMENT FIRST");
 
-    $wpdb->query("DROP TABLE IF EXISTS tmp");
+    // Staging table is TEMPORARY (2.1.0): private to this request's DB
+    // connection, so no other request can see or drop it. DROP TEMPORARY
+    // only -- a plain DROP TABLE IF EXISTS would hit a permanent table.
+    $wpdb->query("DROP TEMPORARY TABLE IF EXISTS tmp_schedules");
     $wpdb->query("
-        CREATE TABLE tmp AS (
+        CREATE TEMPORARY TABLE tmp_schedules AS (
             SELECT
                 t.Sequence,
                 t.registration_date,
@@ -1351,16 +1433,16 @@ if (isset($Event) and $Event <> 0) {
         )
     ");
 
-    $wpdb->query("ALTER TABLE tmp MODIFY COLUMN Rank smallint");
-    $wpdb->query("DROP TABLE IF EXISTS $Schedules");
-    $wpdb->query("RENAME TABLE tmp TO $Schedules");
-    $wpdb->query("ALTER TABLE $Schedules ADD PRIMARY KEY(user_id)");
-    $wpdb->query("ALTER TABLE $Schedules DROP Score");
-    $wpdb->query("ALTER TABLE $Schedules ADD Score int GENERATED ALWAYS AS (COALESCE(Game1,0)+COALESCE(Game2,0)+COALESCE(Game3,0)+COALESCE(Game4,0)+COALESCE(Game5,0))");
-    $wpdb->query("ALTER TABLE $Schedules ADD RankPrime varchar(3)");
-    $wpdb->query("UPDATE $Schedules SET RankPrime = Rank");
-    for ($x = 1; $x <= 5; $x++) {
-        $wpdb->query("ALTER TABLE $Schedules MODIFY Game$x SMALLINT");
+    // Build-then-swap (2.1.0): Schedules_new is built and finished from
+    // the staging table, then swapped in atomically. If anything fails,
+    // the live Schedules is untouched and this run stops here -- carrying
+    // on would run every later phase against the PREVIOUS schedule.
+    $schedules_ok = spp_build_schedules_from_staging( 'tmp_schedules', $Schedules );
+    $wpdb->query("DROP TEMPORARY TABLE IF EXISTS tmp_schedules");
+    if ( ! $schedules_ok ) {
+        echo '<p class="gl-error" style="color:#c0392b;font-weight:bold;">Schedule production stopped: the new schedule could not be built (see the error above). '
+           . 'The existing Schedules table was left unchanged. Run Create Schedule again for this event.</p>';
+        return;
     }
 
     $wpdb->query("DROP TABLE IF EXISTS SchedulesPreTravel");
