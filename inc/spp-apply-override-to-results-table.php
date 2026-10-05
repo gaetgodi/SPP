@@ -1,8 +1,16 @@
 <?php
 /* =========================================================
    Apply Override to Results Table
-   Version: 1.5.0
+   Version: 1.6.0
    Date: 2026-10-05
+
+   Changes from 1.5.0:
+   - Removed the WP Data Access writes (ALTER wpda_project_page
+     page_sequence + 3 UPDATEs taking the schedule/results pages off
+     WPDA menus) and the now-unused $project/$page ids. The WPDA
+     plugin is uninstalled and nothing reads those rows. The Stage 1
+     confirm list no longer promises "Remove schedule and results
+     pages from menu".
 
    Changes from 1.4.0:
    - Preferred rotation now uses spp_promote_preferred_new()
@@ -105,8 +113,7 @@
        confirmed intentional and pre-existing, see note below),
        creates Schedules_Scores_<event> from the real Schedules table
        (the one CM273's dropdown actually reads), prunes older backup
-       tables, removes the schedule/results pages from their WPDA
-       menus, deactivates the player schedule view, and rotates the
+       tables, deactivates the player schedule view, and rotates the
        "preferred" tables.
      Stage 2 (confirm) -- shows an email-mode confirm form.
      Stage 2 (confirmed) -- sends the results-posted email (trial:
@@ -231,8 +238,6 @@ function spp_apply_override_to_results_table() {
     $prefix        = $wpdb->prefix;
     $member        = "membership";
     $results_table = "Results";
-    $project = 30;
-    $page    = 72;
 
     // -- Email mode from option -- default to trial --------------------------------
     $email_mode = get_option( 'spp_email_mode', 'trial' );
@@ -335,7 +340,6 @@ function spp_apply_override_to_results_table() {
                     <li>Rebuild membership and Master tables</li>
                     <li>Process results and update rankings</li>
                     <li>Rotate preferred tables</li>
-                    <li>Remove schedule and results pages from menu</li>
                     <li>Create backup tables for this event</li>
                 </ul>
                 <p style="color:#c0392b;font-weight:bold;">The player schedule view will be deactivated. Are you sure results are final?</p>
@@ -445,12 +449,6 @@ function spp_apply_override_to_results_table() {
             $wpdb->query("DROP TABLE IF EXISTS `{$tbl['table_name']}`");
         }
 
-        $wpdb->query("ALTER TABLE {$prefix}wpda_project_page MODIFY COLUMN page_sequence INT(10)");
-        $wpdb->query("UPDATE {$prefix}wpda_project_page SET page_name='{$name}', page_title='{$name}', page_sequence={$Event}, add_to_menu='No' WHERE project_id={$project} AND page_id={$page}");
-        $wpdb->query("UPDATE {$prefix}wpda_project_page SET add_to_menu='No' WHERE project_id=29 AND page_id=70");
-        $wpdb->query("UPDATE {$prefix}wpda_project_page SET add_to_menu='No' WHERE project_id=29 AND page_id IN (73, 74)");
-        echo "<br>OK: Schedule and results pages removed from menu.<br>";
-
         // -- Deactivate player schedule view --------------------------------------
         update_option( 'spp_schedule_published', 0 );
 
@@ -494,7 +492,7 @@ function spp_apply_override_to_results_table() {
             .message-box p { margin:6px 0 0; font-size:12px; color:#666; }
         </style>
         <div class="confirm-wrap">
-            <p style="color:green;">OK: Results processed and menus updated successfully.</p>
+            <p style="color:green;">OK: Results processed successfully.</p>
 
             <div class="email-mode-box">
                 <h4>Email Notification Mode</h4>

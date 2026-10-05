@@ -1,8 +1,19 @@
 <?php
 /* =========================================================
    GL Schedule Production
-   Version: 2.1.1
+   Version: 2.2.0
    Date: 2026-10-05
+
+   Changes from 2.1.1:
+   - Removed every WP Data Access write: the 5 wpda_project_page
+     UPDATEs before production ("take schedule off menu while in
+     draft") and the ALTER/UPDATE wpda_project_page + UPDATE wpda_app
+     app_id=4 after it. The WPDA plugin is uninstalled, no published
+     page embeds a WPDA shortcode, and nothing in the theme read those
+     rows back except spp-blank-scores-colour.php's heading (app 4's
+     app_title), which now builds the same "Schedule for <event>" text
+     itself. Also dropped the now-unused Pkldr_settings read and the
+     $project/$page/... WPDA page-id variables.
 
    Changes from 2.1.0:
    - Comment only: documented what the preferred-player step does when
@@ -412,11 +423,6 @@ spp_create_membership_table();
 // -------------------------------------------------------
 spp_assign_ranks_to_registered_players( (int) $Event );
 
-$settings = get_option('Pkldr_settings');
-list('Pkldr_Project' => $Pkldr_Project, 'Pkldr_PageLdr' => $Pkldr_PageLdr) = $settings;
-$project = 29;
-$page = 70;
-
 if (isset($Event) and $Event <> 0) {
 
     // Guard: block production if there's an unsent notification queue for
@@ -437,18 +443,6 @@ if (isset($Event) and $Event <> 0) {
     }
 
     $master = "Master";
-    $this_page = 72;
-    $other_page = 75;
-    $this_project = 30;
-    $page630 = 73;
-    $page745 = 74;
-
-    // Take schedule off menu while in draft
-    $wpdb->query("UPDATE {$prefix}wpda_project_page SET page_name = 'Schedule for $name', page_title = 'Schedule for $name', page_sequence = $Event, add_to_menu = 'No', page_setname = '$Schedules', page_table_name = '$Schedules' WHERE project_id = $project AND page_id = $page");
-    $wpdb->query("UPDATE {$prefix}wpda_project_page SET add_to_menu = 'No' WHERE project_id = $this_project AND page_id = $this_page");
-    $wpdb->query("UPDATE {$prefix}wpda_project_page SET add_to_menu = 'No' WHERE project_id = $this_project AND page_id = $other_page");
-    $wpdb->query("UPDATE {$prefix}wpda_project_page SET page_name = '$name - 5:30pm', page_title = '$name - 5:30pm', add_to_menu = 'No' WHERE project_id = $project AND page_id = $page630");
-    $wpdb->query("UPDATE {$prefix}wpda_project_page SET page_name = '$name - 7:50pm', page_title = '$name - 7:50pm', add_to_menu = 'No' WHERE project_id = $project AND page_id = $page745");
 
     // -------------------------------------------------------
     // AI SCHEDULE PRODUCTION
@@ -2617,11 +2611,6 @@ if (isset($Event) and $Event <> 0) {
             echo "✓ All carpool partners are in the same or adjacent time slots.<br>";
         }
     }
-
-    // Update WPDA project page — keep as draft
-    $wpdb->query("ALTER TABLE {$prefix}wpda_project_page MODIFY COLUMN page_sequence INT(10)");
-    $wpdb->query("UPDATE {$prefix}wpda_project_page SET page_name = 'Schedule for $name', page_title = 'Schedule for $name', page_sequence = $Event, add_to_menu = 'No', page_setname = 'Schedules', page_table_name = 'Schedules' WHERE project_id = $project AND page_id = $page");
-    $wpdb->query("UPDATE {$prefix}wpda_app SET app_title = 'Schedule for $name' WHERE app_id = 4");
 
     $wpdb->query("DROP TABLE IF EXISTS $schedules_prev");
     $wpdb->query("CREATE TABLE $schedules_prev SELECT * FROM $Schedules");
