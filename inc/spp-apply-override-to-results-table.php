@@ -1,8 +1,19 @@
 <?php
 /* =========================================================
    Apply Override to Results Table
-   Version: 1.4.0
-   Date: 2026-09-24
+   Version: 1.5.0
+   Date: 2026-10-05
+
+   Changes from 1.4.0:
+   - Preferred rotation now uses spp_promote_preferred_new()
+     (spp-table-swap.php): copies preferred_new into preferred_build
+     and swaps it in with one atomic RENAME TABLE. Before: DROP TABLE
+     preferred, then CREATE ... LIKE + INSERT -- a failure in between
+     left preferred missing or half-filled. Same outcomes otherwise
+     (missing preferred_new still leaves preferred untouched), and
+     preferred_prev is still dropped afterwards as before. Create
+     Results step 15 (3.3.0) now does the same promotion, so this is
+     normally a re-copy of the same rows.
 
    Changes from 1.3.0:
    - Stage 1 archive: RankCalc_Shadow is now copied from the results
@@ -443,17 +454,9 @@ function spp_apply_override_to_results_table() {
         // -- Deactivate player schedule view --------------------------------------
         update_option( 'spp_schedule_published', 0 );
 
-        $pref_new    = "preferred_new";
-        $pref_active = "preferred";
-        $pref_prev   = "preferred_prev";
-        $var = $wpdb->get_var("SHOW TABLES LIKE '{$pref_new}'");
-        if ($var == $pref_new) {
-            $wpdb->query("DROP TABLE IF EXISTS {$pref_active}");
-            $wpdb->query("CREATE TABLE {$pref_active} LIKE {$pref_new}");
-            $wpdb->query("INSERT INTO {$pref_active} SELECT * FROM {$pref_new}");
-        }
-        $wpdb->query("DROP TABLE IF EXISTS {$pref_prev}");
-        echo "<br>OK: Preferred tables rotated.<br>";
+        // Build-then-swap (1.5.0) -- preferred is never dropped first.
+        spp_promote_preferred_new();
+        $wpdb->query("DROP TABLE IF EXISTS preferred_prev");
         // Mark results as posted so next schedule production is unblocked
         update_option('spp_results_posted', 1);
 

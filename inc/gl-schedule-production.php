@@ -1,8 +1,13 @@
 <?php
 /* =========================================================
    GL Schedule Production
-   Version: 2.1.0
+   Version: 2.1.1
    Date: 2026-10-05
+
+   Changes from 2.1.0:
+   - Comment only: documented what the preferred-player step does when
+     `preferred` is empty vs missing (above the rerun/pref block). No
+     behavior change.
 
    Changes from 2.0.9:
    - BUILD-THEN-SWAP for Schedules. The staging table is now a TEMPORARY
@@ -467,6 +472,25 @@ if (isset($Event) and $Event <> 0) {
     $pref_permanent = "preferred_permanent";
 
     $preferred = $wpdb->get_col($wpdb->prepare("SELECT user_id FROM $pref_permanent"));
+
+    // `preferred` = this week's priority list, promoted from last run's
+    // preferred_new by Create Results step 15 / Apply Override.
+    // - EMPTY is a normal operating state (nobody was deferred last
+    //   week): no one gets priority, every registrant goes through the
+    //   random selection below, and no one gets the "P-" prefix.
+    // - MISSING (before spp-create-results.php 3.3.0, every Create
+    //   Results run dropped it until Apply Override re-created it) is a
+    //   real state this code has run in; it does NOT stop
+    //   the run -- every read fails silently, only logged:
+    //     * the CREATE TABLE $rerun LIKE $pref_active below fails, so the
+    //       SchedulesP{event} re-run marker is never created and EVERY
+    //       re-run is treated as a first run;
+    //     * a re-run's TRUNCATE/INSERT restore from preferred_prev fails;
+    //     * preferred_prev is not refreshed (the SHOW TABLES check skips it);
+    //     * $preferred_users reads empty -> no priority players at all;
+    //     * the per-player "P-" lookup errors once per player, no prefix.
+    //   The result is a schedule as if the list were empty, with errors
+    //   in the log and no visible warning.
 
     $groupings = $table_name = $wpdb->prefix . "GpsCrtsTms54_3_" . $event;
 
