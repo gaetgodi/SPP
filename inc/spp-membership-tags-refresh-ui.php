@@ -41,8 +41,9 @@
    PURPOSE:
    Admin-facing wrapper: refreshes MembershipTags (the same sync
    CM252/spp_refresh_membership_tags() performs), then displays the
-   result via a WPDA app view (app_id 3) so an admin can review/edit
-   tags immediately.
+   result via [spp_report table="membership_tags-variant-1"] (was the
+   WPDA app_id 3 view; WPDA removed 2026-10-05) so an admin can
+   review/edit tags immediately.
 
    CALLED FROM (as of this migration):
      Via [cmruncode name='Membership tags table refresh'] (CM208,

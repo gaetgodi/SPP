@@ -800,7 +800,8 @@ $wpdb->query("RENAME TABLE tmp1_shadow TO {$shadow_table}");
 // Step 11: Add override columns, plus the shadow comparison value pulled
 // in from the shadow table built in Step 10b -- sits right next to
 // RankCalc/RankOverride so the two can be compared directly in the
-// Modify Overrides page, instead of only appearing in a separate report.
+// override editor (the `results` report on page 20010698, which replaced
+// the WPDA "Modify Overrides" page), instead of only in a separate report.
 $wpdb->query("DROP TABLE IF EXISTS tmp1");
 $wpdb->query("CREATE TABLE tmp1 SELECT * FROM (
     SELECT r.Rank, r.old_0_Rank AS RankPrev, r.newrank AS RankCalc, sh.newrank AS RankOverride,

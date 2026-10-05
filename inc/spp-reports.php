@@ -963,9 +963,9 @@ function spp_report_membership() {
 /**
  * Masterlist report: all tracked columns for every member of the ladder, unfiltered
  * -- replaces the WPDA "Ladder - Master List" app (app_id=24, title
- * "masterList", table Master, page 1517 -- the app actually still live
- * and embedded there today via [wpda_app app_id="24"], run in parallel
- * with this report's own page). CORRECTED (Phase 2 audit, 2026-09-13):
+ * "masterList", table Master, page 1517 -- run in parallel with this
+ * report's own page until WPDA was removed 2026-10-05; page 1517 is
+ * now trashed). CORRECTED (Phase 2 audit, 2026-09-13):
  * this docblock previously named app_id=18 as the app being replaced --
  * that app_id is in fact a dead, unembedded app that happens to share
  * the same "Master" app_name/table as app 24 (title "List of Ladder
@@ -1030,9 +1030,9 @@ function spp_report_master() {
  * editable columns -- there is no add-row/delete-row mechanism here at
  * all. So this report reproduces Courts' two inline-editable columns
  * (Crt_name, active) exactly, but does NOT reproduce add/remove-a-court
- * -- that still requires the old WPDA page (left live, per this
- * migration's own instructions) or a direct DB change until row-level
- * insert/delete is added to the shared renderer.
+ * -- that requires a direct DB change (the old WPDA page is gone; WPDA
+ * removed 2026-10-05) until row-level insert/delete is added to the
+ * shared renderer.
  *
  * Sortability mirrors WPDA's own orderable flags exactly: only `active`
  * was orderable there (Crt_ID/Crt_name were not) -- not an oversight,
@@ -1280,16 +1280,13 @@ function spp_report_preferred_permanent() {
  * spp_is_admin_or_editor() regardless, by spp_render_report_table()'s
  * own $can_edit check -- this only changes VIEW access, to match.
  *
- * NOT touched by this change: inc/spp-membership-tags-refresh-ui.php's
- * own spp_membership_tags_refresh_ui() shortcode (used via
- * [cmruncode name='Membership tags table refresh']) still rebuilds
- * MembershipTags from usermeta and then displays the result via
- * do_shortcode('[wpda_app app_id="3"]') -- a distinct
- * refresh-then-immediately-show workflow, not just a display. Left
- * pointed at the old WPDA app deliberately: repointing it at this new
- * report is a separate decision outside this migration's five targets,
- * and this migration is explicitly leaving the old app itself live and
- * usable in the meantime.
+ * Related: inc/spp-membership-tags-refresh-ui.php's
+ * spp_membership_tags_refresh_ui() rebuilds MembershipTags from
+ * usermeta and then displays the result -- a distinct
+ * refresh-then-immediately-show workflow, not just a display. It was
+ * left on the old WPDA app (app_id 3) by this migration, and has since
+ * been repointed at [spp_report table="membership_tags-variant-1"];
+ * WPDA itself was removed 2026-10-05.
  */
 function spp_report_membership_tags() {
     global $wpdb;

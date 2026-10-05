@@ -206,24 +206,6 @@ All tokens defined in spp-drawers.css :root
     width: 40%;
 }
 
-/* =====================================================
-   WPDA TABLE SCROLL
-   ===================================================== */
-
-/* Allow horizontal scroll on WPDA parent container */
-.pp-table {
-    overflow-x: auto !important;
-}
-
-/* Allow horizontal scroll on WPDA table container */
-.MuiTableContainer-root {
-    overflow-x: auto !important;
-    -webkit-overflow-scrolling: touch !important;
-}
-.spp-no-hscroll .MuiTableContainer-root {
-    overflow: auto !important;
-}
-
 .et_pb_post .entry-title,
 .et_pb_blog .entry-title {
     display: block !important;

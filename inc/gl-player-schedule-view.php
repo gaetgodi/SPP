@@ -166,8 +166,9 @@ if (!$Event) {
 }
 
 // Player-facing gate uses our own spp_schedule_published option --
-// not the WPDA-table add_to_menu field. That field belongs to a
-// third-party plugin's internal admin page config, and depending on
+// not the WPDA-table add_to_menu field. That field belonged to a
+// third-party plugin's internal admin page config (WPDA and its tables
+// were removed entirely 2026-10-05), and depending on
 // it for player-facing access proved fragile in practice (July 20
 // 2026: a WP Data Access Premium reinstall left it in a state where
 // nothing was ever flipping it back to 'Yes' on publish, so players

@@ -79,9 +79,13 @@ roughly in pipeline order:
    rank standing, used elsewhere (e.g. shadow dampening in `spp-create-results.php`) in preference to
    noisier self-reported `Master.Rating`.
 
-Ranking/override data is also surfaced through WPDA (WP Data Access) admin table-editor pages (e.g.
-"Modify Overrides", app_id 7 / project 30) — some columns exist specifically so they show up
-correctly in that UI, not just in code.
+Overrides are edited on the "Result Overrides changes" page (20010698) via
+`[spp_report table="results-variant-2"]` — the `results` report in `spp-reports.php`, whose
+editable `RankOverride` cell saves through `spp-report-edit.php`. (This replaced the WP Data Access
+"Modify Overrides" editor; WPDA was uninstalled and its `lX9c1_wpda_*` tables dropped 2026-10-05,
+backup at `/var/www/vhosts/pickleballstouffville.ca/db-backup-wpda-tables-before-drop-2026-10-05.sql`.
+Nothing in the theme reads or writes WPDA any more — don't reintroduce it.) Older changelog entries
+that mention WPDA apps/pages describe the system as it was then.
 
 ## Ace/Queen of the Courts (KQ)
 
@@ -153,9 +157,10 @@ discovered via `kq_history` only because it was the first report ever actually e
 - `blog_author` (auto-granted to active members, `YrEndDt` = current year) and `blog_moderator`
   (manually assigned, registered as a real WP role so Ultimate Member grants backend access) are
   defined in `blog-roles.php`.
-- Page access to `[cmruncode]`-shortcode pages is restricted to editors/admins by page ID allowlist
-  in `functions.php` (`template_redirect` hook) — member-facing tool pages must be added to the
-  `$member_pages` array there.
+- There is no page-level access gate: the old `template_redirect` / `$member_pages` allowlist in
+  `functions.php` was retired (commit c1d8542). Every admin/editor tool must gate itself inside its
+  own shortcode/AJAX handler (e.g. `spp_is_admin_or_editor()`), never rely on page restrictions or
+  Ultimate Member menu visibility.
 - Login is blocked for members whose `YrEndDt` usermeta isn't the current year (`authenticate` filter
   in `functions.php`), except for exempt roles and `OkToLogin = Yes`.
 
@@ -166,13 +171,12 @@ discovered via `kq_history` only because it was the first report ever actually e
   forensically. If event_id alignment looks off, that's the shape of the bug — check it before
   assuming data is right.
 - `Schedules_Scores_153`/`154` were mislabeled by an off-by-one bug.
-- `page_sequence` must be `INT(10)` before it can hold 30000000+ event IDs.
 
 ## Things that live outside the repo
 
-- Code Manager snippets are rows in a DB table, not files here. Always ask me for a fresh copy of a
-  snippet before modifying it — never work from an old version. CM 278 is disabled and kept as a
-  fallback.
+- Code Manager is uninstalled and its snippet table is gone: every former snippet now lives in
+  `inc/` as a real shortcode/function. Comments that say a function is "only reached via CMnnn's
+  `[cmruncode]` shim" are historical — those shims no longer run.
 - The "Event Status" page runs the `[gl_event_registrations]` shortcode, which lives in the GL
   Events plugin itself, not this theme repo — so `git log`/`grep` over this repo will never find it.
 - After a first `git pull` on the server, the mu-plugin symlink must be recreated.
