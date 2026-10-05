@@ -1,9 +1,22 @@
 <?php
 /* =========================================================
    GL Ladder Events Dropdown
-   Version: 1.1.0
-   Date: 2026-09-07
+   Version: 1.2.0
+   Date: 2026-10-05
    Based on: Code Manager snippet "GL Ladder Events Dropdown" (CM275)
+
+   Changes from 1.1.0:
+   - The #dropform Submit button now disables itself on first submit
+     (and a second submit of the same form is cancelled), for both the
+     full and short form. On GL Create Schedule this form IS the
+     "run schedule production" trigger, and a double click/impatient
+     resubmit on 2026-10-04 ran two productions at once (see
+     gl-schedule-production.php 2.0.9). Re-enabled on a back/forward-
+     cache restore (pageshow + persisted) so a Back press doesn't leave
+     a dead button. Emitted once here rather than in each form file.
+   - This is only a convenience: it can't stop a back-button resubmit,
+     a reload-resubmit, or a second tab. The server-side lock in
+     spp_run_schedule_production() is what actually prevents the race.
 
    Changes from 1.0.0:
    - SECURITY FIX (Tier 1 access-control audit follow-up): this file's
@@ -133,6 +146,30 @@ function spp_gl_ladder_events_dropdown( bool $show_tolerance = false ) {
     } else {
         spp_short_form_for_ladder( $all );
     }
+
+    // Disable Submit on first submit to stop double-click double runs.
+    // NOT a real guard: a back-button/reload resubmit or a second tab
+    // bypasses it -- the GET_LOCK in spp_run_schedule_production() is
+    // what actually prevents two concurrent productions.
+    ?>
+    <script>
+    (function () {
+        var form = document.getElementById('dropform');
+        if (!form) return;
+        var btn = form.querySelector('input[type="submit"]');
+        form.addEventListener('submit', function (e) {
+            if (form.dataset.sppSubmitting) { e.preventDefault(); return; }
+            form.dataset.sppSubmitting = '1';
+            if (btn) { btn.disabled = true; btn.value = 'Working… please wait'; }
+        });
+        window.addEventListener('pageshow', function (e) {
+            if (!e.persisted) return;
+            delete form.dataset.sppSubmitting;
+            if (btn) { btn.disabled = false; btn.value = 'Submit'; }
+        });
+    })();
+    </script>
+    <?php
 
     // ── Handle POST ───────────────────────────────────────────────────
     // Nonce required alongside 'PBEvent' -- this form had none before.

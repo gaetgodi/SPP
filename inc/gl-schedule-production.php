@@ -1,8 +1,33 @@
 <?php
 /* =========================================================
    GL Schedule Production
-   Version: 2.0.8
-   Date: 2026-09-07
+   Version: 2.0.9
+   Date: 2026-10-05
+
+   Changes from 2.0.8:
+   - RACE FIX: a whole production run is now serialized with a MariaDB
+     named lock, GET_LOCK('spp_schedule_production', 0). Root cause
+     (2026-10-04 18:03:50/51 UTC, event 168): a double form submission
+     ran two productions concurrently; both share the fixed-name `tmp`
+     table plus every other fixed-name table this run rebuilds (Master,
+     membership, Groups, Courts, Schedules, ...), so one run's
+     DROP TABLE tmp landed mid-way through the other's, producing
+     "Master/Masterlist2026/membership/Membershiplist2026 creation
+     error: Table 'tmp' doesn't exist" and leaving those tables dropped
+     for the rest of that run. Non-blocking (0 timeout): a second
+     overlapping request now stops immediately with a "already being
+     produced" message and touches nothing.
+   - Implementation: the original body is unchanged, just renamed to
+     spp_run_schedule_production_locked(); spp_run_schedule_production()
+     is now a thin wrapper that does the role check, takes the lock,
+     calls the body inside try/finally, and releases. The role check
+     is repeated in the wrapper so an unauthorized visitor never takes
+     (or learns the state of) the lock; the body's own check is kept.
+   - A PHP fatal/timeout/client-abort skips `finally`, but a named lock
+     belongs to the DB connection, which closes at the end of the
+     request -- so the lock can never outlive the request that took it.
+   - spp_create_membership_table() (called up to 3x per run) has its
+     own, separate lock -- see that file's 1.6.0 entry.
 
    Changes from 2.0.7:
    - SECURITY FIX (Tier 1 access-control audit): zero server-side
@@ -194,6 +219,28 @@ function spp_create_schedule_shortcode() {
 }
 
 function spp_run_schedule_production() {
+    if ( ! spp_is_admin_or_editor() ) {
+        echo '<p>You do not have permission to use this tool.</p>';
+        return;
+    }
+
+    // Serialize whole production runs -- see 2.0.9 changelog. Timeout 0:
+    // never queue a second run behind the first, just refuse it.
+    global $wpdb;
+    if ( $wpdb->get_var( "SELECT GET_LOCK('spp_schedule_production', 0)" ) !== '1' ) {
+        echo '<p class="gl-error" style="color:#c0392b;font-weight:bold;">A schedule is already being produced — wait for it to finish. '
+           . 'Nothing was changed by this request. Check This Week\'s Schedule once it\'s done, before running it again.</p>';
+        return;
+    }
+
+    try {
+        spp_run_schedule_production_locked();
+    } finally {
+        $wpdb->query( "SELECT RELEASE_LOCK('spp_schedule_production')" );
+    }
+}
+
+function spp_run_schedule_production_locked() {
 
 // Administrator + editor, per this page's Ultimate Member menu
 // restriction -- confirmed from this week's UM menu audit. Checked
