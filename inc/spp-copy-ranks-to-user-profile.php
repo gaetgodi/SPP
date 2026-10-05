@@ -1,8 +1,19 @@
 <?php
 /* =========================================================
    Copy Ranks to User Profile
-   Version: 1.1.0
-   Date: 2026-09-07
+   Version: 1.2.0
+   Date: 2026-10-05
+
+   Changes from 1.1.0:
+   - The scratch `tmp` table is now a TEMPORARY table, tmp_copy_ranks:
+     private to this request's DB connection. It used to be the same
+     permanent `tmp` that spp_create_membership_table() and schedule
+     production build into, and this function isn't covered by the
+     membership-rebuild lock -- so its DROP TABLE tmp could kill a
+     concurrent rebuild's tmp mid-way (the 2026-10-04 failure class,
+     see gl-schedule-production.php 2.0.9). Dropped with DROP TEMPORARY
+     TABLE only, so it can never fall through to a permanent table.
+     Same query, same rows, same usermeta writes.
 
    Changes from 1.0.0:
    - SECURITY FIX (Tier 1 access-control audit): the 2026-09-06 fix
@@ -142,9 +153,10 @@ function spp_copy_ranks_to_user_profile() {
     $umetatable = $prefix . 'usermeta';
     $table_last = "Results"; // this is usually Results
 
-    $wpdb->query( "DROP TABLE IF EXISTS tmp" );
+    // TEMPORARY + its own name: no other request can see or drop it.
+    $wpdb->query( "DROP TEMPORARY TABLE IF EXISTS tmp_copy_ranks" );
 
-    $wpdb->query( "create table tmp as
+    $wpdb->query( "create temporary table tmp_copy_ranks as
         select * from (
         select $table_last.Rank
         ,$table_last.user_id from $table_last
@@ -153,7 +165,7 @@ function spp_copy_ranks_to_user_profile() {
         order by user_id
     " );
 
-    $result = $wpdb->get_results( "Select * from tmp", ARRAY_A );
+    $result = $wpdb->get_results( "Select * from tmp_copy_ranks", ARRAY_A );
     foreach ( $result as $value ) {
         $id   = $value['user_id'];
         $Rank = $value['Rank'];
@@ -162,7 +174,7 @@ function spp_copy_ranks_to_user_profile() {
         $wpdb->query( $wpdb->prepare( "INSERT INTO {$umetatable} (user_id, meta_key, meta_value) VALUES (%d,'Rank',%s)", $id, $Rank ) );
     }
 
-    $wpdb->query( "DROP TABLE IF EXISTS tmp" );
+    $wpdb->query( "DROP TEMPORARY TABLE IF EXISTS tmp_copy_ranks" );
 
     spp_create_membership_table();
 

@@ -1,10 +1,39 @@
 <?php
 /* =========================================================
    Create Membership Table
-   Version: 1.6.0
+   Version: 1.7.0
    Date: 2026-10-05
    Based on: Code Manager snippet "Create membership table" (CM102),
    version 1.1
+
+   Changes from 1.6.0:
+   - BUILD-THEN-SWAP: Master, Masterlist{year}, membership and
+     Membershiplist{year} are no longer DROPped and recreated in place.
+     Each is built as {name}_new, then all four are swapped in with ONE
+     atomic multi-pair RENAME TABLE (spp_swap_in_new_tables(), inc/
+     spp-table-swap.php) and the {name}_old tables dropped. Before
+     this, a failed CREATE left the live table already dropped.
+   - Any SQL error during the build (including the tmp pivot, its
+     ALTER/UPDATE, and the PRIMARY KEY adds, which used to fail
+     silently) now aborts the rebuild: red "⚠ <table> creation error"
+     notice as before, plus "existing tables left unchanged", the
+     _new tables dropped, and the live tables never touched. A PHP
+     crash mid-build leaves _new leftovers that the next run drops.
+   - The shared permanent `tmp` table is now a TEMPORARY table named
+     tmp_membership: private to this request's DB connection, so no
+     other request (spp_copy_ranks_to_user_profile(), schedule
+     production) can drop it mid-build any more. Dropped with DROP
+     TEMPORARY TABLE only -- a plain DROP TABLE IF EXISTS would fall
+     through to a permanent table of the same name.
+   - spp_create_membership_table_locked() returns true/false, passed
+     through by the lock wrapper (false = not rebuilt, live tables
+     unchanged). Lock behavior itself is unchanged from 1.6.0.
+   - New action 'spp_membership_rebuild_table_built' ($name) fires
+     after each _new table is built, before the swap -- used to
+     simulate a mid-build failure in testing (throw from it); no
+     production listener.
+   - Output is byte-identical to 1.6.0 (same SELECTs, same schema);
+     verified by fingerprinting all four tables before/after.
 
    Changes from 1.5.0:
    - RACE FIX: the rebuild is now serialized with a MariaDB named lock,
@@ -238,11 +267,10 @@ function spp_create_membership_table() {
     }
 
     try {
-        spp_create_membership_table_locked();
+        return spp_create_membership_table_locked();
     } finally {
         $wpdb->query( "SELECT RELEASE_LOCK('spp_membership_rebuild')" );
     }
-    return true;
 }
 
 function spp_create_membership_table_locked() {
@@ -259,16 +287,34 @@ function spp_create_membership_table_locked() {
     $master      = "Master";
     $umetatable  = $prefix . "usermeta";
 
+    // Build-then-swap (1.7.0): every target is built as {$name}_new and
+    // swapped in together at the end; the live tables are never dropped
+    // or written to before that, so any failure leaves them untouched.
+    $targets = array( $master, $masterY, $membership, $membershipY );
+
     // Refresh membership tags before rebuilding tables.
     spp_refresh_membership_tags();
 
-    // -------------------------------------------------------
-    // Build tmp — all active members from usermeta
-    // -------------------------------------------------------
-    $wpdb->query( "DROP TABLE IF EXISTS tmp" );
+    // Runs one build step; any SQL error aborts the whole rebuild.
+    $step = function ( $sql, $label ) use ( $wpdb ) {
+        $wpdb->query( $sql );
+        if ( $wpdb->last_error ) {
+            throw new RuntimeException( "{$label} creation error: " . $wpdb->last_error );
+        }
+    };
 
-    $wpdb->query( "
-        CREATE TABLE tmp AS
+    try {
+        spp_drop_new_tables( $targets ); // leftovers from an interrupted run
+
+        // -------------------------------------------------------
+        // Build tmp_membership — all active members from usermeta.
+        // TEMPORARY: private to this DB connection, so no other request
+        // can see or drop it. Always DROP TEMPORARY -- a plain DROP TABLE
+        // IF EXISTS would hit a permanent table of the same name.
+        // -------------------------------------------------------
+        $wpdb->query( "DROP TEMPORARY TABLE IF EXISTS tmp_membership" );
+        $step( "
+        CREATE TEMPORARY TABLE tmp_membership AS
         SELECT * FROM (
             SELECT
                 LPAD(MAX(CASE WHEN meta_key LIKE 'Rank'  THEN meta_value END), 3, 0) AS Rank,
@@ -297,82 +343,65 @@ function spp_create_membership_table_locked() {
         ) t
         WHERE t.Expiry >= '{$year}-12-31' OR t.YrEndDt >= '{$year}-12-31'
         ORDER BY Rank
-    " );
-    if ( $wpdb->last_error ) echo "<p style='color:red;'>⚠ tmp creation error: " . $wpdb->last_error . "</p>";
+    ", 'tmp' );
 
-    $wpdb->query( "ALTER TABLE tmp MODIFY COLUMN PCO INT" );
-    $wpdb->query( "UPDATE tmp SET Ladder='No' WHERE Rank=0" );
+        $step( "ALTER TABLE tmp_membership MODIFY COLUMN PCO INT", 'tmp' );
+        $step( "UPDATE tmp_membership SET Ladder='No' WHERE Rank=0", 'tmp' );
 
-    // -------------------------------------------------------
-    // Build Master — active ladder players only
-    // -------------------------------------------------------
-    $wpdb->query( "DROP TABLE IF EXISTS {$master}" );
-    $wpdb->query( "
-        CREATE TABLE {$master} AS
+        // -------------------------------------------------------
+        // Build Master + Masterlist{year} (yearly backup) — active
+        // ladder players only
+        // -------------------------------------------------------
+        foreach ( array( $master, $masterY ) as $name ) {
+            $step( "
+        CREATE TABLE `{$name}_new` AS
         SELECT t.Rank, t.user_id, t.first_name, t.last_name,
                t.user_phone, t.travel, t.user_email,
                t.Ladder, t.Rating, t.ClubRating, t.RatingGames, t.DUPR, t.KQAceRank, t.KQQueenRank, m.Tag
-        FROM tmp t
+        FROM tmp_membership t
         INNER JOIN MembershipTags m ON t.user_id = m.user_id
         WHERE t.Rank <> 0 AND t.Ladder = 'Yes'
         ORDER BY CONVERT(t.Rank, SIGNED INTEGER)
-    " );
-    if ( $wpdb->last_error ) echo "<p style='color:red;'>⚠ Master creation error: " . $wpdb->last_error . "</p>";
+    ", $name );
+            do_action( 'spp_membership_rebuild_table_built', $name );
+        }
 
-    // -------------------------------------------------------
-    // Build Masterlist{year} — yearly backup of Master
-    // -------------------------------------------------------
-    $wpdb->query( "DROP TABLE IF EXISTS {$masterY}" );
-    $wpdb->query( "
-        CREATE TABLE {$masterY} AS
-        SELECT t.Rank, t.user_id, t.first_name, t.last_name,
-               t.user_phone, t.travel, t.user_email,
-               t.Ladder, t.Rating, t.ClubRating, t.RatingGames, t.DUPR, t.KQAceRank, t.KQQueenRank, m.Tag
-        FROM tmp t
-        INNER JOIN MembershipTags m ON t.user_id = m.user_id
-        WHERE t.Rank <> 0 AND t.Ladder = 'Yes'
-        ORDER BY CONVERT(t.Rank, SIGNED INTEGER)
-    " );
-    if ( $wpdb->last_error ) echo "<p style='color:red;'>⚠ {$masterY} creation error: " . $wpdb->last_error . "</p>";
-
-    // -------------------------------------------------------
-    // Build membership — all active members
-    // -------------------------------------------------------
-    $wpdb->query( "DROP TABLE IF EXISTS {$membership}" );
-    $wpdb->query( "
-        CREATE TABLE {$membership} AS
+        // -------------------------------------------------------
+        // Build membership + Membershiplist{year} (yearly backup) —
+        // all active members
+        // -------------------------------------------------------
+        foreach ( array( $membership, $membershipY ) as $name ) {
+            $step( "
+        CREATE TABLE `{$name}_new` AS
         SELECT t.Rank, t.user_id, t.first_name, t.last_name,
                t.user_phone, t.travel, t.user_email,
                t.Ladder, t.PCO, t.Rating, t.ClubRating, t.RatingGames, t.DUPR, t.KQAceRank, t.KQQueenRank, m.Tag
-        FROM tmp t
+        FROM tmp_membership t
         LEFT JOIN MembershipTags m ON t.user_id = m.user_id
         ORDER BY last_name
-    " );
-    if ( $wpdb->last_error ) echo "<p style='color:red;'>⚠ membership creation error: " . $wpdb->last_error . "</p>";
+    ", $name );
+            $step( "ALTER TABLE `{$name}_new` ADD PRIMARY KEY (user_id)", $name );
+            do_action( 'spp_membership_rebuild_table_built', $name );
+        }
 
-    $wpdb->query( "ALTER TABLE {$membership} ADD PRIMARY KEY (user_id)" );
+        // -------------------------------------------------------
+        // Swap all four in with one atomic RENAME TABLE
+        // -------------------------------------------------------
+        if ( ! spp_swap_in_new_tables( $targets ) ) {
+            throw new RuntimeException( 'swap error: ' . $wpdb->last_error );
+        }
+        return true;
 
-    // -------------------------------------------------------
-    // Build Membershiplist{year} — yearly backup of membership
-    // -------------------------------------------------------
-    $wpdb->query( "DROP TABLE IF EXISTS {$membershipY}" );
-    $wpdb->query( "
-        CREATE TABLE {$membershipY} AS
-        SELECT t.Rank, t.user_id, t.first_name, t.last_name,
-               t.user_phone, t.travel, t.user_email,
-               t.Ladder, t.PCO, t.Rating, t.ClubRating, t.RatingGames, t.DUPR, t.KQAceRank, t.KQQueenRank, m.Tag
-        FROM tmp t
-        LEFT JOIN MembershipTags m ON t.user_id = m.user_id
-        ORDER BY last_name
-    " );
-    if ( $wpdb->last_error ) echo "<p style='color:red;'>⚠ {$membershipY} creation error: " . $wpdb->last_error . "</p>";
+    } catch ( Throwable $e ) {
+        echo "<p style='color:red;'>⚠ " . esc_html( $e->getMessage() )
+           . " -- membership tables NOT rebuilt; the existing Master/membership tables were left unchanged.</p>";
+        return false;
 
-    $wpdb->query( "ALTER TABLE {$membershipY} ADD PRIMARY KEY (user_id)" );
-
-    // -------------------------------------------------------
-    // Cleanup
-    // -------------------------------------------------------
-    $wpdb->query( "DROP TABLE IF EXISTS tmp" );
+    } finally {
+        // No-op after a successful swap (the _new tables are gone by then).
+        spp_drop_new_tables( $targets );
+        $wpdb->query( "DROP TEMPORARY TABLE IF EXISTS tmp_membership" );
+    }
 }
 
 add_shortcode( 'spp_create_membership_table', function( $atts ) {

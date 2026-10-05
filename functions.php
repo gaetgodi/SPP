@@ -51,6 +51,7 @@ require_once get_stylesheet_directory() . '/inc/score-scanner.php';
 require_once get_stylesheet_directory() . '/inc/spp-blog-reminder.php';
 require_once get_stylesheet_directory() . '/inc/spp-blog-system.php';
 require_once get_stylesheet_directory() . '/inc/spp-membership-tags-refresh.php'; // must load before spp-create-membership-table.php below, which calls spp_refresh_membership_tags() directly
+require_once get_stylesheet_directory() . '/inc/spp-table-swap.php'; // spp_swap_in_new_tables() -- must load before spp-create-membership-table/gl-schedule-production below, which use it
 require_once get_stylesheet_directory() . '/inc/spp-create-membership-table.php'; // must load before gl-schedule-production/spp-score-correction/spp-change-new-user-rank below, which now call spp_create_membership_table() directly instead of via CM102's [cmruncode]
 require_once get_stylesheet_directory() . '/inc/spp-change-new-user-rank.php'; // calls spp_create_membership_table() directly -- must load after spp-create-membership-table.php above; no direct tracked-file caller otherwise, only reached via CM219's [cmruncode] shim
 require_once get_stylesheet_directory() . '/inc/spp-random-ranks.php'; // must load before spp-assign-ranks-to-registered-players.php below, which calls spp_random_ranks() directly
