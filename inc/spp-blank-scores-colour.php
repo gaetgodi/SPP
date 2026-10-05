@@ -1,8 +1,19 @@
 <?php
 /* =========================================================
    Blank Scores Colour Grid
-   Version: 1.0.0
-   Date: 2026-09-05
+   Version: 1.1.0
+   Date: 2026-10-05
+
+   Changes from 1.0.0:
+   - Heading no longer read from WP Data Access (wpda_app app_id=4's
+     app_title, which schedule production rewrote every run to
+     "Schedule for <title> <date> <time>"). Built here instead from
+     spp_current_event's gl_event_occurrences row, in exactly that
+     format -- the same "<title> <event_date> <event_time>" $name the
+     ladder events dropdown hands schedule production -- so the
+     wording is unchanged (e.g. "Schedule for Ladder 2026-10-05
+     17:00:00"). Falls back to plain "Schedule" if the occurrence is
+     missing.
    Based on: Code Manager snippet "Blank for scores - colour" (CM194)
 
    PURPOSE:
@@ -101,9 +112,13 @@ function spp_blank_scores_colour( string $file = 'schedules_w', string $time = '
     $cols      = array_column( $result, 'COLUMN_NAME' );
     $class     = array_column( $result, 'cssClass' );
 
-    $sql     = "select app_title from " . $prefix . "wpda_app where app_id = 4";
-    $result1 = $wpdb->get_results( $sql, ARRAY_A );
-    $name    = $result1[0]['app_title'];
+    $occ  = $wpdb->get_row( $wpdb->prepare(
+        "SELECT title, event_date, event_time FROM {$prefix}gl_event_occurrences WHERE id = %d",
+        (int) get_option( 'spp_current_event' )
+    ), ARRAY_A );
+    $name = $occ
+        ? esc_html( 'Schedule for ' . $occ['title'] . ' ' . $occ['event_date'] . ' ' . $occ['event_time'] )
+        : 'Schedule';
 
     echo "<center><h1 class=\"spp-schedule-title\">$name</h1></center>";
     echo '<div class="spp-print-button" style="text-align:center;margin:10px 0 15px 0;"><button onclick="window.print()" style="padding:8px 24px;background:#3766AB;color:white;border:none;border-radius:4px;font-size:14px;cursor:pointer;box-shadow:0 2px 4px rgba(0,0,0,0.2);">Print this page</button></div>';
