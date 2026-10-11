@@ -1,8 +1,25 @@
 <?php
 /* =========================================================
    GL Schedule Production
-   Version: 2.2.1
-   Date: 2026-10-05
+   Version: 2.2.2
+   Date: 2026-10-11
+
+   Changes from 2.2.1:
+   - Guard message only (the "scores entered, results not posted" hard
+     stop). Same condition, same early return, still no bypass. The
+     message is now plain-language and offers the two ways to close the
+     week (spp_schedule_guard_scores_message()):
+       a. fully played: Create Results for Override, THEN GL Publish
+          Results after overrides -- both linked, in that order. Never
+          the second alone: Apply Override reads its event from Results,
+          so before Create Results it would re-publish the PREVIOUS week.
+       b. partly played (rain-out): link to the Publish Partial Results
+          page (inc/spp-publish-partial-results.php) with ppr_event
+          prefilled, so it opens straight to the read-only preview.
+          Admin/editor only; a "contact Gaetan" note if the page is gone.
+     Pages are found by slug (spp_ppr_tool_page_url()), never by ID.
+     The event shown is read from Schedules.event_id (what the guard is
+     actually protecting), spp_current_event as fallback.
 
    Changes from 2.2.0:
    - Removed the dead "Carpool rank tolerance: N" echo gated on
@@ -342,6 +359,53 @@ function spp_build_schedules_from_staging( string $staging, string $Schedules ) 
     }
 }
 
+/**
+ * The guard's "scores entered, results not posted" stop message (2.2.2).
+ * Plain language for the convenor: which event, and the two ways to close
+ * it out. Message only -- the caller still stops the run either way.
+ */
+function spp_schedule_guard_scores_message( int $event, int $scores_entered ) : string {
+    global $wpdb;
+    $occ  = $event ? $wpdb->get_row( $wpdb->prepare(
+        "SELECT title, event_date FROM {$wpdb->prefix}gl_event_occurrences WHERE id = %d", $event
+    ), ARRAY_A ) : null;
+    $what = $occ ? esc_html( $occ['title'] . ', ' . date( 'l, F j, Y', strtotime( $occ['event_date'] ) ) ) : 'The last event';
+    $url  = function_exists( 'spp_ppr_tool_page_url' ) ? 'spp_ppr_tool_page_url' : fn() => '';
+    $link = function( $slug, $label ) use ( $url ) {
+        $u = $url( $slug );
+        return $u ? '<a href="' . esc_url( $u ) . '"><strong>' . esc_html( $label ) . '</strong></a>'
+                  : '<strong>' . esc_html( $label ) . '</strong> (page not found -- contact Gaetan)';
+    };
+    $box = 'max-width:100%;box-sizing:border-box;border-radius:6px;padding:12px 16px;margin:12px 0;';
+
+    $h  = '<div style="max-width:100%;overflow-x:auto;font-family:Arial,sans-serif;font-size:15px;">';
+    $h .= '<div style="' . $box . 'background:#fdf3f2;border:2px solid #c0392b;">';
+    $h .= '<p style="color:#c0392b;font-weight:bold;font-size:17px;margin:0 0 8px;">Next week\'s schedule can\'t be created yet.</p>';
+    $h .= '<p style="margin:0;">' . $what . ' (event ' . (int) $event . ') has scores entered for ' . (int) $scores_entered
+        . ' player(s), but its results were not published. Close out that week first, using one of the choices below.</p></div>';
+
+    $h .= '<div style="' . $box . 'background:#f0f7ff;border:1px solid #3766AB;">';
+    $h .= '<p style="margin:0 0 6px;"><strong>A. The week was fully played</strong> -- publish the results the normal way, in this order:</p><ol style="margin:0 0 6px 20px;">';
+    $h .= '<li>Step 1: ' . $link( 'create-results-for-override', 'Create Results for Override' ) . '</li>';
+    $h .= '<li>Step 2: ' . $link( 'gl-publish-results-after-overrides', 'GL Publish Results after overrides' ) . '</li></ol>';
+    $h .= '<p style="margin:0;font-size:13px;">Always do Step 1 first, then Step 2. Never do Step 2 on its own.</p></div>';
+
+    if ( spp_is_admin_or_editor() ) {
+        $h .= '<div style="' . $box . 'background:#fff8e1;border:1px solid #e67e22;">';
+        $h .= '<p style="margin:0 0 8px;"><strong>B. The week was only partly played</strong> (for example, rained out) -- keep the scores that were entered, without changing rankings:</p>';
+        $ppr = function_exists( 'spp_ppr_page_url' ) ? spp_ppr_page_url( $event ) : '';
+        if ( $ppr ) {
+            $h .= '<p style="margin:0;"><a href="' . esc_url( $ppr ) . '" style="display:inline-block;padding:9px 18px;background:#e67e22;color:#fff;border-radius:4px;text-decoration:none;font-weight:bold;">Publish partial results (no ranking change)</a></p>';
+        } else {
+            $h .= '<p style="margin:0;color:#c0392b;">The Publish Partial Results page is missing -- please contact Gaetan.</p>';
+        }
+        $h .= '</div>';
+    }
+
+    $h .= '<p style="font-weight:bold;">Nothing changes until you confirm on the next screen.</p></div>';
+    return $h;
+}
+
 function spp_run_schedule_production_locked() {
 
 // Administrator + editor, per this page's Ultimate Member menu
@@ -383,10 +447,9 @@ if (get_option('spp_schedule_published', 0) && !get_option('spp_results_posted',
     );
 
     if ($scores_entered > 0) {
-        echo '<p class="gl-error" style="color:#c0392b;font-weight:bold;">Cannot produce a new schedule: '
-           . $scores_entered . ' player(s) already have scores entered against the current schedule, '
-           . 'and results have not been posted yet. Publish results first (or use Score Correction) '
-           . 'before running Schedule Production again.</p>';
+        $guard_event = (int) $wpdb->get_var("SELECT event_id FROM Schedules WHERE group_id != 99 LIMIT 1");
+        if (!$guard_event) $guard_event = (int) get_option('spp_current_event', 0);
+        echo spp_schedule_guard_scores_message($guard_event, $scores_entered);
         return;
     }
 

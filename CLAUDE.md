@@ -78,6 +78,19 @@ roughly in pipeline order:
 8. **Club rating** (`spp-club-rating.php`) — computes a club-relative `ClubRating` (2.000–5.000) from
    rank standing, used elsewhere (e.g. shadow dampening in `spp-create-results.php`) in preference to
    noisier self-reported `Master.Rating`.
+9. **Partial publish (rain-outs)** (`spp-publish-partial-results.php`, `[spp_publish_partial_results]`
+   on the "Publish Partial Results" page, slug `publish-partial-results`) — closes out a partly played
+   week without changing rankings: snapshots `Schedules`, saves `Schedules_Scores_{event}`, feeds the
+   played games to the Glicko Club Rating via `spp_crt_process_event_ratings()` (one verified
+   transaction, rolled back on any failure), then sets `spp_schedule_published = 0` /
+   `spp_results_posted = 1`. The event id is always explicit. It **never** calls Create Results, Apply
+   Override, Copy Ranks or `spp_update_club_ratings()` — the last two read their event from
+   `Results.event_id`, which still holds the previous fully published week. Backups go to
+   `PartialPub_*` tables (names no cleanup pattern drops; kept on purpose); every run is appended to
+   the `spp_partial_publish_log` option. Admin/editor only; the page is Published (editors here
+   lack `read_private_pages`), noindex, out of menus/search, rejected by WP Super Cache. The Create
+   Schedule guard links to it with the event prefilled. First use: event 168 (2026-10-05 rain-out),
+   run 2026-10-11. Tests: `tests/spp-publish-partial-results-test.php` (throwaway tables).
 
 Overrides are edited on the "Result Overrides changes" page (20010698) via
 `[spp_report table="results-variant-2"]` — the `results` report in `spp-reports.php`, whose

@@ -1,8 +1,31 @@
 <?php
 /* =========================================================
    Publish Partial Results (no ranking change)
-   Version: 1.0.0
+   Version: 1.1.0
    Date: 2026-10-11
+
+   Changes from 1.0.0:
+   - Page: "Publish Partial Results" (slug publish-partial-results),
+     Published, not Private -- this site's editor role has no
+     read_private_pages, so a Private page 404s for editors. Same model
+     as the other tool pages: the shortcode gates itself, and anyone who
+     is not administrator/editor (logged out, subscriber, any other role)
+     gets only "You do not have permission to use this tool." -- no form,
+     no event data. Kept out of menus; Yoast noindex (post meta, also
+     drops it from the sitemap); excluded from site search below;
+     /publish-partial-results/ added to WP Super Cache's rejected URIs.
+   - spp_ppr_tool_page_url( $slug ) / spp_ppr_page_url( $event ): page
+     links by slug, never by ID ('' if the page is missing). Used by the
+     Create Schedule guard message (gl-schedule-production.php 2.2.2) to
+     link here with ppr_event prefilled. The slug goes through the
+     spp_ppr_page_slug filter (test hook for the missing-page case).
+   - Backup table names get a _2, _3... suffix when a run in the same
+     second already used the name. Before, the second run stopped at
+     step 1 ("table already exists") -- safe (nothing else changed) but a
+     spurious failure; found by the test suite running faster.
+   - Confirm screen wording, plain language: scores are saved and count
+     toward player ratings; rankings are NOT changed; no results email
+     is sent; the event is closed so the next schedule can be created.
 
    PURPOSE:
    For a ladder event that was only partly played (rain-out etc.):
@@ -66,6 +89,32 @@
 defined( 'ABSPATH' ) || exit;
 
 add_shortcode( 'spp_publish_partial_results', 'spp_publish_partial_results_shortcode' );
+
+/**
+ * URL of a published tool page, looked up by slug. '' if missing/unpublished.
+ */
+function spp_ppr_tool_page_url( string $slug ) : string {
+    $page = get_page_by_path( $slug, OBJECT, 'page' );
+    return ( $page && $page->post_status === 'publish' ) ? (string) get_permalink( $page ) : '';
+}
+
+/**
+ * This tool's page, opened straight to the preview for $event. '' if missing.
+ */
+function spp_ppr_page_url( int $event ) : string {
+    $url = spp_ppr_tool_page_url( apply_filters( 'spp_ppr_page_slug', 'publish-partial-results' ) );
+    return ( $url && $event ) ? add_query_arg( 'ppr_event', $event, $url ) : $url;
+}
+
+// Keep the tool page out of site search (noindex/sitemap is Yoast post meta).
+add_action( 'pre_get_posts', function( $query ) {
+    if ( ! is_admin() && $query->is_main_query() && $query->is_search() ) {
+        $page = get_page_by_path( 'publish-partial-results', OBJECT, 'page' );
+        if ( $page ) {
+            $query->set( 'post__not_in', array_merge( (array) $query->get( 'post__not_in' ), array( $page->ID ) ) );
+        }
+    }
+} );
 
 /**
  * Table/option names and the rating callable. Tests override these.
@@ -245,7 +294,11 @@ function spp_ppr_run( int $event, array $cfg ) : array {
             foreach ( $s['errors'] as $e ) $say( "Refused: $e" );
             return $out;
         }
+        // Backup-name suffix, unique even for two runs in the same second.
         $ts = gmdate( 'Ymd_His' );
+        for ( $n = 2; spp_ppr_table_exists( "{$cfg['backup_prefix']}Schedules_{$event}_{$ts}" ); $n++ ) {
+            $ts = gmdate( 'Ymd_His' ) . "_$n";
+        }
 
         // 1. Snapshot Schedules.
         $snap = "{$cfg['backup_prefix']}Schedules_{$event}_{$ts}";
@@ -398,11 +451,12 @@ function spp_ppr_log( array $out, array $cfg ) : void {
    ========================================================= */
 
 function spp_publish_partial_results_shortcode() {
+    // Never cache this page, not even the permission message.
+    if ( ! defined( 'DONOTCACHEPAGE' ) ) define( 'DONOTCACHEPAGE', true );
+    if ( ! headers_sent() ) nocache_headers();
     if ( ! spp_is_admin_or_editor() ) {
         return '<p>You do not have permission to use this tool.</p>';
     }
-    if ( ! defined( 'DONOTCACHEPAGE' ) ) define( 'DONOTCACHEPAGE', true );
-    nocache_headers();
 
     $cfg = spp_ppr_config();
     ob_start();
@@ -465,16 +519,22 @@ function spp_publish_partial_results_shortcode() {
        . ' (' . (int) $b['unreconstructed'] . ' unreconstructed, ' . (int) $b['not_played'] . ' not played). '
        . 'Current flags: published = ' . (int) $s['flag_published'] . ', results_posted = ' . (int) $s['flag_posted'] . '.</p>';
 
-    echo '<p><strong>This will:</strong></p><ol>';
-    echo '<li>Snapshot Schedules to a <code>' . esc_html( $cfg['backup_prefix'] ) . 'Schedules_' . (int) $event . '_…</code> table.</li>';
+    echo '<div style="max-width:100%;box-sizing:border-box;background:#fff8e1;border:2px solid #e67e22;border-radius:6px;padding:12px 16px;margin:12px 0;font-size:15px;">';
+    echo '<p style="margin:0 0 6px;"><strong>When you confirm below:</strong></p><ul style="margin:0 0 0 20px;">';
     if ( $s['zero_score'] ) {
-        echo '<li>No scores were entered -- no scores table, no rating change.</li>';
+        echo '<li>No scores were entered for this event, so there is nothing to save and no player rating changes.</li>';
+    } elseif ( $s['ledger_rows'] > 0 ) {
+        echo '<li>The scores are saved. They already count toward player ratings (done earlier) -- that is not repeated.</li>';
     } else {
-        echo '<li>' . ( $s['scores_exists'] ? 'Keep the existing <code>' . esc_html( $s['scores_table'] ) . '</code> (checked against Schedules).' : 'Save the scores as <code>' . esc_html( $s['scores_table'] ) . '</code>.' ) . '</li>';
-        echo '<li>' . ( $s['ledger_rows'] > 0 ? 'Ratings already applied for this event -- skipped.' : 'Update Glicko Club Ratings from the games above (dry run below).' ) . '</li>';
+        echo '<li>The scores that were entered are <strong>saved</strong> and <strong>count toward player ratings</strong> (Club Rating).</li>';
     }
-    echo '<li>Set published = 0 and results_posted = 1 so Create Schedule can run.</li></ol>';
-    echo '<p style="color:#c0392b;font-weight:bold;">Ladder rankings are NOT changed: no Create Results, no Apply Override, no Copy Ranks, no results email.</p>';
+    echo '<li>Ladder rankings are <strong>NOT</strong> changed.</li>';
+    echo '<li><strong>No</strong> results email is sent.</li>';
+    echo '<li>The event is closed, so the next schedule can be created.</li></ul>';
+    echo '<p style="margin:8px 0 0;font-weight:bold;">Nothing changes until you click the button at the bottom of this page.</p></div>';
+    echo '<p style="font-size:12px;color:#666;">Details: Schedules is backed up to a <code>' . esc_html( $cfg['backup_prefix'] ) . 'Schedules_' . (int) $event . '_…</code> table'
+       . ( $s['zero_score'] ? '' : ', scores are kept as <code>' . esc_html( $s['scores_table'] ) . '</code>' )
+       . ', and spp_schedule_published / spp_results_posted are set to 0 / 1.</p>';
 
     if ( ! $s['zero_score'] && $s['ledger_rows'] === 0 && ! empty( $b['games'] ) ) {
         $r = call_user_func( $cfg['rate'], $b['games'], $b['rank_by_user'], $event, 'ladder', true );
@@ -496,7 +556,7 @@ function spp_publish_partial_results_shortcode() {
     echo '<input type="hidden" name="ppr_event" value="' . (int) $event . '">';
     // Hidden field, not the button's name: a disabled submit button isn't sent.
     echo '<input type="hidden" name="spp_ppr_run" value="1">';
-    echo '<button type="submit" style="padding:10px 20px;background:#c0392b;color:#fff;border:none;border-radius:4px;" onclick="return confirm(\'Publish partial results for event ' . (int) $event . '? Scores kept, ratings updated, rankings unchanged.\');">Publish partial results for event ' . (int) $event . '</button>';
+    echo '<button type="submit" style="padding:10px 20px;background:#c0392b;color:#fff;border:none;border-radius:4px;" onclick="return confirm(\'Publish partial results for event ' . (int) $event . '?\\n\\nScores are saved and count toward player ratings.\\nRankings are NOT changed.\\nNo results email is sent.\\nThe event is closed so the next schedule can be created.\');">Publish partial results for event ' . (int) $event . '</button>';
     echo '</form></div>';
     return ob_get_clean();
 }
