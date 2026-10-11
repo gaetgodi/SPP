@@ -14,8 +14,10 @@ if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
  * Run: php tests/spp-publish-partial-results-test.php
  */
 
-define( 'WP_USE_THEMES', false );
-require '/var/www/vhosts/pickleballstouffville.ca/httpdocs/wp-load.php';
+if ( ! defined( 'ABSPATH' ) ) {
+    define( 'WP_USE_THEMES', false );
+    require '/var/www/vhosts/pickleballstouffville.ca/httpdocs/wp-load.php';
+}
 if ( ! function_exists( 'spp_ppr_run' ) ) require __DIR__ . '/../inc/spp-publish-partial-results.php';
 
 global $wpdb;
@@ -54,6 +56,9 @@ function ppr_fixture( int $event = 168 ) {
     $wpdb->query( "INSERT INTO {$P}state SELECT * FROM club_rating_state" );
     $wpdb->query( "CREATE TABLE {$P}ledger LIKE club_rating_event_log" );
     $wpdb->query( "INSERT INTO {$P}ledger SELECT * FROM club_rating_event_log" );
+    // The real ledger holds event 168's rows since the 2026-10-11 run; the
+    // fixture plays an event that has NOT been rated yet.
+    $wpdb->query( "DELETE FROM {$P}ledger WHERE event_id = 168" );
     $wpdb->query( "CREATE TABLE {$P}usermeta LIKE {$wpdb->prefix}usermeta" );
     $wpdb->query( "INSERT INTO {$P}usermeta SELECT * FROM {$wpdb->prefix}usermeta WHERE meta_key IN ('spp_glicko_rating','spp_glicko_rating_games')" );
     update_option( $P . 'flag_pub', 1 );
@@ -211,7 +216,8 @@ $_GET = array( 'ppr_event' => '999999999' );
 ppr_ok( strpos( spp_publish_partial_results_shortcode(), 'Cannot run' ) !== false, 'missing event: Cannot run, no form' );
 $_GET = array( 'ppr_event' => '168' );
 $html = spp_publish_partial_results_shortcode();
-ppr_ok( strpos( $html, 'Rating dry run' ) !== false && strpos( $html, 'spp_ppr_nonce' ) !== false && substr_count( $html, '<tr><td>' ) >= 43, 'preview for 168: group table, dry run, nonce form' );
+ppr_ok( strpos( $html, 'spp_ppr_nonce' ) !== false && strpos( $html, 'Ladder rankings are <strong>NOT</strong> changed' ) !== false
+     && strpos( $html, 'results email is sent' ) !== false && strpos( $html, 'next schedule can be created' ) !== false, 'preview for 168: plain-language confirm wording + nonce form' );
 $_GET = array();
 wp_set_current_user( 0 );
 
