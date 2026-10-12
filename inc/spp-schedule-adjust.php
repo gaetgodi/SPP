@@ -1,8 +1,37 @@
 <?php
 /* =========================================================
    SPP Schedule Adjust
-   Version: 1.0.0
-   Date: 2026-07-14
+   Version: 1.1.0
+   Date: 2026-10-12
+
+   Changes from 1.0.0:
+   - New action "Move group to another time slot" (action
+     'movegroup'). The convenor picks a group (group_id 99 excluded)
+     and a target time slot; every row of that group gets the new
+     time_id and a free active court's Crt_ID. Players and group_id
+     are unchanged. Court collision in the target slot is the ONLY
+     constraint -- deliberately no "enough space" / group-count
+     check. Refuses: target = current slot, group not in the current
+     event, group already split across more than one slot/court, or
+     no free active court (names the taken ones). Travel-preference
+     conflicts are shown as a warning only, same as group swap.
+     Same Propose -> Apply + Check -> Finalize / Cancel flow and the
+     same backup + surgical restore as every other action.
+   - Pending notification queue now also remembers, per queued
+     group, the slot/court it was in BEFORE a move (first move
+     wins, so it stays "the time you were originally sent").
+     spp_sa2_notify() takes an optional $group_moves map and, when
+     a player's group is now somewhere else, puts a plain "your time
+     has changed from X to Y" line at the top of their email, built
+     from live Times/Courts at send time (no line if it was moved
+     back). Previously the change note only reached the convenor.
+     Existing callers pass nothing and behave exactly as before.
+   - spp_sa2_backup_schedules() / spp_sa2_restore_schedules() take
+     an optional table name (default 'Schedules', unchanged), and
+     the queue option name goes through spp_sa2_pending_option()
+     (filter 'spp_sa2_pending_notify_option'), so
+     tests/spp-schedule-adjust-movegroup-test.php can run the real
+     code against throwaway copies.
 
    Consolidated mid-event schedule adjustment tool. Covers:
      1. Dropout            -- IMPLEMENTED this pass
@@ -213,18 +242,22 @@ function spp_sa2_find_best_group( $incoming_uid, $incoming_rank, $incoming_trave
     return null;
 }
 
-function spp_sa2_backup_schedules( $label ) {
+// $table is only ever overridden by tests (throwaway copies); live callers
+// always use the default.
+function spp_sa2_backup_schedules( $label, $table = 'Schedules' ) {
     global $wpdb;
-    $backup_table = 'Schedules_backup_' . preg_replace( '/[^a-z0-9_]/i', '', $label ) . '_' . date( 'Ymd_His' );
-    $wpdb->query( "CREATE TABLE `$backup_table` LIKE Schedules" );
-    $wpdb->query( "INSERT INTO `$backup_table` SELECT * FROM Schedules" );
+    $table = preg_replace( '/[^a-z0-9_]/i', '', $table );
+    $backup_table = $table . '_backup_' . preg_replace( '/[^a-z0-9_]/i', '', $label ) . '_' . date( 'Ymd_His' );
+    $wpdb->query( "CREATE TABLE `$backup_table` LIKE `$table`" );
+    $wpdb->query( "INSERT INTO `$backup_table` SELECT * FROM `$table`" );
     return $backup_table;
 }
 
-function spp_sa2_restore_schedules( $backup_table ) {
+function spp_sa2_restore_schedules( $backup_table, $table = 'Schedules' ) {
     global $wpdb;
+    $table = preg_replace( '/[^a-z0-9_]/i', '', $table );
     // Validate the table actually looks like one of ours before touching it.
-    if ( ! preg_match( '/^Schedules_backup_[a-z0-9_]+$/i', $backup_table ) ) return false;
+    if ( ! preg_match( '/^' . preg_quote( $table, '/' ) . '_backup_[a-z0-9_]+$/i', $backup_table ) ) return false;
     $exists = $wpdb->get_var( "SHOW TABLES LIKE '$backup_table'" );
     if ( ! $exists ) return false;
 
@@ -235,7 +268,7 @@ function spp_sa2_restore_schedules( $backup_table ) {
     // or a concurrent edit in another tab) -- forcing it to be redone. This
     // instead restores/re-adds/removes only the specific rows that differ.
     $backup_rows  = $wpdb->get_results( "SELECT user_id, first_name, last_name, user_phone, Rank, group_id, Crt_ID, time_id FROM `$backup_table`", ARRAY_A );
-    $current_rows = $wpdb->get_results( "SELECT user_id, group_id, Crt_ID, time_id FROM Schedules", ARRAY_A );
+    $current_rows = $wpdb->get_results( "SELECT user_id, group_id, Crt_ID, time_id FROM `$table`", ARRAY_A );
 
     $backup_by_uid  = array_column( $backup_rows, null, 'user_id' );
     $current_by_uid = array_column( $current_rows, null, 'user_id' );
@@ -249,13 +282,13 @@ function spp_sa2_restore_schedules( $backup_table ) {
             if ( (int) $c['group_id'] !== (int) $brow['group_id']
               || (int) $c['Crt_ID']   !== (int) $brow['Crt_ID']
               || (int) $c['time_id']  !== (int) $brow['time_id'] ) {
-                $wpdb->update( 'Schedules',
+                $wpdb->update( $table,
                     array( 'group_id' => $brow['group_id'], 'Crt_ID' => $brow['Crt_ID'], 'time_id' => $brow['time_id'] ),
                     array( 'user_id' => $uid )
                 );
             }
         } else {
-            $wpdb->insert( 'Schedules', $brow );
+            $wpdb->insert( $table, $brow );
         }
     }
 
@@ -263,7 +296,7 @@ function spp_sa2_restore_schedules( $backup_table ) {
     // them (last-minute add) -- remove just those.
     foreach ( $current_by_uid as $uid => $crow ) {
         if ( ! isset( $backup_by_uid[ $uid ] ) ) {
-            $wpdb->delete( 'Schedules', array( 'user_id' => $uid ) );
+            $wpdb->delete( $table, array( 'user_id' => $uid ) );
         }
     }
 
@@ -295,6 +328,8 @@ function spp_sa2_render() {
         spp_sa2_add_flow( $stage );
     } elseif ( $action === 'groupswap' ) {
         spp_sa2_groupswap_flow( $stage );
+    } elseif ( $action === 'movegroup' ) {
+        spp_sa2_movegroup_flow( $stage );
     } elseif ( $action === 'rank' ) {
         spp_sa2_rank_flow( $stage );
     } elseif ( $action === 'playerswap' ) {
@@ -450,6 +485,25 @@ function spp_sa2_action_selector() {
     }
     echo '</select>';
     echo '<button type="submit" class="btn btn-primary">Propose Swap</button>';
+    echo '</div>';
+    echo '</form>';
+
+    echo '<form method="post">';
+    wp_nonce_field( 'spp_schedule_adjust', 'spp_sa_nonce' );
+    echo '<input type="hidden" name="spp_sa_action" value="movegroup">';
+    echo '<input type="hidden" name="spp_sa_stage" value="propose">';
+    echo '<div class="box"><strong>Move group to another time slot</strong> -- the whole group moves to a free court in the new slot; nobody else moves.<br><br>';
+    echo '<label>Group</label><select name="spp_sa_mg_group" required><option value="">-- select --</option>';
+    foreach ( spp_sa2_movegroup_groups( $event ) as $g ) {
+        echo '<option value="' . (int) $g['group_id'] . '">' . esc_html( $g['GP_name'] . ' -- ' . $g['Crt_name'] . ' -- ' . $g['T_desc'] ) . '</option>';
+    }
+    echo '</select>';
+    echo '<label>Move to time slot</label><select name="spp_sa_mg_time" required><option value="">-- select --</option>';
+    foreach ( $wpdb->get_results( "SELECT T_ID, T_desc FROM Times WHERE Active = 1 ORDER BY T_ID", ARRAY_A ) as $t ) {
+        echo '<option value="' . (int) $t['T_ID'] . '">' . esc_html( $t['T_desc'] ) . '</option>';
+    }
+    echo '</select>';
+    echo '<button type="submit" class="btn btn-primary">Propose Move</button>';
     echo '</div>';
     echo '</form>';
 
@@ -1746,6 +1800,279 @@ function spp_sa2_groupswap_finalize() {
     spp_sa2_action_selector();
 }
 
+/* =========================================================
+   MOVE GROUP TO ANOTHER TIME SLOT
+   One group, all its rows, to a free active court in another
+   slot. group_id and players never change -- only time_id and
+   Crt_ID. Court collision in the target slot is the only
+   constraint. $table / $event are only overridden by tests.
+   ========================================================= */
+
+function spp_sa2_movegroup_flow( $stage ) {
+    if ( $stage === 'propose' ) {
+        spp_sa2_movegroup_propose();
+    } elseif ( $stage === 'apply' ) {
+        spp_sa2_movegroup_apply();
+    } elseif ( $stage === 'finalize' ) {
+        spp_sa2_movegroup_finalize();
+    } elseif ( $stage === 'undo' ) {
+        spp_sa2_movegroup_undo();
+    } else {
+        spp_sa2_action_selector();
+    }
+}
+
+/** Groups offered in the selector: current event only, never group 99. */
+function spp_sa2_movegroup_groups( $event, $table = 'Schedules' ) {
+    global $wpdb;
+    $table = preg_replace( '/[^a-z0-9_]/i', '', $table );
+    return $wpdb->get_results( $wpdb->prepare(
+        "SELECT s.group_id, g.GP_name, MIN(c.Crt_name) AS Crt_name, MIN(t.T_desc) AS T_desc
+         FROM `$table` s
+         JOIN Groups g ON s.group_id = g.GP_ID
+         JOIN Courts c ON s.Crt_ID = c.Crt_ID
+         JOIN Times t ON s.time_id = t.T_ID
+         WHERE s.group_id != 99 AND s.event_id = %d
+         GROUP BY s.group_id, g.GP_name
+         ORDER BY MIN(t.T_ID), MIN(c.Crt_ID)", $event
+    ), ARRAY_A );
+}
+
+/**
+ * Everything propose/apply need, re-read fresh each time. Returns
+ * array( 'error' => string ) on any refusal, otherwise the group, its
+ * roster, current and target slot/court labels, and the free courts.
+ */
+function spp_sa2_movegroup_state( $gid, $target_time, $table = 'Schedules', $event = null ) {
+    global $wpdb;
+    $table = preg_replace( '/[^a-z0-9_]/i', '', $table );
+    $gid = (int) $gid;
+    $target_time = (int) $target_time;
+    $event = $event === null ? (int) get_option( 'spp_current_event', 0 ) : (int) $event;
+
+    if ( ! $gid || $gid === 99 ) {
+        return array( 'error' => 'Please select a group (Group 99 is the not-playing list and cannot be moved).' );
+    }
+
+    $target = $wpdb->get_row( $wpdb->prepare( "SELECT T_ID, T_desc FROM Times WHERE T_ID = %d AND Active = 1", $target_time ), ARRAY_A );
+    if ( ! $target ) {
+        return array( 'error' => 'Please select an active time slot to move to.' );
+    }
+
+    $roster = $wpdb->get_results( $wpdb->prepare(
+        "SELECT s.user_id, s.first_name, s.last_name, s.Rank, s.Crt_ID, s.time_id, m.travel
+         FROM `$table` s LEFT JOIN Master m ON s.user_id = m.user_id
+         WHERE s.group_id = %d AND s.event_id = %d ORDER BY s.Rank", $gid, $event
+    ), ARRAY_A );
+    if ( empty( $roster ) ) {
+        return array( 'error' => "Group $gid is not in the schedule for the current event ($event)." );
+    }
+
+    $placements = array_unique( array_map( function ( $r ) { return $r['time_id'] . '/' . $r['Crt_ID']; }, $roster ) );
+    if ( count( $placements ) > 1 ) {
+        return array( 'error' => "Group $gid is already split across more than one time slot/court (" . implode( ', ', $placements ) . ' as time_id/Crt_ID). Fix that first -- it will not be moved.' );
+    }
+
+    $cur_time = (int) $roster[0]['time_id'];
+    $cur_crt  = (int) $roster[0]['Crt_ID'];
+    $current  = $wpdb->get_row( $wpdb->prepare(
+        "SELECT t.T_desc, c.Crt_name FROM Times t, Courts c WHERE t.T_ID = %d AND c.Crt_ID = %d", $cur_time, $cur_crt
+    ), ARRAY_A );
+    $group_name = (string) $wpdb->get_var( $wpdb->prepare( "SELECT GP_name FROM Groups WHERE GP_ID = %d", $gid ) );
+
+    if ( $cur_time === $target_time ) {
+        return array( 'error' => esc_html( $group_name ) . ' is already in the ' . esc_html( $target['T_desc'] ) . ' slot -- pick a different time slot.' );
+    }
+
+    $courts = $wpdb->get_results( "SELECT Crt_ID, Crt_name FROM Courts WHERE active = 1 ORDER BY Crt_ID", ARRAY_A );
+    $taken  = array_map( 'intval', $wpdb->get_col( $wpdb->prepare(
+        "SELECT DISTINCT Crt_ID FROM `$table` WHERE time_id = %d AND group_id != 99 AND group_id != %d AND event_id = %d", $target_time, $gid, $event
+    ) ) );
+
+    $free = array(); $taken_names = array();
+    foreach ( $courts as $c ) {
+        if ( in_array( (int) $c['Crt_ID'], $taken, true ) ) $taken_names[] = $c['Crt_name'];
+        else $free[ (int) $c['Crt_ID'] ] = $c['Crt_name'];
+    }
+    if ( empty( $free ) ) {
+        return array( 'error' => 'No active court is free at ' . esc_html( $target['T_desc'] ) . ' -- taken: ' . esc_html( implode( ', ', $taken_names ) ) . '. Nothing was changed.' );
+    }
+
+    return array(
+        'group_id'    => $gid,
+        'group_name'  => $group_name,
+        'roster'      => $roster,
+        'cur_time'    => $cur_time,
+        'cur_crt'     => $cur_crt,
+        'cur_t_desc'  => $current['T_desc'] ?? '',
+        'cur_crt_name'=> $current['Crt_name'] ?? '',
+        'new_time'    => $target_time,
+        'new_t_desc'  => $target['T_desc'],
+        'free'        => $free,          // Crt_ID => Crt_name, lowest first
+        'taken_names' => $taken_names,
+    );
+}
+
+/**
+ * The write itself. Re-validates (the schedule may have changed since
+ * propose) and only accepts a court that is still free. Returns the
+ * state on success or array( 'error' => ... ).
+ */
+function spp_sa2_movegroup_move_rows( $gid, $target_time, $court, $table = 'Schedules', $event = null ) {
+    global $wpdb;
+    $state = spp_sa2_movegroup_state( $gid, $target_time, $table, $event );
+    if ( isset( $state['error'] ) ) return $state;
+    $court = (int) $court;
+    if ( ! isset( $state['free'][ $court ] ) ) {
+        return array( 'error' => 'That court is no longer free at ' . esc_html( $state['new_t_desc'] ) . '. Nothing was changed -- propose the move again.' );
+    }
+    $table = preg_replace( '/[^a-z0-9_]/i', '', $table );
+    $event = $event === null ? (int) get_option( 'spp_current_event', 0 ) : (int) $event;
+    $wpdb->query( $wpdb->prepare(
+        "UPDATE `$table` SET time_id = %d, Crt_ID = %d WHERE group_id = %d AND event_id = %d",
+        $state['new_time'], $court, $state['group_id'], $event
+    ) );
+    $state['new_crt']      = $court;
+    $state['new_crt_name'] = $state['free'][ $court ];
+    return $state;
+}
+
+/** "From" values queued with the group so the player email can say what changed. */
+function spp_sa2_movegroup_change_note( $state ) {
+    return "Your group's time has changed: you now play at {$state['new_t_desc']} on {$state['new_crt_name']}, "
+         . "not {$state['cur_t_desc']} on {$state['cur_crt_name']} as in the schedule you were originally sent.";
+}
+
+function spp_sa2_movegroup_propose() {
+    $gid    = (int) ( $_POST['spp_sa_mg_group'] ?? 0 );
+    $target = (int) ( $_POST['spp_sa_mg_time'] ?? 0 );
+
+    echo '<h3>Propose Group Move</h3>';
+
+    $state = spp_sa2_movegroup_state( $gid, $target );
+    if ( isset( $state['error'] ) ) {
+        echo '<p class="box box-err">' . $state['error'] . '</p>';
+        spp_sa2_action_selector();
+        return;
+    }
+
+    echo '<div class="box"><strong>' . esc_html( $state['group_name'] ) . '</strong><table>';
+    echo '<tr><th></th><th>Time</th><th>Court</th></tr>';
+    echo '<tr><td>Now</td><td>' . esc_html( $state['cur_t_desc'] ) . '</td><td>' . esc_html( $state['cur_crt_name'] ) . '</td></tr>';
+    echo '<tr><td><strong>After</strong></td><td><strong>' . esc_html( $state['new_t_desc'] ) . '</strong></td><td><strong>(court chosen below)</strong></td></tr>';
+    echo '</table>';
+    echo '<table><tr><th>Rank</th><th>Player</th><th>Time preference</th></tr>';
+    foreach ( $state['roster'] as $p ) {
+        echo '<tr><td>' . (int) $p['Rank'] . '</td><td>' . esc_html( $p['first_name'] . ' ' . $p['last_name'] ) . '</td><td>' . esc_html( spp_sa2_normalize_travel( $p['travel'] ) ) . '</td></tr>';
+    }
+    echo '</table>Nobody else moves. Only these players are notified.</div>';
+
+    $violations = spp_sa2_check_travel_for_new_time( $state['roster'], $state['new_time'], spp_sa2_get_time_positions() );
+    if ( ! empty( $violations ) ) {
+        echo '<div class="box box-warn"><strong>Travel preference conflicts introduced by this move:</strong><ul>';
+        foreach ( $violations as $v ) echo '<li>' . esc_html( $v ) . '</li>';
+        echo '</ul>This is not blocked automatically -- review and decide whether to proceed anyway.</div>';
+    }
+
+    echo '<form method="post">';
+    wp_nonce_field( 'spp_schedule_adjust', 'spp_sa_nonce' );
+    echo '<input type="hidden" name="spp_sa_action" value="movegroup">';
+    echo '<input type="hidden" name="spp_sa_stage" value="apply">';
+    echo '<input type="hidden" name="spp_sa_mg_group" value="' . $state['group_id'] . '">';
+    echo '<input type="hidden" name="spp_sa_mg_time" value="' . $state['new_time'] . '">';
+    echo '<label>Court at ' . esc_html( $state['new_t_desc'] ) . ' (free courts only'
+       . ( $state['taken_names'] ? '; taken: ' . esc_html( implode( ', ', $state['taken_names'] ) ) : '' ) . ')</label>';
+    echo '<select name="spp_sa_mg_court" required>';
+    $first = true;
+    foreach ( $state['free'] as $cid => $cname ) {
+        echo '<option value="' . (int) $cid . '"' . ( $first ? ' selected' : '' ) . '>' . esc_html( $cname ) . '</option>';
+        $first = false;
+    }
+    echo '</select>';
+    echo '<button type="submit" class="btn btn-primary" onclick="return confirm(\'Apply this move? A backup will be taken and a validation check will run before anything is sent.\')">Apply and Check</button>';
+    echo '<a href="' . esc_url( $_SERVER['REQUEST_URI'] ) . '" class="btn btn-neutral" style="text-decoration:none;">Cancel</a>';
+    echo '</form>';
+}
+
+function spp_sa2_movegroup_apply() {
+    $gid    = (int) ( $_POST['spp_sa_mg_group'] ?? 0 );
+    $target = (int) ( $_POST['spp_sa_mg_time'] ?? 0 );
+    $court  = (int) ( $_POST['spp_sa_mg_court'] ?? 0 );
+
+    // Refuse before taking a backup, so a stale form leaves nothing behind.
+    $pre = spp_sa2_movegroup_state( $gid, $target );
+    if ( isset( $pre['error'] ) || ! isset( $pre['free'][ $court ] ) ) {
+        echo '<h3>Not applied</h3><p class="box box-err">'
+           . ( $pre['error'] ?? 'That court is no longer free -- propose the move again.' ) . ' Nothing was changed.</p>';
+        spp_sa2_action_selector();
+        return;
+    }
+
+    $backup_table = spp_sa2_backup_schedules( 'movegroup' );
+    $state = spp_sa2_movegroup_move_rows( $gid, $target, $court );
+
+    if ( isset( $state['error'] ) ) {
+        echo '<h3>Not applied</h3><p class="box box-err">' . $state['error'] . '</p>';
+        spp_sa2_action_selector();
+        return;
+    }
+
+    echo '<h3>Applied -- Validation Check</h3>';
+    echo '<div class="box">' . esc_html( $state['group_name'] ) . ': ' . esc_html( $state['cur_t_desc'] . ' ' . $state['cur_crt_name'] )
+       . ' &rarr; <strong>' . esc_html( $state['new_t_desc'] . ' ' . $state['new_crt_name'] ) . '</strong>.<br>'
+       . 'Backup saved as <code>' . esc_html( $backup_table ) . '</code>.</div>';
+
+    if ( function_exists( 'spp_run_schedule_check' ) ) {
+        echo '<div class="box">';
+        spp_run_schedule_check();
+        echo '</div>';
+    }
+
+    echo '<form method="post" style="display:inline;">';
+    wp_nonce_field( 'spp_schedule_adjust', 'spp_sa_nonce' );
+    echo '<input type="hidden" name="spp_sa_action" value="movegroup">';
+    echo '<input type="hidden" name="spp_sa_stage" value="finalize">';
+    echo '<input type="hidden" name="spp_sa_backup_table" value="' . esc_attr( $backup_table ) . '">';
+    echo '<input type="hidden" name="spp_sa_affected_groups" value="' . $state['group_id'] . '">';
+    echo '<input type="hidden" name="spp_sa_mg_from_time" value="' . $state['cur_time'] . '">';
+    echo '<input type="hidden" name="spp_sa_mg_from_crt" value="' . $state['cur_crt'] . '">';
+    echo '<input type="hidden" name="spp_sa_mg_note" value="' . esc_attr( spp_sa2_movegroup_change_note( $state ) ) . '">';
+    echo '<button type="submit" class="btn btn-primary">Looks good -- send notifications</button>';
+    echo '</form> ';
+
+    echo '<form method="post" style="display:inline;">';
+    wp_nonce_field( 'spp_schedule_adjust', 'spp_sa_nonce' );
+    echo '<input type="hidden" name="spp_sa_action" value="movegroup">';
+    echo '<input type="hidden" name="spp_sa_stage" value="undo">';
+    echo '<input type="hidden" name="spp_sa_backup_table" value="' . esc_attr( $backup_table ) . '">';
+    echo '<button type="submit" class="btn btn-danger" onclick="return confirm(\'Cancel this change? Only the rows this action touched will be reverted -- nothing else will be affected.\')">Not acceptable -- cancel</button>';
+    echo '</form>';
+}
+
+function spp_sa2_movegroup_undo() {
+    $backup_table = sanitize_text_field( $_POST['spp_sa_backup_table'] ?? '' );
+    $ok = spp_sa2_restore_schedules( $backup_table );
+    echo '<h3>Undo</h3>';
+    echo $ok
+        ? '<div class="box box-ok">Restored from <code>' . esc_html( $backup_table ) . '</code>. No notifications were sent.</div>'
+        : '<div class="box box-err">Could not restore -- backup table not found.</div>';
+    spp_sa2_action_selector();
+}
+
+function spp_sa2_movegroup_finalize() {
+    $backup_table = sanitize_text_field( $_POST['spp_sa_backup_table'] ?? '' );
+    $gid  = (int) ( $_POST['spp_sa_affected_groups'] ?? 0 );
+    $note = sanitize_text_field( wp_unslash( $_POST['spp_sa_mg_note'] ?? '' ) );
+    $from = array( 'time_id' => (int) ( $_POST['spp_sa_mg_from_time'] ?? 0 ), 'Crt_ID' => (int) ( $_POST['spp_sa_mg_from_crt'] ?? 0 ) );
+
+    echo '<h3>Finalized</h3>';
+    echo '<div class="box box-ok">Change kept. Backup <code>' . esc_html( $backup_table ) . '</code> retained for this event.</div>';
+
+    spp_sa2_finalize_notify_or_queue( array( $gid ), $note ?: 'A group was moved to another time slot.', 'Move Group to Another Time Slot', array( $gid => $from ) );
+
+    spp_sa2_action_selector();
+}
+
 function spp_sa2_dropout_finalize() {
     global $wpdb;
 
@@ -1781,30 +2108,48 @@ function spp_sa2_dropout_finalize() {
    stake there, only a convenor FYI note, which stays immediate.
    ========================================================= */
 
-function spp_sa2_queue_pending_notify( array $group_ids ) {
+// Option name is filterable only so tests can use a throwaway option.
+function spp_sa2_pending_option() {
+    return apply_filters( 'spp_sa2_pending_notify_option', 'spp_sa2_pending_notify' );
+}
+
+// $group_moves: group_id => array( 'time_id', 'Crt_ID' ) the group was in
+// BEFORE a Move Group. The first one queued for a group is kept, so it stays
+// "the time you were originally sent" across several moves in one sitting.
+function spp_sa2_queue_pending_notify( array $group_ids, array $group_moves = array() ) {
     $current_event = (int) get_option( 'spp_current_event', 0 );
-    $stored = get_option( 'spp_sa2_pending_notify', array() );
+    $stored = get_option( spp_sa2_pending_option(), array() );
     // If a queue exists from a DIFFERENT event (e.g. left unsent, then a new
     // schedule got produced before "Send Pending Notifications" was ever
     // clicked), discard it rather than risk emailing this week's players
     // using stale group references from a prior week's roster.
-    $pending = ( is_array( $stored ) && (int) ( $stored['event'] ?? 0 ) === $current_event )
-        ? $stored['groups']
-        : array();
+    $same_event = is_array( $stored ) && (int) ( $stored['event'] ?? 0 ) === $current_event;
+    $pending = $same_event ? $stored['groups'] : array();
+    $moves   = ( $same_event && is_array( $stored['moves'] ?? null ) ) ? $stored['moves'] : array();
     $pending = array_values( array_unique( array_merge( $pending, array_map( 'intval', $group_ids ) ) ) );
-    update_option( 'spp_sa2_pending_notify', array( 'event' => $current_event, 'groups' => $pending ) );
+    foreach ( $group_moves as $gid => $from ) {
+        if ( ! isset( $moves[ (int) $gid ] ) ) $moves[ (int) $gid ] = array( 'time_id' => (int) $from['time_id'], 'Crt_ID' => (int) $from['Crt_ID'] );
+    }
+    update_option( spp_sa2_pending_option(), array( 'event' => $current_event, 'groups' => $pending, 'moves' => $moves ) );
     return count( $pending );
 }
 
 function spp_sa2_get_pending_notify_groups() {
     $current_event = (int) get_option( 'spp_current_event', 0 );
-    $stored = get_option( 'spp_sa2_pending_notify', array() );
+    $stored = get_option( spp_sa2_pending_option(), array() );
     if ( ! is_array( $stored ) || (int) ( $stored['event'] ?? 0 ) !== $current_event ) return array();
     return is_array( $stored['groups'] ?? null ) ? $stored['groups'] : array();
 }
 
+function spp_sa2_get_pending_notify_moves() {
+    $current_event = (int) get_option( 'spp_current_event', 0 );
+    $stored = get_option( spp_sa2_pending_option(), array() );
+    if ( ! is_array( $stored ) || (int) ( $stored['event'] ?? 0 ) !== $current_event ) return array();
+    return is_array( $stored['moves'] ?? null ) ? $stored['moves'] : array();
+}
+
 function spp_sa2_clear_pending_notify() {
-    delete_option( 'spp_sa2_pending_notify' );
+    delete_option( spp_sa2_pending_option() );
 }
 
 /**
@@ -1815,7 +2160,7 @@ function spp_sa2_clear_pending_notify() {
  * spp_sa2_notify_pending() when the convenor clicks "Send Pending
  * Notifications".
  */
-function spp_sa2_finalize_notify_or_queue( array $affected_group_ids, string $change_note, string $action_label ) {
+function spp_sa2_finalize_notify_or_queue( array $affected_group_ids, string $change_note, string $action_label, array $group_moves = array() ) {
     $schedule_published = (int) get_option( 'spp_schedule_published', 0 );
 
     if ( ! $schedule_published ) {
@@ -1825,7 +2170,7 @@ function spp_sa2_finalize_notify_or_queue( array $affected_group_ids, string $ch
         return;
     }
 
-    $pending_count = spp_sa2_queue_pending_notify( $affected_group_ids );
+    $pending_count = spp_sa2_queue_pending_notify( $affected_group_ids, $group_moves );
     echo '<div class="box box-warn">Schedule is published -- <strong>' . count( $affected_group_ids ) . ' group(s) queued for notification</strong> ('
        . $pending_count . ' group(s) pending in total). No emails sent yet -- make any further adjustments, then use '
        . '<strong>"Send Pending Notifications"</strong> at the top of the menu once you\'re done, so anyone affected '
@@ -1848,7 +2193,7 @@ function spp_sa2_notify_pending() {
         return;
     }
 
-    $result = spp_sa2_notify( $pending, 'Your schedule was adjusted tonight -- this reflects your final grouping.', 'Schedule Adjustments' );
+    $result = spp_sa2_notify( $pending, 'Your schedule was adjusted tonight -- this reflects your final grouping.', 'Schedule Adjustments', spp_sa2_get_pending_notify_moves() );
     spp_sa2_clear_pending_notify();
 
     echo ! $result['published']
@@ -1950,7 +2295,7 @@ function spp_sa2_get_convenor_email() {
    confirmation only, clearly marked "pre-publish".
    ========================================================= */
 
-function spp_sa2_notify( array $affected_group_ids, string $change_note, string $action_label ) {
+function spp_sa2_notify( array $affected_group_ids, string $change_note, string $action_label, array $group_moves = array() ) {
     global $wpdb;
 
     $affected_group_ids = array_values( array_unique( array_map( 'intval', $affected_group_ids ) ) );
@@ -1999,7 +2344,7 @@ function spp_sa2_notify( array $affected_group_ids, string $change_note, string 
 
     foreach ( $affected_group_ids as $gid ) {
         $roster = $wpdb->get_results( $wpdb->prepare(
-            "SELECT s.user_id, s.first_name, s.last_name, s.user_phone, s.Rank, s.group_id,
+            "SELECT s.user_id, s.first_name, s.last_name, s.user_phone, s.Rank, s.group_id, s.time_id, s.Crt_ID,
                     m.user_email, g.GP_name, c.Crt_name, t.T_desc
              FROM Schedules s
              JOIN Groups g ON s.group_id = g.GP_ID
@@ -2012,17 +2357,19 @@ function spp_sa2_notify( array $affected_group_ids, string $change_note, string 
         if ( empty( $roster ) ) continue; // group dissolved, nothing to notify here
 
         $pairings = count( $roster ) >= 5 ? $pairings_5 : $pairings_4;
+        $move_note = isset( $group_moves[ $gid ] ) ? spp_sa2_move_note_html( $group_moves[ $gid ], $roster[0] ) : '';
 
         foreach ( $roster as $player ) {
             if ( empty( $player['user_email'] ) ) continue;
             $body = spp_sa2_email_header( $event_date )
+                  . $move_note
                   . spp_sa2_email_group_block( $roster, $pairings, $player['user_id'] )
                   . spp_sa2_email_footer();
             $ok = wp_mail( $player['user_email'], $subject, $body, $headers );
             if ( $ok ) $sent++; else $failed++;
         }
 
-        $convenor_body_groups .= spp_sa2_email_group_block( $roster, $pairings, 0 );
+        $convenor_body_groups .= $move_note . spp_sa2_email_group_block( $roster, $pairings, 0 );
     }
 
     $convenor_body = spp_sa2_email_header( $event_date )
@@ -2052,6 +2399,23 @@ function spp_sa2_get_event_date() {
         "SELECT event_date FROM {$prefix}gl_event_occurrences WHERE id = %d", $event
     ) );
     return $raw ? date( 'F d, Y', strtotime( $raw ) ) : 'tonight';
+}
+
+/**
+ * Plain "your time has changed" line for a moved group, built from live
+ * Times/Courts at send time ($now is the group's first roster row, which
+ * already carries T_desc/Crt_name). Empty if the group is back where it was.
+ */
+function spp_sa2_move_note_html( array $from, array $now ) {
+    global $wpdb;
+    if ( (int) $now['time_id'] === (int) $from['time_id'] && (int) $now['Crt_ID'] === (int) $from['Crt_ID'] ) return '';
+    $was = $wpdb->get_row( $wpdb->prepare(
+        "SELECT t.T_desc, c.Crt_name FROM Times t, Courts c WHERE t.T_ID = %d AND c.Crt_ID = %d", $from['time_id'], $from['Crt_ID']
+    ), ARRAY_A );
+    $text = 'Your time has changed. You now play at ' . $now['T_desc'] . ' on ' . $now['Crt_name']
+          . ( $was ? ', not ' . $was['T_desc'] . ' on ' . $was['Crt_name'] . ' as in the schedule you were originally sent.' : '.' );
+    return '<tr><td style="padding:16px 24px 0 24px;"><p style="margin:0;padding:10px 12px;background:#fff3cd;border:1px solid #ffe08a;border-radius:6px;font-size:15px;font-weight:bold;color:#7a5b00;">'
+         . esc_html( $text ) . '</p></td></tr>';
 }
 
 function spp_sa2_email_header( $event_date ) {

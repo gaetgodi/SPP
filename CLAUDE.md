@@ -63,6 +63,13 @@ roughly in pipeline order:
    action touched). Backup tables are intentionally not auto-dropped; they get cleaned up at the
    start of the next schedule production run. Preserve this flow when touching this file — it exists
    specifically so a bad change can be undone without clobbering concurrent/already-finalized changes.
+   **Move group to another time slot** (action `movegroup`, v1.1.0, 2026-10-12) moves one whole group
+   to a free active court in another slot (only `time_id`/`Crt_ID` change; court collision is the only
+   constraint, no "enough space" check). Post-publish the queue (`spp_sa2_pending_notify`) also keeps
+   each moved group's original slot/court under `moves`, and `spp_sa2_notify()` turns that into a
+   "your time has changed from X to Y" line in that group's player emails. Backup/restore take an
+   optional table and the queue option is filterable — test-only hooks for
+   `tests/spp-schedule-adjust-movegroup-test.php` (throwaway tables, stubbed `wp_mail`).
 5. **Schedule check** (`spp-schedule-check.php`, `[spp_schedule_check]`) — validation/diagnostic pass
    over a produced schedule, also invoked internally by the adjust tool after every mutation.
 6. **Score entry & correction** (`spp-score-entry.php`, `spp-score-correction.php`) —
