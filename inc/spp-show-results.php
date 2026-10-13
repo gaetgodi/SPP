@@ -1,8 +1,13 @@
 <?php
 /* =========================================================
    Show Results
-   Version: 1.1.0
-   Date: 2026-09-24
+   Version: 1.2.0
+   Date: 2026-10-13
+
+   Changes from 1.1.0:
+   - Added a "Status" column (Results_all.GroupStatus: "NC" for a
+     Not Complete group, blank otherwise) after Scores. Only selected
+     once Results_all has the column (spp_nc_table_has_status()).
 
    Changes from 1.0.0:
    - Added a "Calc (Shadow)" column (Results_all.RankCalc_Shadow)
@@ -82,6 +87,10 @@ function spp_show_results() {
         ? "RankCalc_Shadow as `Calc (Shadow)`,"
         : '';
 
+    $status_col = ( function_exists( 'spp_nc_table_has_status' ) && spp_nc_table_has_status( $table ) )
+        ? ", GroupStatus as Status"
+        : '';
+
     $sql = "SELECT
         Rank,
         display_name as Player,
@@ -92,6 +101,7 @@ function spp_show_results() {
         event_id as Event,
         group_id as Groups,
         Score as Scores
+        $status_col
         FROM $table
         $where order by $sort";
     $all = $wpdb->get_results( $sql, ARRAY_A );

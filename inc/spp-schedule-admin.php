@@ -10,8 +10,20 @@
  *   - Add a walk-in player to a group
  *   - Re-send personalized group emails to affected players + CC convenor
  *
- * Version: 1.2.0
- * Date:    2026-09-07
+ * Version: 1.3.0
+ * Date:    2026-10-13
+ *
+ * Changes from 1.2.0:
+ *   - NC (Not Complete) group status (inc/spp-nc-groups.php): each
+ *     group header has a "Mark NC" / "Clear NC" button. It marks the
+ *     whole group for this event in one action, stored in the
+ *     spp_nc_groups option keyed by the event Create Results will run
+ *     for (spp_cr_current_event()). Unlike NP/NS it never writes to
+ *     Schedules -- scores, group_id, Crt_ID and time_id stay exactly as
+ *     they are -- sends no email and doesn't add to the reprint list.
+ *     Same admin/editor gate and nonce as every other action here.
+ *     A note warns when Create Results has already run for the event
+ *     (the change then only applies to a forced re-run).
  *
  * Changes from 1.1.0:
  *   - SECURITY FIX (Tier 2 access-control audit): current_user_can(
@@ -118,6 +130,25 @@ function spp_schedule_admin_shortcode() {
                         $error = 'Player not found in active schedule.';
                     }
                 }
+                break;
+
+            // -- Mark / clear a whole group NC (Not Complete) --------------
+            // Only the NC list changes; Schedules is never written.
+            case 'nc_set':
+            case 'nc_clear':
+                $nc_group = intval( $_POST['spp_group_id'] ?? 0 );
+                $nc_event = (int) spp_cr_current_event()['event'];
+                $nc_found = $nc_group && $nc_group !== 99 && (int) $wpdb->get_var( $wpdb->prepare(
+                    "SELECT COUNT(*) FROM Schedules WHERE group_id = %d", $nc_group
+                ) ) > 0;
+                if ( ! $nc_event || ! $nc_found ) {
+                    $error = 'Group not found in the current schedule.';
+                    break;
+                }
+                spp_nc_set_group( $nc_event, $nc_group, $action === 'nc_set' );
+                $message = ( $action === 'nc_set' )
+                    ? "Group {$nc_group} marked NC (Not Complete). Entered scores are kept and still count toward Club Rating; in Create Results its players keep their previous rank with no penalty."
+                    : "NC cleared for Group {$nc_group}. It will be ranked normally (and its scores checked) in Create Results.";
                 break;
 
             // -- Move replacement into group ----------------------------------
@@ -310,6 +341,11 @@ function spp_schedule_admin_shortcode() {
     // Already scheduled user IDs
     $scheduled_ids = array_column( $groups_data, 'user_id' );
 
+    // NC (Not Complete) groups for the event Create Results will process
+    $nc_event      = (int) spp_cr_current_event()['event'];
+    $nc_groups     = spp_nc_groups_for_event( $nc_event );
+    $nc_results_in = $nc_event && $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', "Results_{$nc_event}" ) );
+
     ob_start();
     ?>
     <style>
@@ -345,6 +381,10 @@ function spp_schedule_admin_shortcode() {
         .sa-group-count-3 .sa-group-header { background:#c0392b; }
         .sa-group-count-4 .sa-group-header { background:#2c3e50; }
         .sa-group-count-5 .sa-group-header { background:#27ae60; }
+        .sa-group-nc .sa-group-header { background:#b9770e; }
+        .sa-btn-nc { background:#fff; color:#2c3e50; border:1px solid #fff; margin-left:10px; }
+        .sa-btn-nc:hover { background:#f3f3f3; }
+        .sa-nc-badge { display:inline-block; background:#fff3cd; color:#856404; border-radius:3px; padding:1px 6px; margin-left:6px; font-size:12px; font-weight:bold; opacity:1; }
     </style>
 
     <div class="sa-wrap">
@@ -389,6 +429,16 @@ function spp_schedule_admin_shortcode() {
             </div>
         <?php endif; ?>
 
+        <?php if ( $nc_groups ) : ?>
+            <div class="sa-notice sa-notice-warning">
+                <strong>Not Complete (NC):</strong> Group <?php echo esc_html( implode( ', ', $nc_groups ) ); ?>.
+                Their entered scores are kept and count toward Club Rating; in Create Results these players keep their previous rank with no penalty.
+                <?php if ( $nc_results_in ) : ?>
+                    <br><strong>Create Results has already run for this event</strong> &mdash; NC changes only take effect if it is re-run.
+                <?php endif; ?>
+            </div>
+        <?php endif; ?>
+
         <?php // ── Suggested replacement ─────────────────────────────────── ?>
         <?php if ( $suggest ) : ?>
             <div class="sa-suggest">
@@ -417,11 +467,26 @@ function spp_schedule_admin_shortcode() {
             $count     = count( $players );
             $p0        = $players[0];
             $css_count = 'sa-group-count-' . min( $count, 5 );
+            $is_nc     = in_array( (int) $group_id, $nc_groups, true );
         ?>
-            <div class="sa-group <?php echo esc_attr( $css_count ); ?>">
+            <div class="sa-group <?php echo esc_attr( $css_count ); ?><?php echo $is_nc ? ' sa-group-nc' : ''; ?>">
                 <div class="sa-group-header">
-                    <span><?php echo esc_html( $p0['GP_name'] ); ?> &mdash; <?php echo esc_html( $p0['Crt_name'] ); ?> &mdash; <?php echo esc_html( $p0['T_desc'] ); ?></span>
-                    <span><?php echo $count; ?> player<?php echo $count !== 1 ? 's' : ''; ?></span>
+                    <span><?php echo esc_html( $p0['GP_name'] ); ?> &mdash; <?php echo esc_html( $p0['Crt_name'] ); ?> &mdash; <?php echo esc_html( $p0['T_desc'] ); ?><?php if ( $is_nc ) : ?><span class="sa-nc-badge">NC</span><?php endif; ?></span>
+                    <span>
+                        <?php echo $count; ?> player<?php echo $count !== 1 ? 's' : ''; ?>
+                        <form method="post" style="display:inline;">
+                            <?php wp_nonce_field( 'spp_schedule_admin', 'spp_sa_nonce' ); ?>
+                            <input type="hidden" name="spp_sa_action" value="<?php echo $is_nc ? 'nc_clear' : 'nc_set'; ?>">
+                            <input type="hidden" name="spp_group_id"  value="<?php echo esc_attr( $group_id ); ?>">
+                            <?php if ( $is_nc ) : ?>
+                                <button type="submit" class="sa-btn sa-btn-nc" title="Clear Not Complete"
+                                        onclick="return confirm('Clear NC for <?php echo esc_js( $p0['GP_name'] ); ?>? Its players will be ranked normally and its scores checked in Create Results.')">Clear NC</button>
+                            <?php else : ?>
+                                <button type="submit" class="sa-btn sa-btn-nc" title="Mark the whole group Not Complete"
+                                        onclick="return confirm('Mark <?php echo esc_js( $p0['GP_name'] ); ?> NC (Not Complete)? Scores and group stay as they are; in Create Results its players keep their previous rank with no penalty.')">Mark NC</button>
+                            <?php endif; ?>
+                        </form>
+                    </span>
                 </div>
                 <table>
                     <thead>

@@ -1,8 +1,25 @@
 <?php
 /* =========================================================
    Apply Override to Results Table
-   Version: 1.6.0
-   Date: 2026-10-05
+   Version: 1.7.0
+   Date: 2026-10-13
+
+   Changes from 1.6.0:
+   - NC (Not Complete) groups (see inc/spp-nc-groups.php): Results
+     built by Create Results 3.4.0 has a GroupStatus column; it is now
+     carried through tmp_results into Results_all (once Results_all
+     has the column -- hand-run ALTER), into the rebuilt Results and
+     the per-event backups. RankOverride handling is unchanged: it
+     still defaults to the shadow value (RankPrev for NC players) and
+     stays editable on the overrides page.
+   - Stage 1 shows how many players are NC. If Results has NC rows
+     but Results_all has no GroupStatus column, Stage 1 refuses before
+     writing anything (spp_ao_nc_block_reason()) rather than silently
+     dropping the marker.
+   - The tmp_results build + Results_all archive is now
+     spp_ao_archive_results(), with table names as parameters for
+     tests. Same statements, same order, same messages.
+   - Results email: unchanged.
 
    Changes from 1.5.0:
    - Removed the WP Data Access writes (ALTER wpda_project_page
@@ -222,6 +239,90 @@
 
 defined( 'ABSPATH' ) || exit;
 
+/* =========================================================
+   NC guard (v1.7.0): non-empty message when Results holds NC rows
+   but Results_all has no GroupStatus column yet (the marker would be
+   lost on archive). Shown on Stage 1 and re-checked before any write.
+   ========================================================= */
+function spp_ao_nc_block_reason( string $results = 'Results', string $results_all = 'Results_all' ) : string {
+    if ( spp_nc_count_rows( $results ) > 0 && ! spp_nc_table_has_status( $results_all ) ) {
+        return "Results has Not Complete (NC) groups, but {$results_all} has no GroupStatus column yet, so the NC marker would be lost. "
+            . "Run: ALTER TABLE {$results_all} ADD COLUMN GroupStatus VARCHAR(4) NULL DEFAULT NULL; then try again. Nothing has been changed.";
+    }
+    return '';
+}
+
+/* =========================================================
+   Stage 1 archive step (v1.7.0, extracted unchanged apart from
+   GroupStatus): build tmp_results from Results sorted by
+   RankOverride, assign the final ordinal Rank, stamp event_id, and
+   replace this event's rows in Results_all. GroupStatus is carried
+   when Results has it (always, once Create Results 3.4.0 has run),
+   and written to Results_all once that table has the column.
+   Table names are parameters for tests; defaults are the real ones.
+   Leaves tmp_results in place -- Stage 1 rebuilds Results from it.
+   ========================================================= */
+function spp_ao_archive_results( int $Event, array $t = array() ) : array {
+    global $wpdb;
+    $t = array_merge( array( 'results' => 'Results', 'results_all' => 'Results_all', 'tmp' => 'tmp_results' ), $t );
+    $results_table = $t['results'];
+    $results_all   = $t['results_all'];
+    $tmp           = $t['tmp'];
+
+    $gs_in  = spp_nc_table_has_status( $results_table );
+    $gs_sel = $gs_in ? ', GroupStatus' : '';
+    $gs_out = $gs_in && spp_nc_table_has_status( $results_all ) ? ', GroupStatus' : '';
+    $sh_out = $results_all === 'Results_all'
+        ? spp_results_all_has_shadow()
+        : (bool) $wpdb->get_var( "SHOW COLUMNS FROM `{$results_all}` LIKE 'RankCalc_Shadow'" );
+
+    $wpdb->query("DROP TABLE IF EXISTS {$tmp}");
+    $wpdb->query("CREATE TABLE {$tmp} AS (
+        SELECT RankPrev, RankCalc, RankOverride, RankCalc_Shadow, user_id, group_id, Score, event_id, display_name{$gs_sel}
+        FROM {$results_table}
+        ORDER BY CAST(RankOverride AS DECIMAL(6,2)) ASC, RankPrev
+    )");
+    $wpdb->query("ALTER TABLE {$tmp} ADD Rank INT AUTO_INCREMENT PRIMARY KEY FIRST");
+
+    // -- GL EVENTS: stamp tmp_results with the played event ID --------------
+    $wpdb->query("UPDATE {$tmp} SET event_id = {$Event}");
+    $wpdb->query("UPDATE {$tmp} SET event_id = {$Event} WHERE event_id IS NULL");
+
+    // -- Verify the stamp actually applied to every row before proceeding ------
+    $unstamped_count = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$tmp} WHERE event_id IS NULL OR event_id != {$Event}");
+    if ($unstamped_count > 0) {
+        echo "<p style='color:#c0392b;font-weight:bold;font-size:16px;'>⚠ WARNING: {$unstamped_count} row(s) in {$tmp} failed to stamp with event_id {$Event} after both UPDATE attempts. Forcing a final correction pass.</p>";
+        $wpdb->query("UPDATE {$tmp} SET event_id = {$Event} WHERE event_id IS NULL OR event_id != {$Event}");
+        $unstamped_count_after = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$tmp} WHERE event_id IS NULL OR event_id != {$Event}");
+        if ($unstamped_count_after > 0) {
+            echo "<p style='color:#c0392b;font-weight:bold;font-size:16px;'>⚠ STILL {$unstamped_count_after} row(s) unstamped after correction pass — manual investigation required before continuing.</p>";
+        } else {
+            echo "<p style='color:#339966;'>OK: Correction pass resolved all unstamped rows.</p>";
+        }
+    }
+
+    $num_event = intval($Event);
+    $wpdb->query("DELETE FROM {$results_all} WHERE event_id = {$num_event}");
+    if ( $sh_out ) {
+        $wpdb->query("INSERT INTO {$results_all} (Rank, RankPrev, RankCalc, RankOverride, RankCalc_Shadow, user_id, group_id, Score, event_id, display_name{$gs_out}) SELECT Rank, RankPrev, RankCalc, RankOverride, RankCalc_Shadow, user_id, group_id, Score, event_id, display_name{$gs_out} FROM {$tmp}");
+    } else {
+        $wpdb->query("INSERT INTO {$results_all} (Rank, RankPrev, RankCalc, RankOverride, user_id, group_id, Score, event_id, display_name{$gs_out}) SELECT Rank, RankPrev, RankCalc, RankOverride, user_id, group_id, Score, event_id, display_name{$gs_out} FROM {$tmp}");
+    }
+    // -- Verify Results_all row count matches what we just inserted ------------
+    $expected_count = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$tmp}");
+    $actual_count   = (int) $wpdb->get_var("SELECT COUNT(*) FROM {$results_all} WHERE event_id = {$num_event}");
+    if ($actual_count !== $expected_count) {
+        echo "<p style='color:#c0392b;font-weight:bold;font-size:16px;background:#fdf3f2;border:2px solid #c0392b;border-radius:6px;padding:14px;'>";
+        echo "⚠ ROW COUNT MISMATCH: {$tmp} had {$expected_count} rows, but {$results_all} shows only {$actual_count} rows for event {$num_event} after insert. ";
+        echo "This is the same failure mode that caused incorrect rankings and a wrong results email date on a previous run. Do not send the results email until this is investigated and corrected.";
+        echo "</p>";
+    } else {
+        echo "<p style='color:#339966;'>OK: {$results_all} row count verified ({$actual_count} rows for event {$num_event}).</p>";
+    }
+
+    return array( 'expected' => $expected_count, 'actual' => $actual_count, 'group_status' => $gs_out !== '' );
+}
+
 function spp_apply_override_to_results_table() {
 
     // Administrator + editor, per this page's Ultimate Member menu
@@ -333,6 +434,15 @@ function spp_apply_override_to_results_table() {
                 </label>
             </div>
 
+            <?php $nc_rows_s1 = spp_nc_count_rows( $results_table ); ?>
+            <?php if ( $nc_rows_s1 > 0 ) : ?>
+                <p style="background:#fff3cd;border:1px solid #ffc107;color:#856404;padding:8px 12px;border-radius:4px;"><strong>Not Complete (NC):</strong> <?php echo (int) $nc_rows_s1; ?> player(s) in NC groups. Their RankOverride defaults to their previous rank; it is still editable on the overrides page. The NC marker is copied into Results_all.</p>
+            <?php endif; ?>
+            <?php $nc_block_s1 = spp_ao_nc_block_reason(); ?>
+            <?php if ( $nc_block_s1 !== '' ) : ?>
+                <p style="color:#c0392b;font-weight:bold;"><?php echo esc_html( $nc_block_s1 ); ?></p>
+            <?php endif; ?>
+
             <div class="confirm-box">
                 <h3>Confirm Apply Override</h3>
                 <p>This will:</p>
@@ -359,6 +469,14 @@ function spp_apply_override_to_results_table() {
     // -- STAGE 1 CONFIRMED -- run Steps 0-8 ---------------------------------------
     if ($stage1_confirmed) {
 
+        // NC marker must survive into Results_all (v1.7.0): refuse before
+        // any write if Results has NC rows but Results_all can't hold them.
+        $nc_block = spp_ao_nc_block_reason();
+        if ( $nc_block !== '' ) {
+            echo "<p style='color:#c0392b;font-weight:bold;font-size:16px;'>" . esc_html( $nc_block ) . "</p>";
+            return;
+        }
+
         spp_create_membership_table();
 
         // -- GL EVENTS: read event ID from the Results table (the played event) ---
@@ -370,54 +488,14 @@ function spp_apply_override_to_results_table() {
         $name = $occ_s1c ? $occ_s1c['title'] . ' ' . date( 'F d, Y', strtotime( $occ_s1c['event_date'] ) ) : 'Event ' . $Event;
         // -------------------------------------------------------------------------
 
-        $wpdb->query("DROP TABLE IF EXISTS tmp_results");
-        $wpdb->query("CREATE TABLE tmp_results AS (
-            SELECT RankPrev, RankCalc, RankOverride, RankCalc_Shadow, user_id, group_id, Score, event_id, display_name
-            FROM {$results_table}
-            ORDER BY CAST(RankOverride AS DECIMAL(6,2)) ASC, RankPrev
-        )");
-        $wpdb->query("ALTER TABLE tmp_results ADD Rank INT AUTO_INCREMENT PRIMARY KEY FIRST");
-
-        // -- GL EVENTS: stamp tmp_results with the played event ID ----------------
-        $wpdb->query("UPDATE tmp_results SET event_id = {$Event}");
+        // Build tmp_results from Results and archive it into Results_all
+        // (spp_ao_archive_results(), below -- table names are parameters
+        // so tests can run it on throwaway tables).
+        spp_ao_archive_results( (int) $Event );
         $event_pad   = str_pad($Event, 10, '0', STR_PAD_LEFT);
         $table_bak   = "Results_{$event_pad}";
         $thisevent   = "Schedules_{$event_pad}_\$";
         $thesescores = "Schedules_00{$event_pad}";
-
-        $wpdb->query("UPDATE tmp_results SET event_id = {$Event} WHERE event_id IS NULL");
-
-        // -- Verify the stamp actually applied to every row before proceeding ------
-        $unstamped_count = (int) $wpdb->get_var("SELECT COUNT(*) FROM tmp_results WHERE event_id IS NULL OR event_id != {$Event}");
-        if ($unstamped_count > 0) {
-            echo "<p style='color:#c0392b;font-weight:bold;font-size:16px;'>⚠ WARNING: {$unstamped_count} row(s) in tmp_results failed to stamp with event_id {$Event} after both UPDATE attempts. Forcing a final correction pass.</p>";
-            $wpdb->query("UPDATE tmp_results SET event_id = {$Event} WHERE event_id IS NULL OR event_id != {$Event}");
-            $unstamped_count_after = (int) $wpdb->get_var("SELECT COUNT(*) FROM tmp_results WHERE event_id IS NULL OR event_id != {$Event}");
-            if ($unstamped_count_after > 0) {
-                echo "<p style='color:#c0392b;font-weight:bold;font-size:16px;'>⚠ STILL {$unstamped_count_after} row(s) unstamped after correction pass — manual investigation required before continuing.</p>";
-            } else {
-                echo "<p style='color:#339966;'>OK: Correction pass resolved all unstamped rows.</p>";
-            }
-        }
-
-        $num_event = intval($Event);
-        $wpdb->query("DELETE FROM Results_all WHERE event_id = {$num_event}");
-        if ( spp_results_all_has_shadow() ) {
-            $wpdb->query("INSERT INTO Results_all (Rank, RankPrev, RankCalc, RankOverride, RankCalc_Shadow, user_id, group_id, Score, event_id, display_name) SELECT Rank, RankPrev, RankCalc, RankOverride, RankCalc_Shadow, user_id, group_id, Score, event_id, display_name FROM tmp_results");
-        } else {
-            $wpdb->query("INSERT INTO Results_all (Rank, RankPrev, RankCalc, RankOverride, user_id, group_id, Score, event_id, display_name) SELECT Rank, RankPrev, RankCalc, RankOverride, user_id, group_id, Score, event_id, display_name FROM tmp_results");
-        }
-        // -- Verify Results_all row count matches what we just inserted ------------
-        $expected_count = (int) $wpdb->get_var("SELECT COUNT(*) FROM tmp_results");
-        $actual_count   = (int) $wpdb->get_var("SELECT COUNT(*) FROM Results_all WHERE event_id = {$num_event}");
-        if ($actual_count !== $expected_count) {
-            echo "<p style='color:#c0392b;font-weight:bold;font-size:16px;background:#fdf3f2;border:2px solid #c0392b;border-radius:6px;padding:14px;'>";
-            echo "⚠ ROW COUNT MISMATCH: tmp_results had {$expected_count} rows, but Results_all shows only {$actual_count} rows for event {$num_event} after insert. ";
-            echo "This is the same failure mode that caused incorrect rankings and a wrong results email date on a previous run. Do not send the results email until this is investigated and corrected.";
-            echo "</p>";
-        } else {
-            echo "<p style='color:#339966;'>OK: Results_all row count verified ({$actual_count} rows for event {$num_event}).</p>";
-        }
 
         $wpdb->query("DROP TABLE IF EXISTS {$results_table}");
         $wpdb->query("CREATE TABLE {$results_table} AS (

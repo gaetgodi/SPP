@@ -1,8 +1,39 @@
 <?php
 /* =========================================================
    SPP Create Results (for Override)
-   Version: 3.3.0
-   Date: 2026-10-05
+   Version: 3.4.0
+   Date: 2026-10-13
+
+   Changes from 3.3.0:
+   - NC (Not Complete) groups -- see inc/spp-nc-groups.php for the
+     policy. The NC list comes from spp_nc_groups_for_event() (set on
+     GL Schedule Admin) for this run's event.
+     - Step 1 (20% zero-score abort) and Step 1b (fewer than
+       group_size-1 games) skip NC groups entirely (numerator and
+       denominator). Every other group is checked in full, so an
+       incomplete group that is NOT marked NC still aborts the run.
+     - Step 5: resultsfirstpass gets a GroupStatus column ('NC' for
+       every row of an NC group, else NULL).
+     - Step 9: NC players skip setCaclRank and the shadow ratio;
+       newrank = newrank_shadow = Rank (the RankPrime value that
+       becomes RankPrev), so RankOverride also defaults to RankPrev.
+     - Step 10/10b: NC rows always go through the "played" branch
+       (even if Game1 < 0) and are excluded from the +1.6 NP / +2.6 NS
+       branches. The sort itself is unchanged: NC players take
+       whatever ordinal position it gives them.
+     - Step 11: GroupStatus is carried into Results_{event}, and Step
+       14's CREATE ... LIKE carries it into Results.
+     - Steps 2, 12 (Schedules_Scores) and the rating engine are
+       untouched: entered scores still count toward Club Rating.
+     - The page shows which groups are NC before the button is pressed.
+   - Table names now come from spp_cr_tables() (defaults are exactly
+     the old literal names) so tests can run the whole pipeline on
+     throwaway tables. With a non-empty 'prefix' the Step 13 cleanup
+     never runs (its LIKE patterns would otherwise match real tables)
+     and preferred is never promoted.
+   - spp_cr_effective_rating() moved out of spp_create_results_run()
+     to file level (it was declared inside the run, so a second run in
+     the same request was a fatal "cannot redeclare").
 
    Changes from 3.2.1:
    - Step 15 fixed: it did DROP TABLE preferred, then RENAME TABLE
@@ -241,10 +272,11 @@ add_shortcode( 'spp_create_results', 'spp_create_results_shortcode' );
    engine (execution), so the two can never determine a
    different $Event for the same request.
    ========================================================= */
-function spp_cr_current_event() {
+function spp_cr_current_event( array $T = array() ) {
     global $wpdb;
+    $T            = $T ? $T : spp_cr_tables();
     $prefix       = $wpdb->prefix;
-    $results_prev = "Schedules";
+    $results_prev = $T['schedules'];
 
     $Event = (int) $wpdb->get_var( "SELECT event_id FROM {$results_prev} WHERE group_id <> 99 LIMIT 1" );
     if ( ! $Event ) {
@@ -259,6 +291,28 @@ function spp_cr_current_event() {
         : 'Event ' . $Event;
 
     return array( 'event' => $Event, 'name' => $name, 'occ' => $occ );
+}
+
+/* =========================================================
+   TABLE CONFIG (v3.4.0)
+   Defaults are the real tables. 'prefix' is put in front of every
+   table the run itself creates (resultsfirstpass, results_new_*,
+   tmp1, Results_*, Schedules_* backups, Schedules_Scores_*, the
+   usermeta snapshot). Tests pass their own names; with a non-empty
+   prefix the Step 13 cleanup and the preferred promotion never run.
+   'nc_groups' => null reads spp_nc_groups_for_event().
+   ========================================================= */
+function spp_cr_tables( array $overrides = array() ) : array {
+    global $wpdb;
+    return array_merge( array(
+        'schedules'         => 'Schedules',
+        'master'            => 'Master',
+        'usermeta'          => $wpdb->prefix . 'usermeta',
+        'results'           => 'Results',
+        'event_date_lookup' => 'event_date_lookup',
+        'prefix'            => '',
+        'nc_groups'         => null,
+    ), $overrides );
 }
 
 /* =========================================================
@@ -324,6 +378,10 @@ function spp_create_results_shortcode() {
     ?>
     <div class="spp-cr-wrap" style="font-family:Arial,sans-serif;font-size:14px;max-width:700px;">
         <p><strong>Event:</strong> <?php echo esc_html( $name ); ?> (ID <?php echo (int) $Event; ?>)</p>
+        <?php $nc_preview = spp_nc_groups_for_event( (int) $Event ); ?>
+        <?php if ( $nc_preview ) : ?>
+            <p style="background:#fff3cd;border:1px solid #ffc107;color:#856404;padding:8px 12px;border-radius:4px;"><strong>Not Complete (NC):</strong> Group <?php echo esc_html( implode( ', ', $nc_preview ) ); ?>. These players keep their previous rank in the calculation (no penalty) and are skipped by the missing-score checks. Their entered scores still count toward Club Rating. Change this on GL Schedule Admin.</p>
+        <?php endif; ?>
 
         <?php if ( $already_processed ) : ?>
             <p style="color:#c0392b;"><strong><?php echo esc_html( $results_table_check ); ?></strong> already exists -- this event has already been processed. Running again would compound the no-show penalty unless usermeta is first restored from a pre-run snapshot.</p>
@@ -437,15 +495,23 @@ function spp_results_all_has_shadow() {
     return $has;
 }
 
-function spp_create_results_run( $force = false ) {
+function spp_cr_effective_rating( $uid, $clubRatingByUid, $selfRatingByUid ) {
+    if ( isset( $clubRatingByUid[ $uid ] ) ) return (float) $clubRatingByUid[ $uid ];
+    return spp_cr_rating_numeric( $selfRatingByUid[ $uid ] ?? 3.0 );
+}
 
-if ( session_status() !== PHP_SESSION_ACTIVE ) { session_start(); }
+function spp_create_results_run( $force = false, array $T = array() ) {
+
+if ( session_status() !== PHP_SESSION_ACTIVE && ! headers_sent() ) { session_start(); }
 
 global $wpdb, $Event, $name;
 
+$T            = spp_cr_tables( $T );
+$P            = $T['prefix'];
 $prefix       = $wpdb->prefix;
-$results_prev = "Schedules";
-$master       = "Master";
+$results_prev = $T['schedules'];
+$master       = $T['master'];
+$usermeta     = $T['usermeta'];
 $f            = 1;
 $noshow_np    = 1.6 * $f;  // NP: scheduled, did not play, notified
 $noshow_ns    = 2.6 * $f;  // NS: no-show, no notification
@@ -454,7 +520,7 @@ $bonus        = 3;
 // ── GL EVENTS: read event ID via the shared lookup helper (v3.0.0) ───────────
 // Same helper the read-only shortcode preview uses, so the two can never
 // disagree about which event is "current".
-$info  = spp_cr_current_event();
+$info  = spp_cr_current_event( $T );
 $Event = $info['event'];
 $name  = $info['name'];
 $occ   = $info['occ'];
@@ -474,8 +540,8 @@ $prev = $Event;
 // A second run then applies the no-show penalty a second time on top of an
 // already-decayed Master.Rank -- this corrupted event 160. Results_{$Event}
 // existing is our signal that this event has already been processed.
-$snapshot_table = "usermeta_rank_pre_event_{$Event}";
-$results_table_check = "Results_{$Event}";
+$snapshot_table = "{$P}usermeta_rank_pre_event_{$Event}";
+$results_table_check = "{$P}Results_{$Event}";
 $already_processed = (bool) $wpdb->get_var( "SHOW TABLES LIKE '{$results_table_check}'" );
 
 // v3.1.0: proof-of-work flag for Step 9b's independent re-check below.
@@ -503,7 +569,7 @@ if ( $already_processed ) {
         // UPDATE returns the number of rows actually CHANGED (not matched)
         // -- a useful signal that the restore did something.
         $restored = $wpdb->query(
-            "UPDATE {$prefix}usermeta u
+            "UPDATE {$usermeta} u
              JOIN {$snapshot_table} s ON s.user_id = u.user_id
              SET u.meta_value = s.meta_value
              WHERE u.meta_key = 'Rank'"
@@ -517,9 +583,21 @@ if ( $already_processed ) {
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
+// NC (Not Complete) groups for this event (v3.4.0, see spp-nc-groups.php).
+// Exempt from Steps 1/1b; Step 9 gives them RankPrev with no penalty.
+$nc_groups = is_array( $T['nc_groups'] )
+    ? array_values( array_filter( array_map( 'intval', $T['nc_groups'] ), function( $g ) { return $g > 0 && $g !== 99; } ) )
+    : spp_nc_groups_for_event( (int) $Event );
+$nc_list   = implode( ',', $nc_groups );
+$nc_skip   = $nc_groups ? " AND group_id NOT IN ({$nc_list})" : '';
+$nc_skip_s = $nc_groups ? " AND s.group_id NOT IN ({$nc_list})" : '';
+if ( $nc_groups ) {
+    echo "<span style='font-size:16px;color:#856404;'>Not Complete (NC): Group " . esc_html( implode( ', ', $nc_groups ) ) . " -- previous rank kept, no penalty, skipped by the missing-score checks.</span><br>";
+}
+
 // Step 1: Validate enough scores entered (must be >= 80% present)
-$numRows = $wpdb->get_var("SELECT COUNT(*) FROM {$results_prev} WHERE Score >= 0 AND group_id <> 99");
-$noscore = $wpdb->get_var("SELECT COUNT(*) FROM {$results_prev} WHERE Score = 0 AND group_id <> 99");
+$numRows = $wpdb->get_var("SELECT COUNT(*) FROM {$results_prev} WHERE Score >= 0 AND group_id <> 99{$nc_skip}");
+$noscore = $wpdb->get_var("SELECT COUNT(*) FROM {$results_prev} WHERE Score = 0 AND group_id <> 99{$nc_skip}");
 
 if ($noscore > $numRows / 5) {
     echo "<span style='font-size:24px; color:#339966;'>{$noscore} results not entered -- cannot calculate new Ranks!</span>";
@@ -542,7 +620,7 @@ $incomplete_players = $wpdb->get_results("
         WHERE group_id <> 99
         GROUP BY group_id
     ) g ON s.group_id = g.group_id
-    WHERE s.group_id <> 99
+    WHERE s.group_id <> 99{$nc_skip_s}
     AND (s.Game1 IS NULL OR s.Game1 >= 0)
     HAVING games_entered < games_expected
 ", ARRAY_A);
@@ -575,8 +653,10 @@ if ($maxscore > 48) {
 }
 
 // Step 5: Build working copy of Schedules
-$resultsnew = "results_new_{$prev}";
-$resultstmp = "resultsfirstpass";
+$resultsnew = "{$P}results_new_{$prev}";
+$resultstmp = "{$P}resultsfirstpass";
+$tmp1       = "{$P}tmp1";
+$tmp1_sh    = "{$P}tmp1_shadow";
 
 $wpdb->query("DROP TABLE IF EXISTS {$resultsnew}");
 $wpdb->query("DROP TABLE IF EXISTS {$resultstmp}");
@@ -585,6 +665,10 @@ $wpdb->query("INSERT INTO {$resultstmp} SELECT * FROM {$results_prev}");
 $wpdb->query("ALTER TABLE {$resultstmp} ADD group_rank INT");
 $wpdb->query("ALTER TABLE {$resultstmp} ADD newrank DEC(8,2)");
 $wpdb->query("ALTER TABLE {$resultstmp} ADD newrank_shadow DEC(8,2)"); // shadow only, never read downstream
+$wpdb->query("ALTER TABLE {$resultstmp} ADD GroupStatus VARCHAR(4) NULL DEFAULT NULL");
+if ( $nc_groups ) {
+    $wpdb->query("UPDATE {$resultstmp} SET GroupStatus = 'NC' WHERE group_id IN ({$nc_list})");
+}
 
 // Step 6: Build current ranks lookup for tie-breaking [user_id => rank]
 $rank_rows    = $wpdb->get_results("SELECT user_id, Rank FROM {$resultstmp}", ARRAY_A);
@@ -600,17 +684,12 @@ $currentRanks = array_column($rank_rows, 'Rank', 'user_id');
 $rating_rows     = $wpdb->get_results("SELECT user_id, Rating FROM {$master}", ARRAY_A);
 $selfRatingByUid = array_column($rating_rows, 'Rating', 'user_id');
 $club_rating_rows = $wpdb->get_results(
-    "SELECT user_id, meta_value AS ClubRating FROM {$prefix}usermeta WHERE meta_key = 'ClubRating'", ARRAY_A
+    "SELECT user_id, meta_value AS ClubRating FROM {$usermeta} WHERE meta_key = 'ClubRating'", ARRAY_A
 );
 $clubRatingByUid = array_column($club_rating_rows, 'ClubRating', 'user_id');
 $groupMembers = $wpdb->get_results("SELECT user_id, group_id FROM {$resultstmp} WHERE group_id <> 99", ARRAY_A);
 $groupsByGid  = [];
 foreach ($groupMembers as $gm) { $groupsByGid[$gm['group_id']][] = $gm['user_id']; }
-
-function spp_cr_effective_rating( $uid, $clubRatingByUid, $selfRatingByUid ) {
-    if ( isset( $clubRatingByUid[ $uid ] ) ) return (float) $clubRatingByUid[ $uid ];
-    return spp_cr_rating_numeric( $selfRatingByUid[ $uid ] ?? 3.0 );
-}
 
 // Step 7: Calculate group rankings using current rank as tie-breaker
 $groups      = $wpdb->get_var("SELECT MAX(group_id) FROM {$results_prev}");
@@ -636,6 +715,7 @@ for ($gp = 0; $gp < $groups; $gp++) {
 // plus a parallel shadow rank using the Rating-distance dampening ratio.
 for ($gp = 0; $gp < $groups; $gp++) {
     $gp1 = $gp + 1;
+    if ( in_array( $gp1, $nc_groups, true ) ) continue; // NC: set below
     foreach ($rankedUsers[$gp] as $user_id => $group_rank) {
         $maxrk = $wpdb->get_var("SELECT MAX(group_rank) FROM {$resultstmp} WHERE group_id = {$gp1}");
         $row   = $wpdb->get_results("SELECT Rank, group_rank, Score FROM {$resultstmp} WHERE user_id = {$user_id}", ARRAY_A);
@@ -661,6 +741,11 @@ for ($gp = 0; $gp < $groups; $gp++) {
         $calc_shadow = $rank + ( $delta * $ratio );
         $wpdb->query("UPDATE {$resultstmp} SET newrank_shadow = {$calc_shadow} WHERE user_id = {$user_id}");
     }
+}
+// NC: the group's play doesn't count toward ranking -- calc and shadow
+// are both the previous rank (Rank here = RankPrime = RankPrev later).
+if ( $nc_groups ) {
+    $wpdb->query("UPDATE {$resultstmp} SET newrank = Rank, newrank_shadow = Rank WHERE GroupStatus = 'NC'");
 }
 
 // Step 9b: Pre-run usermeta snapshot (v2.2.0, hardened v3.1.0) -------------
@@ -703,7 +788,7 @@ if ( ! $snapshot_already_exists ) {
     // baseline()) snapshot sitting around; this can't land in that state.
     $snapshot_comment = "spp_cr_snapshot created_at=" . current_time( 'mysql' ) . " clean_baseline=1";
     $wpdb->query(
-        "CREATE TABLE {$snapshot_table} COMMENT='{$snapshot_comment}' AS SELECT * FROM {$prefix}usermeta WHERE meta_key = 'Rank'"
+        "CREATE TABLE {$snapshot_table} COMMENT='{$snapshot_comment}' AS SELECT * FROM {$usermeta} WHERE meta_key = 'Rank'"
     );
     $snapshot_count = $wpdb->get_var( "SELECT COUNT(*) FROM {$snapshot_table}" );
     echo "<span style='font-size:14px;color:#666;'>Pre-run snapshot created: {$snapshot_table} ({$snapshot_count} row(s)), marked clean_baseline.</span><br>";
@@ -713,113 +798,113 @@ if ( ! $snapshot_already_exists ) {
 }
 
 // Step 10: Merge players + no-shows into ranked table (live, unchanged)
-$wpdb->query("DROP TABLE IF EXISTS tmp1");
-$wpdb->query("CREATE TABLE tmp1 SELECT * FROM (
+$wpdb->query("DROP TABLE IF EXISTS {$tmp1}");
+$wpdb->query("CREATE TABLE {$tmp1} SELECT * FROM (
     (SELECT
         Rank AS old_0_Rank, newrank, user_id, group_id, Score, event_id,
-        CONCAT(first_name, ' ', last_name) AS display_name
+        CONCAT(first_name, ' ', last_name) AS display_name, GroupStatus
      FROM {$resultstmp}
-     WHERE Game1 >= 0)
+     WHERE Game1 >= 0 OR GroupStatus = 'NC')
     UNION
     (SELECT
         m.Rank AS old_0_Rank,
         CAST(m.Rank + {$noshow_np} AS DECIMAL(6,2)) AS newrank,
         m.user_id, t.group_id, NULL AS Score, t.event_id,
-        CONCAT(m.first_name, ' ', m.last_name) AS display_name
+        CONCAT(m.first_name, ' ', m.last_name) AS display_name, NULL AS GroupStatus
      FROM {$master} m
      JOIN {$resultstmp} t ON m.user_id = t.user_id
-     WHERE t.Game1 = -1)
+     WHERE t.Game1 = -1 AND t.GroupStatus IS NULL)
     UNION
     (SELECT
         m.Rank AS old_0_Rank,
         CAST(m.Rank + {$noshow_ns} AS DECIMAL(6,2)) AS newrank,
         m.user_id, t.group_id, NULL AS Score, t.event_id,
-        CONCAT(m.first_name, ' ', m.last_name) AS display_name
+        CONCAT(m.first_name, ' ', m.last_name) AS display_name, NULL AS GroupStatus
      FROM {$master} m
      JOIN {$resultstmp} t ON m.user_id = t.user_id
-     WHERE t.Game1 = -2)
+     WHERE t.Game1 = -2 AND t.GroupStatus IS NULL)
     UNION
     (SELECT
         m.Rank AS old_0_Rank,
         CAST(m.Rank + {$noshow_np} AS DECIMAL(6,2)) AS newrank,
         m.user_id, NULL AS group_id, NULL AS Score, {$Event} AS event_id,
-        CONCAT(m.first_name, ' ', m.last_name) AS display_name
+        CONCAT(m.first_name, ' ', m.last_name) AS display_name, NULL AS GroupStatus
      FROM {$master} m
      LEFT JOIN {$resultstmp} t ON m.user_id = t.user_id
      WHERE t.user_id IS NULL AND m.Rank IS NOT NULL AND m.Rank <> 0)
 ) t ORDER BY CAST(t.newrank AS DECIMAL(8,2)) ASC, CAST(t.old_0_Rank AS UNSIGNED) ASC");
 
-$wpdb->query("ALTER TABLE tmp1 ADD COLUMN Rank INT NOT NULL PRIMARY KEY AUTO_INCREMENT FIRST");
+$wpdb->query("ALTER TABLE {$tmp1} ADD COLUMN Rank INT NOT NULL PRIMARY KEY AUTO_INCREMENT FIRST");
 $wpdb->query("DROP TABLE IF EXISTS {$resultsnew}");
-$wpdb->query("RENAME TABLE tmp1 TO {$resultsnew}");
+$wpdb->query("RENAME TABLE {$tmp1} TO {$resultsnew}");
 
 // Step 10b (shadow only): same pool-and-sort, using newrank_shadow instead,
 // into a completely separate table. Nothing here touches {$resultsnew} or
 // anything downstream of it.
-$wpdb->query("DROP TABLE IF EXISTS tmp1_shadow");
-$wpdb->query("CREATE TABLE tmp1_shadow SELECT * FROM (
+$wpdb->query("DROP TABLE IF EXISTS {$tmp1_sh}");
+$wpdb->query("CREATE TABLE {$tmp1_sh} SELECT * FROM (
     (SELECT
         Rank AS old_0_Rank, newrank_shadow AS newrank, user_id, group_id, Score, event_id,
-        CONCAT(first_name, ' ', last_name) AS display_name
+        CONCAT(first_name, ' ', last_name) AS display_name, GroupStatus
      FROM {$resultstmp}
-     WHERE Game1 >= 0)
+     WHERE Game1 >= 0 OR GroupStatus = 'NC')
     UNION
     (SELECT
         m.Rank AS old_0_Rank,
         CAST(m.Rank + {$noshow_np} AS DECIMAL(6,2)) AS newrank,
         m.user_id, t.group_id, NULL AS Score, t.event_id,
-        CONCAT(m.first_name, ' ', m.last_name) AS display_name
+        CONCAT(m.first_name, ' ', m.last_name) AS display_name, NULL AS GroupStatus
      FROM {$master} m
      JOIN {$resultstmp} t ON m.user_id = t.user_id
-     WHERE t.Game1 = -1)
+     WHERE t.Game1 = -1 AND t.GroupStatus IS NULL)
     UNION
     (SELECT
         m.Rank AS old_0_Rank,
         CAST(m.Rank + {$noshow_ns} AS DECIMAL(6,2)) AS newrank,
         m.user_id, t.group_id, NULL AS Score, t.event_id,
-        CONCAT(m.first_name, ' ', m.last_name) AS display_name
+        CONCAT(m.first_name, ' ', m.last_name) AS display_name, NULL AS GroupStatus
      FROM {$master} m
      JOIN {$resultstmp} t ON m.user_id = t.user_id
-     WHERE t.Game1 = -2)
+     WHERE t.Game1 = -2 AND t.GroupStatus IS NULL)
     UNION
     (SELECT
         m.Rank AS old_0_Rank,
         CAST(m.Rank + {$noshow_np} AS DECIMAL(6,2)) AS newrank,
         m.user_id, NULL AS group_id, NULL AS Score, {$Event} AS event_id,
-        CONCAT(m.first_name, ' ', m.last_name) AS display_name
+        CONCAT(m.first_name, ' ', m.last_name) AS display_name, NULL AS GroupStatus
      FROM {$master} m
      LEFT JOIN {$resultstmp} t ON m.user_id = t.user_id
      WHERE t.user_id IS NULL AND m.Rank IS NOT NULL AND m.Rank <> 0)
 ) t ORDER BY CAST(t.newrank AS DECIMAL(8,2)) ASC, CAST(t.old_0_Rank AS UNSIGNED) ASC");
 
-$wpdb->query("ALTER TABLE tmp1_shadow ADD COLUMN Rank INT NOT NULL PRIMARY KEY AUTO_INCREMENT FIRST");
-$shadow_table = "Results_shadow_{$prev}";
+$wpdb->query("ALTER TABLE {$tmp1_sh} ADD COLUMN Rank INT NOT NULL PRIMARY KEY AUTO_INCREMENT FIRST");
+$shadow_table = "{$P}Results_shadow_{$prev}";
 $wpdb->query("DROP TABLE IF EXISTS {$shadow_table}");
-$wpdb->query("RENAME TABLE tmp1_shadow TO {$shadow_table}");
+$wpdb->query("RENAME TABLE {$tmp1_sh} TO {$shadow_table}");
 
 // Step 11: Add override columns, plus the shadow comparison value pulled
 // in from the shadow table built in Step 10b -- sits right next to
 // RankCalc/RankOverride so the two can be compared directly in the
 // override editor (the `results` report on page 20010698, which replaced
 // the WPDA "Modify Overrides" page), instead of only in a separate report.
-$wpdb->query("DROP TABLE IF EXISTS tmp1");
-$wpdb->query("CREATE TABLE tmp1 SELECT * FROM (
+$wpdb->query("DROP TABLE IF EXISTS {$tmp1}");
+$wpdb->query("CREATE TABLE {$tmp1} SELECT * FROM (
     SELECT r.Rank, r.old_0_Rank AS RankPrev, r.newrank AS RankCalc, sh.newrank AS RankOverride,
            sh.newrank AS RankCalc_Shadow,
-           r.user_id, r.group_id, r.Score, r.event_id, r.display_name
+           r.user_id, r.group_id, r.Score, r.event_id, r.display_name, r.GroupStatus
     FROM {$resultsnew} r
     LEFT JOIN {$shadow_table} sh ON sh.user_id = r.user_id
     ORDER BY CAST(r.newrank AS DECIMAL(8,2)) ASC
 ) t1");
 
-$table = "Results_{$prev}";
+$table = "{$P}Results_{$prev}";
 $wpdb->query("DROP TABLE IF EXISTS {$table}");
-$wpdb->query("RENAME TABLE tmp1 TO {$table}");
+$wpdb->query("RENAME TABLE {$tmp1} TO {$table}");
 
 // Step 12: Backup Schedules for this event
 $event_pad     = str_pad($Event, 10, '0', STR_PAD_LEFT);
-$bak_schedules = "{$results_prev}_{$event_pad}";
-$thisevent     = "Schedules_{$event_pad}_\$";
+$bak_schedules = "{$P}Schedules_{$event_pad}";
+$thisevent     = "{$P}Schedules_{$event_pad}_\$";
 
 $wpdb->query("DROP TABLE IF EXISTS {$bak_schedules}");
 $wpdb->query("CREATE TABLE {$bak_schedules} AS SELECT * FROM {$results_prev}");
@@ -829,16 +914,17 @@ $wpdb->query("DROP TABLE IF EXISTS {$thisevent}");
 $wpdb->query("CREATE TABLE {$thisevent} AS SELECT * FROM {$resultstmp}");
 
 // ── GL EVENTS: also create Schedules_Scores_ table for scores drop-down ──────
-$wpdb->query("DROP TABLE IF EXISTS Schedules_Scores_{$Event}");
-$wpdb->query("CREATE TABLE Schedules_Scores_{$Event} SELECT * FROM Schedules");
+$scores_table = "{$P}Schedules_Scores_{$Event}";
+$wpdb->query("DROP TABLE IF EXISTS {$scores_table}");
+$wpdb->query("CREATE TABLE {$scores_table} SELECT * FROM {$results_prev}");
 
 // ── GL EVENTS: ensure event_date_lookup has this event ────────────────────────
 $existing = $wpdb->get_var( $wpdb->prepare(
-    "SELECT event_id FROM event_date_lookup WHERE event_id = %d", $Event
+    "SELECT event_id FROM {$T['event_date_lookup']} WHERE event_id = %d", $Event
 ) );
 if ( ! $existing && $occ ) {
     $event_time = ! empty( $occ['event_time'] ) ? $occ['event_time'] : '17:00:00';
-    $wpdb->insert( 'event_date_lookup', array(
+    $wpdb->insert( $T['event_date_lookup'], array(
         'event_id'   => $Event,
         'event_date' => $occ['event_date'] . ' ' . $event_time,
     ) );
@@ -846,6 +932,9 @@ if ( ! $existing && $occ ) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Step 13: Cleanup all previous event backup tables (keep current event only)
+// Never with a prefix (tests): these patterns match the real tables.
+$tables_to_clean = array();
+if ( $P === '' ) {
 $tables_to_clean = $wpdb->get_results("
     SELECT table_name
     FROM information_schema.tables
@@ -862,18 +951,22 @@ $tables_to_clean = $wpdb->get_results("
 foreach ($tables_to_clean as $tbl) {
     $wpdb->query("DROP TABLE IF EXISTS `{$tbl['table_name']}`");
 }
+}
 
 // Step 14: Create Results table for moderator overrides (live, unchanged)
-$wpdb->query("DROP TABLE IF EXISTS Results");
-$wpdb->query("CREATE TABLE Results LIKE {$table}");
-$wpdb->query("INSERT INTO Results SELECT * FROM {$table} ORDER BY RankOverride, Rank");
-$wpdb->query("ALTER TABLE Results DROP PRIMARY KEY");
-$wpdb->query("ALTER TABLE Results ADD PRIMARY KEY (user_id)");
+$results_live = $T['results'];
+$wpdb->query("DROP TABLE IF EXISTS {$results_live}");
+$wpdb->query("CREATE TABLE {$results_live} LIKE {$table}");
+$wpdb->query("INSERT INTO {$results_live} SELECT * FROM {$table} ORDER BY RankOverride, Rank");
+$wpdb->query("ALTER TABLE {$results_live} DROP PRIMARY KEY");
+$wpdb->query("ALTER TABLE {$results_live} ADD PRIMARY KEY (user_id)");
 
 // Step 15: Make next week's preferred list (preferred_new, built by
 // schedule production) the live preferred table -- build-then-swap,
 // never dropped first. See 3.3.0.
-spp_promote_preferred_new();
+if ( $P === '' ) {
+    spp_promote_preferred_new();
+}
 
 unset($GLOBALS['$Event']);
 
