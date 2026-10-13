@@ -12,8 +12,23 @@
  *   - rankUsersWithTies(): score desc, current rank as tie-breaker
  *   - setCaclRank(): placement adjustment + score bonus
  *
- * Version: 1.5.0
- * Date:    2026-09-24
+ * Version: 1.6.0
+ * Date:    2026-10-13
+ *
+ * Changes from 1.5.0:
+ *   - NC (Not Complete) groups (inc/spp-nc-groups.php): when the
+ *     corrected player's group is NC for this event (Results_all.
+ *     GroupStatus, or Results.GroupStatus before Results_all has the
+ *     column -- spp_nc_group_is_nc_in_results()), nobody in the group
+ *     is re-ranked, exactly like NP/NS rows: old/new calc and shadow
+ *     are null, the preview shows "NC -- ranking not affected", and
+ *     RankCalc/RankOverride/RankCalc_Shadow are not written. The game
+ *     score itself is still corrected in Schedules_Scores, and the
+ *     Score total in Results_all/Results is kept in step with it
+ *     (scores still count toward Club Rating). The ordinal re-rank
+ *     (steps 3/4) runs as before -- NC players' RankOverride is
+ *     unchanged (their RankPrev unless hand-edited), so they keep
+ *     their place in that sort.
  *
  * Changes from 1.4.1:
  *   - RankOverride is now set to the recomputed SHADOW calc, not the
@@ -601,12 +616,22 @@ function spp_sc_recalculate( $event_id, $user_id, $game_num, $new_score ) {
     }
     $maxrk = $playing_count;
 
+    // NC group: nobody in it is re-ranked (see 1.6.0).
+    $is_nc = function_exists( 'spp_nc_group_is_nc_in_results' )
+        && spp_nc_group_is_nc_in_results( (int) $event_id, (int) $group_id );
+
     // Calculate old and new RankCalc for each group member
     $old_calcs = array();
     $new_calcs = array();
     foreach ( $members as $m ) {
         $uid = (int) $m['user_id'];
         $rp  = $current_ranks[ $uid ];
+
+        if ( $is_nc ) {
+            $old_calcs[ $uid ] = null;
+            $new_calcs[ $uid ] = null;
+            continue;
+        }
 
         // Check if player was NP/NS -- Game1 < 0 means NP (-1) or NS (-2)
         $g1 = $m['Game1'];
@@ -661,6 +686,7 @@ function spp_sc_recalculate( $event_id, $user_id, $game_num, $new_score ) {
 
     return array(
         'group_id'        => $group_id,
+        'is_nc'           => $is_nc,
         'members'         => $members,
         'old_scores'      => $old_scores,
         'new_scores'      => $new_scores,
@@ -722,6 +748,14 @@ add_action( 'wp_ajax_spp_sc_preview', function() {
         $old_rc = $result['old_calcs'][ $uid ];
         $new_rc = $result['new_calcs'][ $uid ];
 
+        if ( $old_rc === null && ! empty( $result['is_nc'] ) ) {
+            $score_class = ( $old_score !== $new_score_val ) ? 'sc-changed' : 'sc-same';
+            if ( $old_score !== $new_score_val ) $has_changes = true;
+            $html .= '<tr><td>' . esc_html( $name ) . '</td><td>' . $rp . '</td>';
+            $html .= "<td class=\"{$score_class}\">{$old_score}</td><td class=\"{$score_class}\">{$new_score_val}</td>";
+            $html .= '<td colspan="6" class="sc-same">NC -- ranking not affected</td></tr>';
+            continue;
+        }
         if ( $old_rc === null ) {
             $html .= '<tr><td>' . esc_html( $name ) . '</td><td>' . $rp . '</td>';
             $html .= '<td colspan="8" class="sc-same">NP/NS -- not affected</td></tr>';
@@ -819,7 +853,21 @@ add_action( 'wp_ajax_spp_sc_apply', function() {
         $new_sh = $result['new_shadows'][ $uid ];
         $new_sc = $result['new_scores'][ $uid ];
 
-        if ( $new_rc === null ) continue; // NP/NS
+        if ( $new_rc === null ) {
+            // NC: ranking untouched, but keep the Score total in step
+            // with the corrected game (NP/NS: nothing to do).
+            if ( ! empty( $result['is_nc'] ) && $uid === $user_id ) {
+                $wpdb->query( $wpdb->prepare(
+                    "UPDATE Results_all SET Score = %d WHERE event_id = %d AND user_id = %d",
+                    $new_sc, $event_id, $uid
+                ) );
+                $wpdb->query( $wpdb->prepare(
+                    "UPDATE Results SET Score = %d WHERE event_id = %d AND user_id = %d",
+                    $new_sc, $event_id, $uid
+                ) );
+            }
+            continue;
+        }
 
         $old_data = $result['results_data'][ $uid ];
         $old_rc   = $old_data ? (float) $old_data['RankCalc'] : null;

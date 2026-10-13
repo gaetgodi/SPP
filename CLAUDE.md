@@ -99,6 +99,17 @@ roughly in pipeline order:
    Schedule guard links to it with the event prefilled. First use: event 168 (2026-10-05 rain-out),
    run 2026-10-11. Tests: `tests/spp-publish-partial-results-test.php` (throwaway tables).
 
+10. **NC (Not Complete) groups** (`spp-nc-groups.php`, 2026-10-13) — a group whose session wasn't
+   completed is marked NC with the "Mark NC" button on GL Schedule Admin (option `spp_nc_groups`,
+   keyed by event; never writes `Schedules`). Create Results skips NC groups in its Step 1/1b
+   missing-score checks and gives their players RankCalc = RankCalc_Shadow = RankOverride = RankPrev
+   with no NP/NS penalty; the sort still places them. Entered scores still reach `Schedules_Scores`
+   and the Glicko rating. `GroupStatus` ('NC'/NULL) is on `Results`/`Results_{event}` and, after a
+   hand-run `ALTER TABLE Results_all ADD COLUMN GroupStatus VARCHAR(4) NULL DEFAULT NULL`, on
+   `Results_all` (Apply Override refuses to archive NC rows until it exists). Create Results table
+   names come from `spp_cr_tables()` so `tests/spp-nc-group-status-test.php` can run the full
+   pipeline on `zznc_t_*` tables.
+
 Overrides are edited on the "Result Overrides changes" page (20010698) via
 `[spp_report table="results-variant-2"]` — the `results` report in `spp-reports.php`, whose
 editable `RankOverride` cell saves through `spp-report-edit.php`. (This replaced the WP Data Access

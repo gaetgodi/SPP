@@ -1,8 +1,18 @@
 <?php
 /* =========================================================
    Report Registry
-   Version: 1.15.0
-   Date: 2026-09-24
+   Version: 1.16.0
+   Date: 2026-10-13
+
+   Changes from 1.15.0:
+   - results (the override editor): new read-only "Status" column
+     (Results.GroupStatus -- "NC" for a Not Complete group, see
+     inc/spp-nc-groups.php), selected only when Results has that
+     column (NULL otherwise, so the report keeps working on a Results
+     built before Create Results 3.4.0). Saved variants list their
+     columns explicitly, so results-variant-2 (page 20010698) only
+     shows it once 'GroupStatus' is added to that variant's columns.
+     recent_results is unchanged.
 
    Changes from 1.14.0:
    - results and recent_results: the Calc column (key 'RankCalc') now
@@ -535,8 +545,11 @@ function spp_report_results() {
         );
     }
 
+    $status_sel = ( function_exists( 'spp_nc_table_has_status' ) && spp_nc_table_has_status( 'Results' ) )
+        ? 'GroupStatus'
+        : 'NULL AS GroupStatus';
     $rows = $wpdb->get_results(
-        "SELECT user_id, Rank, RankPrev, RankCalc_Shadow AS RankCalc, RankOverride, RankCalc_Shadow, group_id, Score, event_id, display_name
+        "SELECT user_id, Rank, RankPrev, RankCalc_Shadow AS RankCalc, RankOverride, RankCalc_Shadow, group_id, Score, event_id, display_name, {$status_sel}
          FROM Results",
         ARRAY_A
     );
@@ -560,6 +573,7 @@ function spp_report_results() {
         array( 'key' => 'Score',  'label' => 'Score',   'sortable' => true ),
         array( 'key' => 'event_id',  'label' => 'Event',   'sortable' => true ),
         array( 'key' => 'display_name',  'label' => 'Name',   'sortable' => true ),
+        array( 'key' => 'GroupStatus',  'label' => 'Status',   'sortable' => true ),
     );
 
     return array(

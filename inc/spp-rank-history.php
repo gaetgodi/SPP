@@ -1,8 +1,17 @@
 <?php
 /* =========================================================
    Rank History
-   Version: 1.3.0
-   Date: 2026-09-24
+   Version: 1.4.0
+   Date: 2026-10-13
+
+   Changes from 1.3.0:
+   - NC (Not Complete) groups (inc/spp-nc-groups.php): reads
+     Results_all.GroupStatus once that column exists (NULL before).
+     An NC event's narrative says the session wasn't completed, so
+     that week's play didn't change the ranking calculation and no
+     penalty applied, while the entered scores still count toward
+     Club Rating. The Grp cell shows "NC" beside the group for any NC
+     row, and the "How are rankings calculated?" table has an NC row.
 
    Changes from 1.2.0:
    - Orange "manual override" highlight and the "(override: calc X to
@@ -216,6 +225,9 @@ function spp_rank_history() {
     $shadow_sel = ( function_exists( 'spp_results_all_has_shadow' ) && spp_results_all_has_shadow() )
         ? 'r.RankCalc_Shadow'
         : 'NULL AS RankCalc_Shadow';
+    $status_sel = ( function_exists( 'spp_nc_table_has_status' ) && spp_nc_table_has_status( 'Results_all' ) )
+        ? 'r.GroupStatus'
+        : 'NULL AS GroupStatus';
 
     $player_results = $wpdb->get_results( $wpdb->prepare( "
         SELECT
@@ -227,6 +239,7 @@ function spp_rank_history() {
             r.RankOverride,
             r.Score,
             r.group_id,
+            {$status_sel},
             DATE_FORMAT(edl.event_date, '%%b %%d, %%Y') AS event_date
         FROM Results_all r
         LEFT JOIN event_date_lookup edl ON edl.event_id = r.event_id
@@ -293,6 +306,7 @@ function spp_rank_history() {
         $rank_shadow = $event['RankCalc_Shadow'] ?? null;
         $score      = $event['Score'];
         $group_id   = $event['group_id'];
+        $is_nc      = ( $event['GroupStatus'] ?? null ) === 'NC';
         $event_date = $event['event_date'] ?? $event_id;
         $played     = ! is_null( $score ) && ! is_null( $group_id );
         $change     = $rank_now - (int) round( $rank_prev );
@@ -396,6 +410,7 @@ function spp_rank_history() {
                 r.RankOverride,
                 r.Score,
                 r.group_id,
+                {$status_sel},
                 r.display_name
             FROM Results_all r
             WHERE r.event_id = %d
@@ -406,7 +421,11 @@ function spp_rank_history() {
 
         // Narrative
         $narrative = [];
-        if ( ! $played ) {
+        if ( $is_nc ) {
+            $narrative[] = 'You played in Group ' . $group_id . ( is_null( $score ) ? '' : ' and scored ' . $score ) . ', but the session was not completed (NC). '
+                . 'Your play that week did not change your ranking calculation and no penalty was applied -- your calculated rank stayed at your previous rank (your final rank can still shift as other players move around you). '
+                . 'The scores that were entered still count toward your club rating.';
+        } elseif ( ! $played ) {
             $narrative[] = 'You did not play this week (penalty applied).';
         } else {
             $narrative[] = 'You played in Group ' . $group_id . ' and scored ' . $score . '.';
@@ -454,6 +473,7 @@ function spp_rank_history() {
             'RankOverride' => $rank_over,
             'Score'        => $score,
             'group_id'     => $group_id,
+            'GroupStatus'  => $event['GroupStatus'] ?? null,
             'is_self'      => true,
         ];
         usort( $all_rows, function( $a, $b ) { return (int) $a['Rank'] - (int) $b['Rank']; } );
@@ -483,7 +503,8 @@ function spp_rank_history() {
             echo '<td>' . $r_shadow . '</td>';
             echo '<td class="' . $over_class . '">' . $r_over . '</td>';
             echo '<td>' . ( is_null( $row['Score'] )    ? '-' : $row['Score'] ) . '</td>';
-            echo '<td>' . ( is_null( $row['group_id'] ) ? '-' : $row['group_id'] ) . '</td>';
+            $nc_tag = ( ( $row['GroupStatus'] ?? null ) === 'NC' ) ? ' NC' : '';
+            echo '<td>' . ( is_null( $row['group_id'] ) ? '-' : esc_html( $row['group_id'] . $nc_tag ) ) . '</td>';
             echo '</tr>';
         }
 
@@ -525,6 +546,7 @@ function spp_rank_history() {
           <tr style="background:#f9f9f9;"><td style="padding:4px 10px;">5th</td><td style="padding:4px 10px;text-align:center;">-</td><td style="padding:4px 10px;text-align:center;">+2.4</td></tr>
           <tr><td style="padding:4px 10px;">NP (not played)</td><td style="padding:4px 10px;text-align:center;" colspan="2">+1.6 -- scheduled but did not play</td></tr>
           <tr style="background:#f9f9f9;"><td style="padding:4px 10px;">NS (no-show)</td><td style="padding:4px 10px;text-align:center;" colspan="2">+2.6 -- absent without prior notification</td></tr>
+          <tr><td style="padding:4px 10px;">NC (not complete)</td><td style="padding:4px 10px;text-align:center;" colspan="2">0 -- the group\'s session was not completed: no placement adjustment and no penalty for anyone in it; final rank can still shift as others move (entered scores still count toward club rating)</td></tr>
         </tbody>
       </table>
       <p style="font-size:0.82rem;color:#666;">A negative number means your rank improves (moves up). A positive number means your rank drops (moves down). Rank 1 is the top player.</p>
