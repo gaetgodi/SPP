@@ -10,8 +10,28 @@
  *   - Add a walk-in player to a group
  *   - Re-send personalized group emails to affected players + CC convenor
  *
- * Version: 1.3.0
+ * Version: 1.4.0
  * Date:    2026-10-13
+ *
+ * Changes from 1.3.0:
+ *   - Walk-in guard: "Add Walk-in Player" now refuses once any score has
+ *     been entered in the target group. Adding a player after play has
+ *     started leaves the group's score sheet and its pairings
+ *     inconsistent. spp_sa_walkin_block_message() decides it, using the
+ *     same test the rest of the code uses for "a game has been entered"
+ *     (Game1-Game5 IS NOT NULL -- the Create Schedule guard in
+ *     gl-schedule-production.php, Create Results Step 1b, and the
+ *     score-entry reset, which writes NULL, all agree). A 0 counts as
+ *     entered (a genuine 0-point loser score), NULL as blank. Scoped to
+ *     the target group_id, so NP/NS rows parked in group 99 never count.
+ *     The check runs server-side in the add_walkin case immediately
+ *     before the Schedules insert -- i.e. at apply time, on the POST --
+ *     so scores entered after the form was opened are caught too, and
+ *     nothing is written on refusal. The message points the editor at
+ *     the NC control for a player who left partway through. The form,
+ *     group choice, Schedules/gl_registrations writes, email and roles
+ *     are unchanged. Walk-ins into group 99 itself are not newly blocked
+ *     (not a real group; behaviour as before).
  *
  * Changes from 1.2.0:
  *   - NC (Not Complete) group status (inc/spp-nc-groups.php): each
@@ -46,6 +66,28 @@
 defined( 'ABSPATH' ) || exit;
 
 add_shortcode( 'spp_schedule_admin', 'spp_schedule_admin_shortcode' );
+
+/**
+ * Walk-in guard. Returns '' when a walk-in may be added to $group_id, or
+ * the refusal message when any player in that group already has a score
+ * entered. "Entered" = Game1-Game5 IS NOT NULL (see 1.4.0 changelog).
+ * Group 99 (NP/NS parking) is ignored. $table is only overridden by tests.
+ */
+function spp_sa_walkin_block_message( int $group_id, string $table = 'Schedules' ) : string {
+    global $wpdb;
+    if ( $group_id === 99 ) return '';
+    $entered = (int) $wpdb->get_var( $wpdb->prepare(
+        "SELECT COUNT(*) FROM `{$table}`
+         WHERE group_id = %d
+           AND (Game1 IS NOT NULL OR Game2 IS NOT NULL OR Game3 IS NOT NULL
+                OR Game4 IS NOT NULL OR Game5 IS NOT NULL)",
+        $group_id
+    ) );
+    if ( ! $entered ) return '';
+    return "Scores have already been entered for Group {$group_id}, so a walk-in player can't be added now. "
+         . "If a player left partway through, mark the group NC (Not Complete) instead, using the Mark NC button on this page. "
+         . "That keeps the games that were played, counts them toward ratings, and doesn't change anyone's ranking.";
+}
 
 function spp_schedule_admin_shortcode() {
     if ( ! spp_is_admin_or_editor() ) {
@@ -217,6 +259,15 @@ function spp_schedule_admin_shortcode() {
                     ), ARRAY_A );
                     if ( ! $group_row ) {
                         $error = 'Group not found.';
+                        break;
+                    }
+
+                    // Apply-time guard (1.4.0): re-checked here, on the POST and
+                    // right before the write, so scores entered after the form
+                    // was opened are caught. Nothing has been written yet.
+                    $block = spp_sa_walkin_block_message( $walkin_group );
+                    if ( $block !== '' ) {
+                        $error = $block;
                         break;
                     }
 
