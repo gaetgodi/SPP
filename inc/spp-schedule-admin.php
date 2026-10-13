@@ -10,8 +10,27 @@
  *   - Add a walk-in player to a group
  *   - Re-send personalized group emails to affected players + CC convenor
  *
- * Version: 1.4.0
+ * Version: 1.5.0
  * Date:    2026-10-13
+ *
+ * Changes from 1.4.0:
+ *   - On-page help text for the convenor, who uses this page only
+ *     occasionally. TEXT AND LAYOUT ONLY: no behaviour, validation,
+ *     query, role, nonce, form field or data change.
+ *       * A collapsed "How to use this page" panel (<details>) at the
+ *         top: one or two plain-words lines per control (NP / NS,
+ *         Mark NC / Clear NC, Suggested Replacement, modified-groups
+ *         print / clear list, Add a Walk-in Player).
+ *       * A short always-visible note under each control's heading or
+ *         button: under each group header (NP / NS / NC), under
+ *         Suggested Replacement, under the modified-groups banner, and
+ *         a proper heading plus explanation for Add a Walk-in Player
+ *         (player first, then group, then the button; no confirm step;
+ *         group size is up to the convenor; print replacement score
+ *         sheets afterwards; use NC, not a walk-in, if a player left).
+ *     The text sits inside spp_schedule_admin_shortcode() after the
+ *     existing spp_is_admin_or_editor() gate, so nobody else sees it.
+ *     The NC notice's own wording is unchanged.
  *
  * Changes from 1.3.0:
  *   - Walk-in guard: "Add Walk-in Player" now refuses once any score has
@@ -435,11 +454,29 @@ function spp_schedule_admin_shortcode() {
         .sa-group-nc .sa-group-header { background:#b9770e; }
         .sa-btn-nc { background:#fff; color:#2c3e50; border:1px solid #fff; margin-left:10px; }
         .sa-btn-nc:hover { background:#f3f3f3; }
+        .sa-help { background:#f0f7ff; border:1px solid #3766AB; border-radius:6px; padding:10px 16px; margin:12px 0 16px; }
+        .sa-help summary { cursor:pointer; font-weight:bold; color:#3766AB; }
+        .sa-help ul { margin:10px 0 4px 18px; padding:0; }
+        .sa-help li { margin:6px 0; }
+        .sa-note { font-size:13px; color:#555; margin:6px 0 10px; line-height:1.4; }
+        .sa-group > .sa-note { margin:0; padding:8px 14px; background:#fafafa; border-bottom:1px solid #eee; }
         .sa-nc-badge { display:inline-block; background:#fff3cd; color:#856404; border-radius:3px; padding:1px 6px; margin-left:6px; font-size:12px; font-weight:bold; opacity:1; }
     </style>
 
     <div class="sa-wrap">
         <h2>Schedule Admin &mdash; <?php echo esc_html( $event_date ); ?></h2>
+
+        <?php // ── Help panel (1.5.0): text only ─────────────────────────── ?>
+        <details class="sa-help">
+            <summary>How to use this page</summary>
+            <ul>
+                <li><strong>NP / NS</strong> (beside each player): removes a player who did not play tonight from their group. NP means they told us they weren't coming; NS means they didn't show up and didn't tell us. The group is emailed again. Use these for players who did not play, not for groups that didn't finish.</li>
+                <li><strong>Mark NC / Clear NC</strong> (in each group's heading): use when a group did not finish its session, for example because a player had to leave. The scores that were entered are kept and nobody is penalised. Clear NC undoes it, as long as Create Results hasn't been run yet.</li>
+                <li><strong>Suggested Replacement</strong> (appears by itself): if removing a player leaves a group with only 3, the page suggests a player from a 5-player group. You can accept it or skip it and sort it out yourself.</li>
+                <li><strong>Print Replacement Score Sheets / Clear List</strong> (appears after any change): lists the groups that changed tonight so you can print fresh score sheets for them. Clear List just empties that list.</li>
+                <li><strong>Add a Walk-in Player</strong> (bottom of the page): use when someone turns up who isn't on tonight's schedule and a group has room. Only before any scores have been entered for that group. If a player left partway through, use Mark NC instead.</li>
+            </ul>
+        </details>
 
         <?php if ( $message ) : ?>
             <div class="sa-notice sa-notice-success"><?php echo esc_html( $message ); ?></div>
@@ -478,6 +515,7 @@ function spp_schedule_admin_shortcode() {
                     </button>
                 </form>
             </div>
+            <p class="sa-note">Print Replacement Score Sheets gives you new score sheets for the groups listed above. Clear List only empties the list; it doesn't change any group.</p>
         <?php endif; ?>
 
         <?php if ( $nc_groups ) : ?>
@@ -494,6 +532,7 @@ function spp_schedule_admin_shortcode() {
         <?php if ( $suggest ) : ?>
             <div class="sa-suggest">
                 <h4>Suggested Replacement</h4>
+                <p class="sa-note">A group is down to 3 players. This is a player from a 5-player group whose rank is closest to the 3-player group. Click the button to move them, or skip it to sort it out yourself.</p>
                 <p>
                     <strong><?php echo esc_html( $suggest['first_name'] . ' ' . $suggest['last_name'] ); ?></strong>
                     (Rank <?php echo esc_html( $suggest['Rank'] ); ?>,
@@ -539,6 +578,7 @@ function spp_schedule_admin_shortcode() {
                         </form>
                     </span>
                 </div>
+                <p class="sa-note"><strong>NP</strong> (told us they weren't coming) and <strong>NS</strong> (didn't show, didn't tell us) remove a player from tonight's groups and move their rank down slightly. Use them for players who did not play, not for groups that didn't finish. <strong><?php echo $is_nc ? 'Clear NC' : 'Mark NC'; ?></strong> <?php echo $is_nc ? 'puts this group back to normal ranking, until Create Results has been run.' : 'is for a group that did not finish its session. Scores are kept and nobody is penalised.'; ?></p>
                 <table>
                     <thead>
                         <tr>
@@ -585,7 +625,8 @@ function spp_schedule_admin_shortcode() {
 
         <?php // ── Add walk-in player ────────────────────────────────────── ?>
         <div class="sa-walkin">
-            <h3>Add Walk-in Player</h3>
+            <h3>Add a Walk-in Player</h3>
+            <p class="sa-note">Use this when someone turns up who isn't on tonight's schedule and a group has room. Choose the player, pick the group, and click Add Walk-in. The player is added to that group's court and time, and the group is emailed. How many players a group can take is up to the convenor; the page doesn't check. A walk-in can only be added before any scores have been entered for that group. The group is added to the list of modified groups, so print replacement score sheets for it afterwards. If a player has left partway through a session, don't use this: mark the group NC instead.</p>
             <form method="post">
                 <?php wp_nonce_field( 'spp_schedule_admin', 'spp_sa_nonce' ); ?>
                 <input type="hidden" name="spp_sa_action" value="add_walkin">
