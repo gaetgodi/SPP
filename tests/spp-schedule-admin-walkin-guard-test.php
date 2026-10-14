@@ -41,8 +41,13 @@ if ( getenv( 'SPP_TEST_DB' ) ) {
 global $wpdb;
 
 // Load only the guard function from the module (the file itself needs WordPress).
+// Under WordPress the theme has already defined it; redeclaring it would be fatal.
 if ( ! preg_match( '/function spp_sa_walkin_block_message\(.*?\r?\n}\r?\n/s', $SRC, $m ) ) { echo "ABORT: guard function not found\n"; exit( 1 ); }
-eval( $m[0] );
+if ( function_exists( 'spp_sa_walkin_block_message' ) ) {
+    echo "Using the already-loaded spp_sa_walkin_block_message() (theme loaded by WordPress)\n";
+} else {
+    eval( $m[0] );
+}
 
 $T = 'zzsa_t_Schedules';
 $pass = 0; $fail = 0;

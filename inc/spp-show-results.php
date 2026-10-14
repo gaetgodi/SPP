@@ -1,8 +1,19 @@
 <?php
 /* =========================================================
    Show Results
-   Version: 1.3.0
+   Version: 1.3.1
    Date: 2026-10-14
+
+   Changes from 1.3.0:
+   - With no event selected ($Event empty or 0, e.g. the Divi builder
+     preview, which doesn't run [spp_scores_events_dropdown] first),
+     prints "Please select a ladder event above to view results."
+     (same wording as the score review grid) and runs no query.
+     Before, the query ended "where event_id = " and logged a
+     database error. It does not default to MAX(event_id) of
+     Results_all: older archived events have ids in the 30000000s,
+     so the maximum is not the latest event. Unchanged whenever an
+     event is supplied; the login gate is unchanged.
 
    Changes from 1.2.0:
    - SECURITY: login gate. The page "Show results by ladder event"
@@ -99,6 +110,11 @@ function spp_show_results() {
     if ( ! is_user_logged_in() ) {
         $back = home_url( wp_unslash( $_SERVER['REQUEST_URI'] ?? '/' ) );
         echo '<p>Please log in to view results. <a href="' . esc_url( spp_show_results_login_url( $back ) ) . '">Log in</a></p>';
+        return;
+    }
+
+    if ( empty( $Event ) ) {
+        echo '<p>Please select a ladder event above to view results.</p>';
         return;
     }
 

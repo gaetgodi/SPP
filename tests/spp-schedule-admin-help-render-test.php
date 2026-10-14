@@ -6,8 +6,10 @@ if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
  *
  * Needs no WordPress and no database: WordPress functions and $wpdb are
  * stubbed with fixed fixtures, and nothing is ever submitted or written.
- * It renders the page from the working copy and from `git show HEAD:` of
- * the same file (a previous version) in separate processes, then checks:
+ * It renders the page from the working copy and from `git show 7cd527a:`
+ * of the same file (the last version before the help text, fixed so the
+ * check still passes once the help text is committed) in separate
+ * processes, then checks:
  *   - the page renders for a permitted user and not for others
  *   - the help panel is present, collapsed, and absent for others
  *   - every form field name, hidden value and nonce action is identical
@@ -67,7 +69,10 @@ if ( ( $argv[1] ?? '' ) === '--render' ) {
 $root = dirname( __DIR__ );
 $tmp  = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'spp_sa_help_' . getmypid();
 mkdir( $tmp );
-file_put_contents( "$tmp/old.php", shell_exec( 'git -C ' . escapeshellarg( $root ) . ' show HEAD:inc/spp-schedule-admin.php' ) );
+// Fixed base: the merge just before the help text (7775703). Not HEAD, which
+// already contains the help text once it is committed.
+$base = '7cd527a';
+file_put_contents( "$tmp/old.php", shell_exec( 'git -C ' . escapeshellarg( $root ) . " show $base:inc/spp-schedule-admin.php" ) );
 $new = "$root/inc/spp-schedule-admin.php";
 
 function render( $file, $mode ) {
