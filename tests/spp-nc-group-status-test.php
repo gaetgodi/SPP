@@ -5,8 +5,8 @@ if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
 /**
  * NC (Not Complete) group status -- end-to-end tests.
  *
- * Every write goes to throwaway zznc_t_* tables (copies of the live
- * Schedules for event 169 under a fake event id 990169, and of
+ * Every write goes to throwaway zznc_t_* tables (copies of the archived
+ * Schedules_Scores_169 under a fake event id 990169, and of
  * Schedules_Scores_167 under 990167), a throwaway option (via the
  * spp_nc_groups_option filter), or session-only TEMPORARY tables. A
  * `query` filter blocks and reports any write to anything else (except
@@ -16,6 +16,21 @@ if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
  * preferred promotion. Real Schedules/Master/Results/Results_all/rating
  * tables are checksummed before and after, the list of real tables is
  * compared, and the real spp_nc_groups option must be untouched.
+ *
+ * Self-contained (2026-10-14): the test no longer depends on live state.
+ *   - The event-169 fixture comes from the permanent Schedules_Scores_169
+ *     snapshot, not the live Schedules (which moves on every week), and
+ *     group 1's games 4 and 5 are reset to NULL in the copy -- the
+ *     "incomplete group" the test was written against (Create Results
+ *     has since turned those NULLs into 0 in the real tables). Byes are
+ *     put back to NULL too, as they were before Create Results: in a
+ *     5-player group the bye is the only 0 in that game's column (a real
+ *     0-point score is two teammates' 0).
+ *   - The Results_all copies are built to the shape each check needs:
+ *     GroupStatus is added only if missing, and the "no column" copy has
+ *     it dropped if present. Section 9's pre-ALTER readers run on a
+ *     session-only TEMPORARY Results_all without the column, because the
+ *     real one now has it.
  *
  * Run: php tests/spp-nc-group-status-test.php
  */
@@ -74,7 +89,7 @@ add_filter( 'query', function ( $q ) {
 function nc_real_fingerprint() {
     global $wpdb;
     $fp = array();
-    foreach ( array( 'Schedules', 'Master', 'Results', 'Results_all', 'club_rating_state', 'club_rating_event_log', 'event_date_lookup', 'preferred', 'preferred_new', 'Schedules_Scores_167', 'Schedules_Scores_168' ) as $t ) {
+    foreach ( array( 'Schedules', 'Master', 'Results', 'Results_all', 'club_rating_state', 'club_rating_event_log', 'event_date_lookup', 'preferred', 'preferred_new', 'Schedules_Scores_167', 'Schedules_Scores_168', 'Schedules_Scores_169' ) as $t ) {
         $r = $wpdb->get_row( "CHECKSUM TABLE `{$t}`", ARRAY_A );
         $fp[ $t ] = $r ? $r['Checksum'] : 'missing';
     }
@@ -138,12 +153,25 @@ $before = nc_real_fingerprint();
 if ( $before['real_option'] !== serialize( '__absent__' ) ) { echo "  note: real spp_nc_groups option exists before the test: {$before['real_option']}\n"; }
 
 // Base copies (read the live tables once).
-$wpdb->query( "CREATE TABLE zznc_t_base_169 AS SELECT * FROM Schedules" );
+// Event 169 from its permanent snapshot, with group 1's games 4 and 5 put
+// back to NULL (not yet entered) -- the incomplete group every NC check
+// below is built around.
+$wpdb->query( "CREATE TABLE zznc_t_base_169 AS SELECT * FROM Schedules_Scores_169" );
 $wpdb->query( "UPDATE zznc_t_base_169 SET event_id = {$EV}" );
+$wpdb->query( "UPDATE zznc_t_base_169 SET Game4 = NULL, Game5 = NULL WHERE group_id = 1" );
+for ( $g = 1; $g <= 5; $g++ ) {
+    $bye_groups = array_map( 'intval', $wpdb->get_col( "SELECT group_id FROM zznc_t_base_169 WHERE group_id <> 99 GROUP BY group_id HAVING COUNT(*) = 5 AND SUM(Game{$g} = 0) = 1" ) );
+    if ( $bye_groups ) $wpdb->query( "UPDATE zznc_t_base_169 SET Game{$g} = NULL WHERE Game{$g} = 0 AND group_id IN (" . implode( ',', $bye_groups ) . ")" );
+}
 $wpdb->query( "CREATE TABLE zznc_t_base_167 AS SELECT * FROM Schedules_Scores_167" );
 $wpdb->query( "UPDATE zznc_t_base_167 SET event_id = {$EV167}" );
 $wpdb->query( "CREATE TABLE zznc_t_event_date_lookup LIKE event_date_lookup" );
 nc_ok( (int) $wpdb->get_var( "SELECT COUNT(*) FROM zznc_t_base_169" ) === 30, 'base copy of event 169 Schedules has 30 rows' );
+$entered = "(Game1 IS NOT NULL) + (Game2 IS NOT NULL) + (Game3 IS NOT NULL) + (Game4 IS NOT NULL) + (Game5 IS NOT NULL)";
+$short = $wpdb->get_col( "SELECT DISTINCT b.group_id FROM zznc_t_base_169 b JOIN (SELECT group_id, COUNT(*) n FROM zznc_t_base_169 WHERE group_id <> 99 GROUP BY group_id) g USING (group_id) WHERE {$entered} < g.n - 1" );
+$over  = (int) $wpdb->get_var( "SELECT COUNT(*) FROM zznc_t_base_169 b JOIN (SELECT group_id, COUNT(*) n FROM zznc_t_base_169 WHERE group_id <> 99 GROUP BY group_id) g USING (group_id) WHERE {$entered} > g.n - 1" );
+nc_ok( $short === array( '1' ) && $over === 0 && (int) $wpdb->get_var( "SELECT COUNT(*) FROM zznc_t_base_169 WHERE group_id = 1 AND Game4 IS NULL AND Game5 IS NULL" ) === 5,
+    'fixture: byes are NULL, every group has exactly group_size-1 games entered except group 1 (games 4 and 5 not entered)' );
 
 $G1 = array_map( 'intval', $wpdb->get_col( "SELECT user_id FROM zznc_t_base_169 WHERE group_id = 1" ) );
 
@@ -282,12 +310,18 @@ nc_schedules_from( 'zznc_t_base_169' );
 list( $h, $ok ) = nc_run( array( 1 ) );
 $wpdb->query( "DROP TABLE IF EXISTS zznc_t_Results_all" );
 $wpdb->query( "CREATE TABLE zznc_t_Results_all LIKE Results_all" );
-$wpdb->query( "ALTER TABLE zznc_t_Results_all ADD COLUMN GroupStatus VARCHAR(4) NULL DEFAULT NULL" ); // the proposed hand-run ALTER
+if ( ! spp_nc_table_has_status( 'zznc_t_Results_all' ) ) {
+    $wpdb->query( "ALTER TABLE zznc_t_Results_all ADD COLUMN GroupStatus VARCHAR(4) NULL DEFAULT NULL" ); // the hand-run ALTER
+}
 $wpdb->query( "DROP TABLE IF EXISTS zznc_t_Results_all_nocol" );
 $wpdb->query( "CREATE TABLE zznc_t_Results_all_nocol LIKE Results_all" );
+if ( spp_nc_table_has_status( 'zznc_t_Results_all_nocol' ) ) {
+    $wpdb->query( "ALTER TABLE zznc_t_Results_all_nocol DROP COLUMN GroupStatus" ); // pre-ALTER shape
+}
+nc_ok( spp_nc_table_has_status( 'zznc_t_Results_all' ) && ! spp_nc_table_has_status( 'zznc_t_Results_all_nocol' ), 'fixtures: one Results_all copy with GroupStatus, one without' );
 nc_ok( spp_ao_nc_block_reason( 'zznc_t_Results', 'zznc_t_Results_all_nocol' ) !== '', 'Stage 1 refuses when Results has NC rows but Results_all has no GroupStatus column' );
 nc_ok( spp_ao_nc_block_reason( 'zznc_t_Results', 'zznc_t_Results_all' ) === '', '...and allows it once the column exists' );
-nc_ok( spp_ao_nc_block_reason() === '', 'real Results (no NC rows, no column yet): no block -- Apply Override works as before' );
+nc_ok( spp_ao_nc_block_reason() === '', 'real Results/Results_all as they are now: no block -- Apply Override works as before' );
 $hand = $G1[0];
 $wpdb->query( "UPDATE zznc_t_Results SET RankOverride = 1.50 WHERE user_id = {$hand}" ); // a hand-edited override on an NC player
 ob_start(); $a = spp_ao_archive_results( $EV, array( 'results' => 'zznc_t_Results', 'results_all' => 'zznc_t_Results_all', 'tmp' => 'zznc_t_tmp_results' ) ); ob_end_clean();
@@ -356,15 +390,30 @@ foreach ( array( 'Results_all', 'Results', 'event_date_lookup', "Schedules_Score
 $GLOBALS['nc_temp_ok'] = array();
 nc_ok( (int) $wpdb->get_var( "SELECT COUNT(*) FROM Results_all WHERE event_id = {$EV}" ) === 0, 'temporary shadows gone; real Results_all has no test rows' );
 
-// ── 9. Readers on the real tables, before the ALTER ────────────────────────
-echo "9. Readers on the real tables (no GroupStatus column yet)\n";
-wp_set_current_user( 1 );
-$GLOBALS['Event'] = 167;
-ob_start(); spp_show_results(); $sr = ob_get_clean();
-nc_ok( strpos( $sr, 'Calculated' ) !== false && strpos( $sr, 'Status' ) === false, 'show-results renders event 167 without a Status column' );
-$_POST['rank_history_user'] = $G1[1];
-ob_start(); spp_rank_history(); $rh = ob_get_clean(); unset( $_POST['rank_history_user'] );
-nc_ok( strpos( $rh, 'rh-table' ) !== false && strpos( $rh, 'but the session was not completed (NC)' ) === false && $wpdb->last_error === '', 'rank history renders, no NC text, no SQL error' );
+// ── 9. Readers on a Results_all without the column (pre-ALTER shape) ───────
+// The real Results_all now has GroupStatus, so the pre-ALTER shape is a
+// session-only TEMPORARY shadow: every real column except GroupStatus, real
+// rows (read in the same statement, before the shadow exists).
+echo "9. Readers on a Results_all without the GroupStatus column (TEMPORARY shadow)\n";
+$nocol_cols = implode( ', ', array_map( function ( $c ) { return "`{$c}`"; }, array_diff( $wpdb->get_col( "SHOW COLUMNS FROM Results_all" ), array( 'GroupStatus' ) ) ) );
+$GLOBALS['nc_temp_ok'] = array( 'Results_all' );
+$wpdb->query( "CREATE TEMPORARY TABLE Results_all AS SELECT {$nocol_cols} FROM Results_all" );
+$sc = $wpdb->get_row( "SHOW CREATE TABLE `Results_all`", ARRAY_N );
+$nocol_live = $sc && stripos( $sc[1], 'CREATE TEMPORARY TABLE' ) === 0 && ! spp_nc_table_has_status( 'Results_all' )
+    && (int) $wpdb->get_var( "SELECT COUNT(*) FROM Results_all WHERE event_id = 167" ) > 0;
+nc_ok( $nocol_live, 'temporary Results_all without GroupStatus is live, with the real event-167 rows' );
+if ( $nocol_live ) {
+    wp_set_current_user( 1 );
+    $GLOBALS['Event'] = 167;
+    ob_start(); spp_show_results(); $sr = ob_get_clean();
+    nc_ok( strpos( $sr, 'Calculated' ) !== false && strpos( $sr, 'Status' ) === false, 'show-results renders event 167 without a Status column' );
+    $_POST['rank_history_user'] = $G1[1];
+    ob_start(); spp_rank_history(); $rh = ob_get_clean(); unset( $_POST['rank_history_user'] );
+    nc_ok( strpos( $rh, 'rh-table' ) !== false && strpos( $rh, 'but the session was not completed (NC)' ) === false && $wpdb->last_error === '', 'rank history renders, no NC text, no SQL error' );
+}
+$wpdb->query( "DROP TEMPORARY TABLE IF EXISTS `Results_all`" );
+$GLOBALS['nc_temp_ok'] = array();
+nc_ok( spp_nc_table_has_status( 'Results_all' ), 'temporary shadow gone; real Results_all (with GroupStatus) visible again' );
 $def = spp_report_results();
 nc_ok( count( $def['rows'] ) > 0 && array_key_exists( 'GroupStatus', $def['rows'][0] ) && $def['rows'][0]['GroupStatus'] === null, 'results report reads real Results (Status blank)' );
 
