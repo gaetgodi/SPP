@@ -1,8 +1,28 @@
 <?php
 /* =========================================================
    Show Results
-   Version: 1.2.0
-   Date: 2026-10-13
+   Version: 1.3.0
+   Date: 2026-10-14
+
+   Changes from 1.2.0:
+   - SECURITY: login gate. The page "Show results by ladder event"
+     (/show-results-by-ladder-event/, 1948) was fully public: every
+     player's name, ranks and score for the latest event, served to
+     logged-out visitors and listed in the Yoast sitemap. The results
+     email links here (spp-apply-override-to-results-table.php 1.7.1).
+     - spp_show_results() now prints "Please log in to view results."
+       (same wording style as the score review grid's
+       "Please log in to view scores.") with a login link that returns
+       to the current page, and queries nothing, for logged-out
+       visitors. This covers any page that embeds the shortcode.
+     - Page 1948: logged-out visitors are redirected to the UM login
+       page with redirect_to back to the page (the same pattern as
+       functions.php's UM profile-page gate), with no-cache headers
+       and DONOTCACHEPAGE. Logged-in members see the page as before.
+     - Page 1948 is noindex (Yoast robots filter plus an X-Robots-Tag
+       header on the redirect) and left out of the Yoast sitemap.
+     - wp-cache-config.php's $cache_rejected_uri also lists
+       /show-results-by-ladder-event/ (outside the repo).
 
    Changes from 1.1.0:
    - Added a "Status" column (Results_all.GroupStatus: "NC" for a
@@ -76,6 +96,12 @@ defined( 'ABSPATH' ) || exit;
 function spp_show_results() {
     global $wpdb, $Event;
 
+    if ( ! is_user_logged_in() ) {
+        $back = home_url( wp_unslash( $_SERVER['REQUEST_URI'] ?? '/' ) );
+        echo '<p>Please log in to view results. <a href="' . esc_url( spp_show_results_login_url( $back ) ) . '">Log in</a></p>';
+        return;
+    }
+
     $sort  = "Rank";
     $table = "Results_all";
 
@@ -134,6 +160,44 @@ function spp_show_results() {
     unset( $GLOBALS['$Event'] );
     unset( $GLOBALS['$name'] );
 }
+
+/** Page "Show results by ladder event" (/show-results-by-ladder-event/). */
+const SPP_SHOW_RESULTS_PAGE_ID = 1948;
+
+/** Login URL (UM login page, or wp-login.php without UM) that returns to $back. */
+function spp_show_results_login_url( string $back ) : string {
+    $login = function_exists( 'um_get_core_page' ) ? um_get_core_page( 'login' ) : '';
+    if ( ! $login ) {
+        return wp_login_url( $back );
+    }
+    return add_query_arg( 'redirect_to', rawurlencode( $back ), $login );
+}
+
+// Page-level gate: logged-out visitors go to the login page and come back here.
+add_action( 'template_redirect', function() {
+    if ( ! is_page( SPP_SHOW_RESULTS_PAGE_ID ) ) return;
+
+    if ( ! defined( 'DONOTCACHEPAGE' ) ) {
+        define( 'DONOTCACHEPAGE', true );
+    }
+    if ( is_user_logged_in() ) return;
+
+    $back = home_url( wp_unslash( $_SERVER['REQUEST_URI'] ?? '/' ) );
+    nocache_headers();
+    header( 'X-Robots-Tag: noindex, nofollow', true );
+    wp_safe_redirect( spp_show_results_login_url( $back ) );
+    exit;
+}, 1 );
+
+// Not indexed, not in the sitemap: it was public until 2026-10-14.
+add_filter( 'wpseo_robots', function( $robots ) {
+    return is_page( SPP_SHOW_RESULTS_PAGE_ID ) ? 'noindex, nofollow' : $robots;
+} );
+add_filter( 'wpseo_exclude_from_sitemap_by_post_ids', function( $ids ) {
+    $ids   = is_array( $ids ) ? $ids : array();
+    $ids[] = SPP_SHOW_RESULTS_PAGE_ID;
+    return $ids;
+} );
 
 add_shortcode( 'spp_show_results', function( $atts ) {
     ob_start();
