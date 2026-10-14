@@ -1,8 +1,16 @@
 <?php
 /* =========================================================
    SPP Create Results (for Override)
-   Version: 3.4.0
-   Date: 2026-10-13
+   Version: 3.4.1
+   Date: 2026-10-14
+
+   Changes from 3.4.0:
+   - Step 14: ALTER TABLE Results DROP PRIMARY KEY now runs only when
+     Results actually has a primary key. Results is created LIKE
+     Results_{event}, which Step 11 builds with CREATE ... SELECT (no
+     key), so the DROP failed and logged a database error on every
+     run. ADD PRIMARY KEY (user_id) still follows; the resulting table
+     structure is identical. No other change.
 
    Changes from 3.3.0:
    - NC (Not Complete) groups -- see inc/spp-nc-groups.php for the
@@ -958,7 +966,11 @@ $results_live = $T['results'];
 $wpdb->query("DROP TABLE IF EXISTS {$results_live}");
 $wpdb->query("CREATE TABLE {$results_live} LIKE {$table}");
 $wpdb->query("INSERT INTO {$results_live} SELECT * FROM {$table} ORDER BY RankOverride, Rank");
-$wpdb->query("ALTER TABLE {$results_live} DROP PRIMARY KEY");
+// Results_{event} comes from CREATE ... SELECT and has no key, so normally
+// there is nothing to drop (an unconditional DROP logged an error every run).
+if ( $wpdb->get_var( "SHOW KEYS FROM {$results_live} WHERE Key_name = 'PRIMARY'" ) ) {
+    $wpdb->query("ALTER TABLE {$results_live} DROP PRIMARY KEY");
+}
 $wpdb->query("ALTER TABLE {$results_live} ADD PRIMARY KEY (user_id)");
 
 // Step 15: Make next week's preferred list (preferred_new, built by
