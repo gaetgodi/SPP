@@ -1,8 +1,17 @@
 <?php
 /* =========================================================
    Apply Override to Results Table
-   Version: 1.7.0
-   Date: 2026-10-13
+   Version: 1.7.1
+   Date: 2026-10-14
+
+   Changes from 1.7.0:
+   - Results email: the "View Scores and Rank History" link pointed
+     at /show-scores-600/ (the score review grid) and always had.
+     It now points at /show-results-by-ladder-event/. Opened as a
+     plain URL, that page's [spp_scores_events_dropdown] defaults to
+     the most recent scored event, which is the event this email
+     announces, so no event parameter is needed. Nothing else in the
+     email or the apply flow changed.
 
    Changes from 1.6.0:
    - NC (Not Complete) groups (see inc/spp-nc-groups.php): Results
@@ -657,7 +666,7 @@ function spp_apply_override_to_results_table() {
     // -----------------------------------------------------------------------------
 
     $ranks_url  = 'https://pickleballstouffville.ca/ladder-players-master-list/';
-    $scores_url = 'https://pickleballstouffville.ca/show-scores-600/';
+    $scores_url = 'https://pickleballstouffville.ca/show-results-by-ladder-event/';
     $logo_url   = 'https://pickleballstouffville.ca/wp-content/uploads/2024/03/SPP_Logo-96DPI-8X-3.52-480x211.png';
     $subject    = "Stouffville Pickleball Players -- Ladder Results Posted for $event_date";
     $headers    = array(
