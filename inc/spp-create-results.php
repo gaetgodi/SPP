@@ -1,8 +1,33 @@
 <?php
 /* =========================================================
    SPP Create Results (for Override)
-   Version: 3.5.0
+   Version: 3.5.1
    Date: 2026-10-15
+
+   Changes from 3.5.0:
+   - FIX: "already processed" no longer means only "Results_{event}
+     exists". Apply Override's cleanup drops Results_{event}, so after
+     Apply Override a re-run looked like a first run: no force needed,
+     no restore, and absent players' previous rank came from Master,
+     which by then held the published ranks -- +1.6 on top of +1.6.
+     That is what happened on event 169 on 2026-10-14, and again on
+     2026-10-15 00:48 UTC when a force=1 run silently took the first-run
+     path (3.5.0's restore + Master sync sat inside the branch it never
+     reached). spp_cr_event_processed() now says processed if
+     Results_{event} exists, OR Results_all has rows for the event, OR
+     a valid pre-event snapshot exists. Both the run and the page use
+     it: the page shows Force Re-run in all three cases, and a
+     non-forced run in any of them stops.
+   - Step 10/10b: absent players' previous rank (the NP/NS/not-scheduled
+     branches) now comes from the pre-event snapshot whenever a valid
+     one exists, LPAD to 3 digits like Master; Master.Rank only when
+     there is no valid snapshot or the player isn't in it. Step 9b
+     always creates the snapshot on a first run (from usermeta, which
+     the drift guard has just checked against Master), so a normal run
+     gives the same values as before. Players who played still take
+     Schedules.RankPrime.
+   - The drift guard and the force-path Master sync stay.
+   - spp_cr_tables() gains 'results_all' (default Results_all) for tests.
 
    Changes from 3.4.1:
    - FIX (event 169): a force=1 re-run now brings Master back in line
@@ -340,6 +365,7 @@ function spp_cr_tables( array $overrides = array() ) : array {
         'master'            => 'Master',
         'usermeta'          => $wpdb->prefix . 'usermeta',
         'results'           => 'Results',
+        'results_all'       => 'Results_all',
         'event_date_lookup' => 'event_date_lookup',
         'prefix'            => '',
         'nc_groups'         => null,
@@ -398,12 +424,10 @@ function spp_create_results_shortcode() {
         return '<p>No event selected for result calculations.</p>';
     }
 
-    $results_table_check = "Results_{$Event}";
     $snapshot_table       = "usermeta_rank_pre_event_{$Event}";
-    $already_processed    = (bool) $wpdb->get_var( "SHOW TABLES LIKE '{$results_table_check}'" );
-    $snapshot_exists      = $already_processed
-        ? spp_cr_snapshot_is_valid_baseline( $snapshot_table )
-        : false;
+    $processed            = spp_cr_event_processed( (int) $Event );
+    $already_processed    = $processed['processed'];
+    $snapshot_exists      = $processed['snapshot_valid'];
 
     ob_start();
     ?>
@@ -415,7 +439,7 @@ function spp_create_results_shortcode() {
         <?php endif; ?>
 
         <?php if ( $already_processed ) : ?>
-            <p style="color:#c0392b;"><strong><?php echo esc_html( $results_table_check ); ?></strong> already exists -- this event has already been processed. Running again would compound the no-show penalty unless usermeta is first restored from a pre-run snapshot.</p>
+            <p style="color:#c0392b;">This event has already been processed (<?php echo esc_html( implode( '; ', $processed['reasons'] ) ); ?>). Running again would compound the no-show penalty unless usermeta is first restored from a pre-run snapshot.</p>
             <?php if ( $snapshot_exists ) : ?>
                 <p>Pre-run snapshot <strong><?php echo esc_html( $snapshot_table ); ?></strong> is available and will be used to restore usermeta Rank before a forced re-run.</p>
                 <button type="button" id="spp-cr-run-btn" class="spp-cr-btn" data-force="1" style="padding:10px 20px;border:none;border-radius:5px;font-size:0.95rem;cursor:pointer;color:#fff;background:#c0392b;">Force Re-run Event <?php echo (int) $Event; ?></button>
@@ -526,6 +550,33 @@ function spp_results_all_has_shadow() {
     return $has;
 }
 
+// Has this event already been through Create Results? (v3.5.1)
+// Any of: Results_{event} exists (Create Results ran, Apply Override not
+// yet), Results_all has rows for it (Apply Override archived it -- its
+// cleanup drops Results_{event}), or a valid pre-event snapshot exists
+// (Step 9b ran). 'snapshot_valid' tells the caller whether a force=1
+// re-run has something to restore from.
+function spp_cr_event_processed( int $Event, array $T = array() ) : array {
+    global $wpdb;
+    $T        = spp_cr_tables( $T );
+    $P        = $T['prefix'];
+    $results  = "{$P}Results_{$Event}";
+    $snapshot = "{$P}usermeta_rank_pre_event_{$Event}";
+    $reasons  = array();
+    if ( $wpdb->get_var( "SHOW TABLES LIKE '{$results}'" ) ) {
+        $reasons[] = "{$results} exists";
+    }
+    $archived = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$T['results_all']} WHERE event_id = %d", $Event ) );
+    if ( $archived > 0 ) {
+        $reasons[] = "{$T['results_all']} has {$archived} row(s) for it";
+    }
+    $snapshot_valid = spp_cr_snapshot_is_valid_baseline( $snapshot );
+    if ( $snapshot_valid ) {
+        $reasons[] = "pre-event snapshot {$snapshot} exists";
+    }
+    return array( 'processed' => (bool) $reasons, 'reasons' => $reasons, 'snapshot_valid' => $snapshot_valid );
+}
+
 // Master rows whose Rank differs from the player's usermeta Rank, or who
 // have no usermeta Rank at all (v3.5.0). Compared as integers: Master
 // stores '003', usermeta '3'. Players with a usermeta Rank but no Master
@@ -590,7 +641,10 @@ $prev = $Event;
 // existing is our signal that this event has already been processed.
 $snapshot_table = "{$P}usermeta_rank_pre_event_{$Event}";
 $results_table_check = "{$P}Results_{$Event}";
-$already_processed = (bool) $wpdb->get_var( "SHOW TABLES LIKE '{$results_table_check}'" );
+// v3.5.1: Results_{$Event} alone is not enough -- Apply Override's
+// cleanup drops it. See spp_cr_event_processed().
+$processed = spp_cr_event_processed( (int) $Event, $T );
+$already_processed = $processed['processed'];
 
 // v3.1.0: proof-of-work flag for Step 9b's independent re-check below.
 // Results_{$Event} is NOT dropped until Step 11 (~150 lines later), so on a
@@ -636,7 +690,7 @@ if ( $already_processed ) {
         $force_restore_completed = true;
         echo "<span style='font-size:16px;color:#e67e22;'>force=1: restored {$restored} usermeta Rank row(s) that had changed since {$snapshot_table} was taken, and reset {$master_synced} Master rank(s) to match, before re-running event {$Event}.</span><br>";
     } else {
-        echo "<span style='font-size:20px;color:#c0392b;'>Event {$Event} has already been processed -- {$results_table_check} already exists. Re-running would compound the no-show penalty on top of an already-decayed Master.Rank (see v2.2.0 changelog). To re-run intentionally, pass force=1 to [spp_create_results]; this restores usermeta Rank from {$snapshot_table} before proceeding, if that snapshot is still valid. Aborting.</span>";
+        echo "<span style='font-size:20px;color:#c0392b;'>Event {$Event} has already been processed (" . esc_html( implode( '; ', $processed['reasons'] ) ) . "). Re-running would compound the no-show penalty on top of an already-decayed Master.Rank (see v2.2.0 changelog). To re-run intentionally, pass force=1 to [spp_create_results]; this restores usermeta Rank from {$snapshot_table} before proceeding, if that snapshot is still valid. Aborting.</span>";
         return;
     }
 }
@@ -871,7 +925,16 @@ if ( ! $snapshot_already_exists ) {
     echo "<span style='font-size:14px;color:#666;'>Pre-run snapshot already exists: {$snapshot_table} ({$snapshot_count} row(s)) -- not overwritten.</span><br>";
 }
 
-// Step 10: Merge players + no-shows into ranked table (live, unchanged)
+// Step 10: Merge players + no-shows into ranked table
+// v3.5.1: absent players' previous rank comes from the pre-event snapshot
+// when a valid one exists (Step 9b has just made sure of that on a first
+// run), Master.Rank only as a fallback. Format matches Master (LPAD 3).
+$prev_join = '';
+$prev_rank = 'm.Rank';
+if ( spp_cr_snapshot_is_valid_baseline( $snapshot_table ) ) {
+    $prev_join = "LEFT JOIN {$snapshot_table} snap ON snap.user_id = m.user_id AND snap.meta_key = 'Rank'";
+    $prev_rank = "(CASE WHEN snap.meta_value IS NULL OR CAST(snap.meta_value AS SIGNED) = 0 THEN m.Rank ELSE LPAD(snap.meta_value, 3, '0') END)";
+}
 $wpdb->query("DROP TABLE IF EXISTS {$tmp1}");
 $wpdb->query("CREATE TABLE {$tmp1} SELECT * FROM (
     (SELECT
@@ -881,29 +944,32 @@ $wpdb->query("CREATE TABLE {$tmp1} SELECT * FROM (
      WHERE Game1 >= 0 OR GroupStatus = 'NC')
     UNION
     (SELECT
-        m.Rank AS old_0_Rank,
-        CAST(m.Rank + {$noshow_np} AS DECIMAL(6,2)) AS newrank,
+        {$prev_rank} AS old_0_Rank,
+        CAST({$prev_rank} + {$noshow_np} AS DECIMAL(6,2)) AS newrank,
         m.user_id, t.group_id, NULL AS Score, t.event_id,
         CONCAT(m.first_name, ' ', m.last_name) AS display_name, NULL AS GroupStatus
      FROM {$master} m
+     {$prev_join}
      JOIN {$resultstmp} t ON m.user_id = t.user_id
      WHERE t.Game1 = -1 AND t.GroupStatus IS NULL)
     UNION
     (SELECT
-        m.Rank AS old_0_Rank,
-        CAST(m.Rank + {$noshow_ns} AS DECIMAL(6,2)) AS newrank,
+        {$prev_rank} AS old_0_Rank,
+        CAST({$prev_rank} + {$noshow_ns} AS DECIMAL(6,2)) AS newrank,
         m.user_id, t.group_id, NULL AS Score, t.event_id,
         CONCAT(m.first_name, ' ', m.last_name) AS display_name, NULL AS GroupStatus
      FROM {$master} m
+     {$prev_join}
      JOIN {$resultstmp} t ON m.user_id = t.user_id
      WHERE t.Game1 = -2 AND t.GroupStatus IS NULL)
     UNION
     (SELECT
-        m.Rank AS old_0_Rank,
-        CAST(m.Rank + {$noshow_np} AS DECIMAL(6,2)) AS newrank,
+        {$prev_rank} AS old_0_Rank,
+        CAST({$prev_rank} + {$noshow_np} AS DECIMAL(6,2)) AS newrank,
         m.user_id, NULL AS group_id, NULL AS Score, {$Event} AS event_id,
         CONCAT(m.first_name, ' ', m.last_name) AS display_name, NULL AS GroupStatus
      FROM {$master} m
+     {$prev_join}
      LEFT JOIN {$resultstmp} t ON m.user_id = t.user_id
      WHERE t.user_id IS NULL AND m.Rank IS NOT NULL AND m.Rank <> 0)
 ) t ORDER BY CAST(t.newrank AS DECIMAL(8,2)) ASC, CAST(t.old_0_Rank AS UNSIGNED) ASC");
@@ -924,29 +990,32 @@ $wpdb->query("CREATE TABLE {$tmp1_sh} SELECT * FROM (
      WHERE Game1 >= 0 OR GroupStatus = 'NC')
     UNION
     (SELECT
-        m.Rank AS old_0_Rank,
-        CAST(m.Rank + {$noshow_np} AS DECIMAL(6,2)) AS newrank,
+        {$prev_rank} AS old_0_Rank,
+        CAST({$prev_rank} + {$noshow_np} AS DECIMAL(6,2)) AS newrank,
         m.user_id, t.group_id, NULL AS Score, t.event_id,
         CONCAT(m.first_name, ' ', m.last_name) AS display_name, NULL AS GroupStatus
      FROM {$master} m
+     {$prev_join}
      JOIN {$resultstmp} t ON m.user_id = t.user_id
      WHERE t.Game1 = -1 AND t.GroupStatus IS NULL)
     UNION
     (SELECT
-        m.Rank AS old_0_Rank,
-        CAST(m.Rank + {$noshow_ns} AS DECIMAL(6,2)) AS newrank,
+        {$prev_rank} AS old_0_Rank,
+        CAST({$prev_rank} + {$noshow_ns} AS DECIMAL(6,2)) AS newrank,
         m.user_id, t.group_id, NULL AS Score, t.event_id,
         CONCAT(m.first_name, ' ', m.last_name) AS display_name, NULL AS GroupStatus
      FROM {$master} m
+     {$prev_join}
      JOIN {$resultstmp} t ON m.user_id = t.user_id
      WHERE t.Game1 = -2 AND t.GroupStatus IS NULL)
     UNION
     (SELECT
-        m.Rank AS old_0_Rank,
-        CAST(m.Rank + {$noshow_np} AS DECIMAL(6,2)) AS newrank,
+        {$prev_rank} AS old_0_Rank,
+        CAST({$prev_rank} + {$noshow_np} AS DECIMAL(6,2)) AS newrank,
         m.user_id, NULL AS group_id, NULL AS Score, {$Event} AS event_id,
         CONCAT(m.first_name, ' ', m.last_name) AS display_name, NULL AS GroupStatus
      FROM {$master} m
+     {$prev_join}
      LEFT JOIN {$resultstmp} t ON m.user_id = t.user_id
      WHERE t.user_id IS NULL AND m.Rank IS NOT NULL AND m.Rank <> 0)
 ) t ORDER BY CAST(t.newrank AS DECIMAL(8,2)) ASC, CAST(t.old_0_Rank AS UNSIGNED) ASC");

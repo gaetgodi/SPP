@@ -11,6 +11,12 @@ if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
  * pre-event snapshot but not Master, and Step 10 reads Master.Rank as the
  * previous rank of every absent player -- so they got +1.6 twice.
  *
+ * 3.5.1: the Apply Override step now also drops Results_<event>, as the
+ * real cleanup does -- 3.5.0's version of this test kept it, which is
+ * why it passed while the real re-run (no Results_169) still went down
+ * the first-run path. Scenario B now also checks a non-forced re-run
+ * after Apply Override is refused.
+ *
  * Scenarios (all on throwaway zzfr_t_* tables, fake event 990169):
  *   A. Normal single run, Master == usermeta == pre-event ranks: runs, and
  *      every absent player gets RankPrev = pre-event rank, RankCalc = +1.6.
@@ -137,7 +143,7 @@ function fr_fresh() {
 function fr_run( $force ) {
     global $P, $UM, $MS;
     $T = array(
-        'schedules' => 'zzfr_t_Schedules', 'master' => $MS, 'usermeta' => $UM, 'results' => 'zzfr_t_Results',
+        'schedules' => 'zzfr_t_Schedules', 'master' => $MS, 'usermeta' => $UM, 'results' => 'zzfr_t_Results', 'results_all' => 'zzfr_t_Results_all',
         'event_date_lookup' => 'zzfr_t_event_date_lookup', 'prefix' => $P, 'nc_groups' => array( 1 ),
     );
     ob_start();
@@ -153,14 +159,20 @@ function fr_results_by_uid( $table ) {
     return $by;
 }
 
-// Apply Override Stage 1's archive + Results rebuild, then Copy Ranks.
+// Apply Override Stage 1's archive + Results rebuild + the part of its
+// cleanup that matters here (it drops Results_<event>, keeping only the
+// padded Results_00000<event> backup), then Copy Ranks.
 function fr_apply_override_and_copy_ranks() {
-    global $wpdb, $EV, $UM, $MS;
+    global $wpdb, $EV, $UM, $MS, $P;
     ob_start();
     spp_ao_archive_results( $EV, array( 'results' => 'zzfr_t_Results', 'results_all' => 'zzfr_t_Results_all', 'tmp' => 'zzfr_t_tmp_results' ) );
     ob_end_clean();
     $wpdb->query( "DROP TABLE IF EXISTS zzfr_t_Results" );
     $wpdb->query( "CREATE TABLE zzfr_t_Results AS (SELECT * FROM zzfr_t_tmp_results WHERE user_id IN (SELECT user_id FROM {$MS}))" );
+    $pad = str_pad( $EV, 10, '0', STR_PAD_LEFT );
+    $wpdb->query( "DROP TABLE IF EXISTS {$P}Results_{$pad}" );
+    $wpdb->query( "CREATE TABLE {$P}Results_{$pad} AS SELECT * FROM zzfr_t_Results" );
+    $wpdb->query( "DROP TABLE IF EXISTS {$P}Results_{$EV}" );
     // Copy Ranks: usermeta Rank <- Results.Rank, then the Master rebuild.
     foreach ( $wpdb->get_results( "SELECT user_id, Rank FROM zzfr_t_Results", ARRAY_A ) as $r ) {
         $wpdb->query( $wpdb->prepare( "DELETE FROM {$UM} WHERE user_id = %d AND meta_key = 'Rank'", $r['user_id'] ) );
@@ -220,7 +232,12 @@ fr_apply_override_and_copy_ranks();
 $ernst_after_copy = $wpdb->get_var( "SELECT Rank FROM {$MS} WHERE user_id = {$ERNST}" );
 fr_ok( $ernst_after_copy === '002', "after Copy Ranks Master holds run 1's ranks (Ernst {$ernst_after_copy})" );
 $AO1 = fr_results_by_uid( 'zzfr_t_Results_all' );
+fr_ok( ! $wpdb->get_var( "SHOW TABLES LIKE '{$P}Results\\_{$EV}'" ), 'after Apply Override, Results_<event> is gone (as on production)' );
+list( $h, $ok ) = fr_run( false );
+fr_ok( ! $ok && strpos( $h, 'has already been processed' ) !== false, 'NON-forced re-run after Apply Override is refused' );
+fr_ok( (int) $wpdb->get_var( "SELECT Rank FROM {$MS} WHERE user_id = {$ERNST}" ) === 2, 'refused run changed nothing (Master still holds run 1 ranks)' );
 list( $h, $ok ) = fr_run( true );
+fr_ok( strpos( $h, 'force=1: restored' ) !== false, 'forced re-run took the restore path' );
 fr_ok( $ok, 'forced re-run completes' );
 fr_ok( strpos( $h, 'Pre-run snapshot already exists' ) !== false, 'forced re-run says the snapshot already exists (not re-taken)' );
 fr_ok( $wpdb->get_row( "CHECKSUM TABLE {$SNAP}", ARRAY_A )['Checksum'] === $snap_ck
