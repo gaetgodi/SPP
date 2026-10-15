@@ -1,8 +1,14 @@
 <?php
 /* =========================================================
    GL Assign Ranks To Registered Players
-   Version: 1.0.0
-   Date: 2026-09-05
+   Version: 1.0.1
+   Date: 2026-10-15
+
+   Changes from 1.0.0:
+   - The registrant table was built ORDER BY membership.Rank as TEXT.
+     Now CAST(m.Rank AS UNSIGNED), then user_id. Master/membership.Rank is VARCHAR(3): the membership rebuild pads it ('007'), but Schedule Adjust's rank override and last-minute add write a plain integer ('7') until the next rebuild, and as text '7' sorts after '069'.
+     Unranked registrants (NULL) still come first, as before. Stored
+     values unchanged.
    Based on: Code Manager snippet "GL Assign ranks to registered
    player" (CM279), version 1.2.0
 
@@ -209,7 +215,7 @@ function spp_assign_ranks_to_registered_players( int $event_id ) {
             FROM {$prefix}gl_registrations AS r
             LEFT OUTER JOIN $membership AS m ON r.user_id = m.user_id
             WHERE r.occurrence_id = %d AND r.status = 'confirmed'
-            ORDER BY m.Rank
+            ORDER BY CAST(m.Rank AS UNSIGNED), r.user_id
         )
     ", $event_id ) );
 

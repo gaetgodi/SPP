@@ -1,8 +1,15 @@
 <?php
 /* =========================================================
    GL Schedule Production
-   Version: 2.2.2
-   Date: 2026-10-11
+   Version: 2.2.3
+   Date: 2026-10-15
+
+   Changes from 2.2.2:
+   - Phase 3 preferred-swap candidates and the ScheduleTest_{event}
+     snapshot sorted by Master.Rank as TEXT. Now CAST(m.Rank AS
+     UNSIGNED), then user_id. Master/membership.Rank is VARCHAR(3): the membership rebuild pads it ('007'), but Schedule Adjust's rank override and last-minute add write a plain integer ('7') until the next rebuild, and as text '7' sorts after '069'.
+     Stored values unchanged; with all-padded ranks (the normal state
+     right after the rebuild this file runs first) the order is the same.
 
    Changes from 2.2.1:
    - Guard message only (the "scores entered, results not posted" hard
@@ -1818,7 +1825,7 @@ if (isset($Event) and $Event <> 0) {
              SELECT user_id FROM {$wpdb->prefix}gl_registrations
              WHERE occurrence_id = $event AND status = 'confirmed'
          )
-         ORDER BY m.Rank",
+         ORDER BY CAST(m.Rank AS UNSIGNED), p.user_id",
         ARRAY_A
     );
     // ─────────────────────────────────────────────────────────────────────────
@@ -2704,7 +2711,7 @@ if (isset($Event) and $Event <> 0) {
         JOIN $Master m ON r.user_id = m.user_id
         WHERE r.occurrence_id = $event
         AND r.status = 'confirmed'
-        ORDER BY m.Rank
+        ORDER BY CAST(m.Rank AS UNSIGNED), r.user_id
     ");
     // ─────────────────────────────────────────────────────────────────────────
 

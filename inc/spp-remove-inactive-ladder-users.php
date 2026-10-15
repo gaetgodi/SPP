@@ -1,10 +1,15 @@
 <?php
 /* =========================================================
    Remove Inactive Ladder Users
-   Version: 1.2.0
-   Date: 2026-09-08
+   Version: 1.2.1
+   Date: 2026-10-15
    Based on: Code Manager snippet "Remove ladder users who have
    not played this year" (CM176)
+
+   Changes from 1.2.0:
+   - The inactive-player list sorted by Master.Rank as TEXT. Now
+     CAST(m.Rank AS UNSIGNED), then user_id. Master/membership.Rank is VARCHAR(3): the membership rebuild pads it ('007'), but Schedule Adjust's rank override and last-minute add write a plain integer ('7') until the next rebuild, and as text '7' sorts after '069'.
+     Display order only; stored values unchanged.
 
    Changes from 1.1.0:
    - BUG FIX (found via a fresh preview-list investigation, not a
@@ -190,7 +195,7 @@ function spp_remove_inactive_ladder_users() {
         GROUP BY m.user_id
         HAVING SUM(CASE WHEN r.Score IS NOT NULL AND YEAR({$date_expr}) = YEAR(CURDATE())
                         THEN 1 ELSE 0 END) = 0
-        ORDER BY Rank ASC
+        ORDER BY CAST(m.Rank AS UNSIGNED) ASC, m.user_id ASC
     ", ARRAY_A );
 
     // Formats a MySQL DATETIME (or NULL) into the self-verifying
