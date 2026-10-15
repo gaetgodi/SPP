@@ -10,8 +10,15 @@
  *   - Add a walk-in player to a group
  *   - Re-send personalized group emails to affected players + CC convenor
  *
- * Version: 1.5.0
- * Date:    2026-10-13
+ * Version: 1.5.1
+ * Date:    2026-10-15
+ *
+ * Changes from 1.5.0:
+ *   - The NC notice's "Create Results has already run for this event"
+ *     line now uses spp_cr_event_processed() (Create Results 3.5.1)
+ *     instead of "Results_{event} exists", which Apply Override's
+ *     cleanup drops -- after Apply Override the line used to vanish.
+ *     Text only; nothing else changed.
  *
  * Changes from 1.4.0:
  *   - On-page help text for the convenor, who uses this page only
@@ -414,7 +421,9 @@ function spp_schedule_admin_shortcode() {
     // NC (Not Complete) groups for the event Create Results will process
     $nc_event      = (int) spp_cr_current_event()['event'];
     $nc_groups     = spp_nc_groups_for_event( $nc_event );
-    $nc_results_in = $nc_event && $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', "Results_{$nc_event}" ) );
+    // Create Results 3.5.1's test: Results_{event} alone misses an event
+    // that has been through Apply Override (its cleanup drops that table).
+    $nc_results_in = $nc_event && spp_cr_event_processed( $nc_event )['processed'];
 
     ob_start();
     ?>

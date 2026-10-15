@@ -82,11 +82,16 @@ roughly in pipeline order:
    without touching the live `Results` table, `RankOverride`, or anything downstream — use this
    pattern (a shadow table + comparison report) when experimenting with ranking math rather than
    mutating the live tables directly.
-   A force=1 re-run restores usermeta Rank from `usermeta_rank_pre_event_{event}` **and** resets
-   `Master.Rank` to match (v3.5.0): Step 10 takes absent players' previous rank from Master, and before
-   this fix a re-run after Copy Ranks applied the +1.6 absent penalty twice (event 169). Every run also
-   stops before writing anything if any Master rank differs from the profile rank
-   (`spp_cr_master_rank_drift()`). Test: `tests/spp-create-results-force-rerun-test.php`.
+   Re-runs (v3.5.1): an event counts as already processed if `Results_{event}` exists **or**
+   `Results_all` has rows for it **or** a valid `usermeta_rank_pre_event_{event}` snapshot exists
+   (`spp_cr_event_processed()`) -- Apply Override's cleanup drops `Results_{event}`, so that table alone
+   let re-runs after Apply Override skip force/restore and add the +1.6 absent penalty again (event 169,
+   twice). A processed event needs force=1, which restores usermeta from the snapshot and resets
+   `Master.Rank` to match. Absent players' previous rank comes from the snapshot (Master only if there is
+   none). Every run stops before writing if any Master rank differs from the profile rank
+   (`spp_cr_master_rank_drift()`). Test: `tests/spp-create-results-force-rerun-test.php`. Note Create
+   Results' working `Results.Rank` is in RankCalc order; Apply Override re-orders by RankOverride when
+   archiving, so the two rank columns legitimately differ.
 8. **Club rating** (`spp-club-rating.php`) — computes a club-relative `ClubRating` (2.000–5.000) from
    rank standing, used elsewhere (e.g. shadow dampening in `spp-create-results.php`) in preference to
    noisier self-reported `Master.Rating`.
