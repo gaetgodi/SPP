@@ -1,8 +1,31 @@
 <?php
 /* =========================================================
    SPP Create Results (for Override)
-   Version: 3.4.1
-   Date: 2026-10-14
+   Version: 3.5.0
+   Date: 2026-10-15
+
+   Changes from 3.4.1:
+   - FIX (event 169): a force=1 re-run now brings Master back in line
+     with usermeta. The force path restored usermeta Rank from the
+     pre-event snapshot but left Master alone, and Step 10 reads
+     Master.Rank as the previous rank of everyone who didn't play. On
+     169 the first run's results had already been copied into usermeta
+     and Master (Apply Override -> Copy Ranks), so the forced re-run
+     added the +1.6 absent penalty on top of an already-penalised rank:
+     79 of 115 absent players got a RankPrev 1-3 places too high (Ernst
+     Boxler 1 -> recorded as 2, final 3rd instead of 2nd). Right after
+     the restore, Master.Rank is set to LPAD(usermeta Rank, 3, 0) -- the
+     same value spp_create_membership_table() writes.
+   - New guard before Step 2 (the first write to Schedules): if any
+     Master row's Rank differs from that player's usermeta Rank (or the
+     player has no usermeta Rank), the run stops with the count and the
+     first few names, and nothing is calculated. Normally Master is
+     rebuilt from usermeta (Create Schedule, Copy Ranks, schedule-adjust
+     writes both), so a weekly run is not blocked. See
+     spp_cr_master_rank_drift().
+   - Snapshot handling unchanged: a forced re-run restores from the
+     existing usermeta_rank_pre_event_{event} and Step 9b never
+     re-takes or overwrites it.
 
    Changes from 3.4.0:
    - Step 14: ALTER TABLE Results DROP PRIMARY KEY now runs only when
@@ -503,6 +526,23 @@ function spp_results_all_has_shadow() {
     return $has;
 }
 
+// Master rows whose Rank differs from the player's usermeta Rank, or who
+// have no usermeta Rank at all (v3.5.0). Compared as integers: Master
+// stores '003', usermeta '3'. Players with a usermeta Rank but no Master
+// row (off the ladder) are not Step 10's concern and are ignored.
+function spp_cr_master_rank_drift( $master, $usermeta ) {
+    global $wpdb;
+    return $wpdb->get_results(
+        "SELECT m.user_id, m.first_name, m.last_name, m.Rank AS master_rank, u.meta_rank
+         FROM {$master} m
+         LEFT JOIN (SELECT user_id, MAX(meta_value) AS meta_rank FROM {$usermeta} WHERE meta_key = 'Rank' GROUP BY user_id) u
+                ON u.user_id = m.user_id
+         WHERE u.meta_rank IS NULL OR CAST(m.Rank AS SIGNED) <> CAST(u.meta_rank AS SIGNED)
+         ORDER BY CAST(m.Rank AS SIGNED)",
+        ARRAY_A
+    );
+}
+
 function spp_cr_effective_rating( $uid, $clubRatingByUid, $selfRatingByUid ) {
     if ( isset( $clubRatingByUid[ $uid ] ) ) return (float) $clubRatingByUid[ $uid ];
     return spp_cr_rating_numeric( $selfRatingByUid[ $uid ] ?? 3.0 );
@@ -582,8 +622,19 @@ if ( $already_processed ) {
              SET u.meta_value = s.meta_value
              WHERE u.meta_key = 'Rank'"
         );
+        // v3.5.0: Step 10 reads Master.Rank, not usermeta. If the first
+        // run's results were already copied into Master (Apply Override
+        // -> Copy Ranks), Master still holds them after the restore above
+        // and the absent penalty would be applied twice. Put Master back
+        // on the restored usermeta, in the format the membership rebuild
+        // writes (LPAD 3).
+        $master_synced = $wpdb->query(
+            "UPDATE {$master} m
+             JOIN {$usermeta} u ON u.user_id = m.user_id AND u.meta_key = 'Rank'
+             SET m.Rank = LPAD(u.meta_value, 3, '0')"
+        );
         $force_restore_completed = true;
-        echo "<span style='font-size:16px;color:#e67e22;'>force=1: restored {$restored} usermeta Rank row(s) that had changed since {$snapshot_table} was taken, before re-running event {$Event}.</span><br>";
+        echo "<span style='font-size:16px;color:#e67e22;'>force=1: restored {$restored} usermeta Rank row(s) that had changed since {$snapshot_table} was taken, and reset {$master_synced} Master rank(s) to match, before re-running event {$Event}.</span><br>";
     } else {
         echo "<span style='font-size:20px;color:#c0392b;'>Event {$Event} has already been processed -- {$results_table_check} already exists. Re-running would compound the no-show penalty on top of an already-decayed Master.Rank (see v2.2.0 changelog). To re-run intentionally, pass force=1 to [spp_create_results]; this restores usermeta Rank from {$snapshot_table} before proceeding, if that snapshot is still valid. Aborting.</span>";
         return;
@@ -639,6 +690,21 @@ if (!empty($incomplete_players)) {
     $group_list = implode(', ', $groups_affected);
     $count = count($groups_affected);
     echo "<span style='font-size:24px; color:#c0392b;'>{$count} group(s) have incomplete scores (Group {$group_list}) — cannot calculate results!</span>";
+    return;
+}
+
+// Master/usermeta guard (v3.5.0). Step 10 takes the previous rank of
+// everyone who didn't play from Master.Rank; the snapshot (Step 9b) and
+// Copy Ranks work on usermeta. If the two disagree, stop before anything
+// is written to Schedules.
+$drift = spp_cr_master_rank_drift( $master, $usermeta );
+if ( $drift ) {
+    $names = array();
+    foreach ( array_slice( $drift, 0, 5 ) as $d ) {
+        $names[] = esc_html( trim( $d['first_name'] . ' ' . $d['last_name'] ) ) . ' (Master ' . (int) $d['master_rank'] . ', profile ' . ( $d['meta_rank'] === null ? 'none' : (int) $d['meta_rank'] ) . ')';
+    }
+    $more = count( $drift ) > 5 ? ', and ' . ( count( $drift ) - 5 ) . ' more' : '';
+    echo "<span style='font-size:20px;color:#c0392b;'>Stopped: " . count( $drift ) . " player(s) have a different rank in the Master list than in their member profile: " . implode( ', ', $names ) . "{$more}. Results were not calculated and nothing was changed. Absent players' previous rank comes from the Master list, so it has to match the profiles first. Open Ladder Generate Master List (rebuilds the Master list from the profiles), then run Create Results again.</span>";
     return;
 }
 
