@@ -1,8 +1,22 @@
 <?php
 /* =========================================================
    Apply Override to Results Table
-   Version: 1.7.1
-   Date: 2026-10-14
+   Version: 1.7.2
+   Date: 2026-10-15
+
+   Changes from 1.7.1:
+   - FIX: the final Rank ordinal's tie-break on RankPrev was a TEXT
+     sort. RankPrev is a string column holding both padded ('004',
+     absent players -- Create Results takes it from the snapshot/Master,
+     LPAD 3) and unpadded ('10', players who played -- Schedules.Rank)
+     values, so for two players on the same RankOverride '10' sorted
+     before '4' and '098' before '99'. Event 169: Jim Veltman (prev 10)
+     got 4th and Fayaz Abdulla (prev 4) 5th on a 4.00 tie; read-only
+     audit found 8 affected events (see the 2026-10-15 report).
+     Now RankOverride, then CAST(RankPrev AS UNSIGNED), then user_id,
+     so a tie can never depend on string order or row order. The
+     clause is spp_rank_ordinal_order_sql(), shared with Score
+     Correction's re-rank. Existing results are not changed.
 
    Changes from 1.7.0:
    - Results email: the "View Scores and Rank History" link pointed
@@ -271,6 +285,14 @@ function spp_ao_nc_block_reason( string $results = 'Results', string $results_al
    Table names are parameters for tests; defaults are the real ones.
    Leaves tmp_results in place -- Stage 1 rebuilds Results from it.
    ========================================================= */
+// The one ordering for a final ordinal Rank (v1.7.2): RankOverride, then
+// previous rank as a NUMBER (RankPrev mixes '004' and '10'), then user_id
+// so exact ties are deterministic. Used by spp_ao_archive_results() and
+// Score Correction's re-rank.
+function spp_rank_ordinal_order_sql() : string {
+    return "CAST(RankOverride AS DECIMAL(6,2)) ASC, CAST(RankPrev AS UNSIGNED) ASC, user_id ASC";
+}
+
 function spp_ao_archive_results( int $Event, array $t = array() ) : array {
     global $wpdb;
     $t = array_merge( array( 'results' => 'Results', 'results_all' => 'Results_all', 'tmp' => 'tmp_results' ), $t );
@@ -289,7 +311,7 @@ function spp_ao_archive_results( int $Event, array $t = array() ) : array {
     $wpdb->query("CREATE TABLE {$tmp} AS (
         SELECT RankPrev, RankCalc, RankOverride, RankCalc_Shadow, user_id, group_id, Score, event_id, display_name{$gs_sel}
         FROM {$results_table}
-        ORDER BY CAST(RankOverride AS DECIMAL(6,2)) ASC, RankPrev
+        ORDER BY " . spp_rank_ordinal_order_sql() . "
     )");
     $wpdb->query("ALTER TABLE {$tmp} ADD Rank INT AUTO_INCREMENT PRIMARY KEY FIRST");
 

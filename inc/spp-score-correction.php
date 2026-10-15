@@ -12,8 +12,15 @@
  *   - rankUsersWithTies(): score desc, current rank as tie-breaker
  *   - setCaclRank(): placement adjustment + score bonus
  *
- * Version: 1.6.0
- * Date:    2026-10-13
+ * Version: 1.6.1
+ * Date:    2026-10-15
+ *
+ * Changes from 1.6.0:
+ *   - Steps 3 and 4 (re-rank Results_all for the event, and Results)
+ *     used the same text tie-break on RankPrev as Apply Override
+ *     ('10' before '4'). Both now use spp_rank_ordinal_order_sql()
+ *     (Apply Override 1.7.2): RankOverride, RankPrev as a number,
+ *     user_id. Nothing else changed.
  *
  * Changes from 1.5.0:
  *   - NC (Not Complete) groups (inc/spp-nc-groups.php): when the
@@ -908,7 +915,7 @@ add_action( 'wp_ajax_spp_sc_apply', function() {
     $wpdb->query(
         "UPDATE Results_all SET Rank = (@r:=@r+1)
          WHERE event_id = {$event_id}
-         ORDER BY CAST(RankOverride AS DECIMAL(6,2)) ASC, RankPrev ASC"
+         ORDER BY " . spp_rank_ordinal_order_sql()
     );
 
     // 4. Re-rank Results table (no re-sort needed -- RankOverride already
@@ -916,7 +923,7 @@ add_action( 'wp_ajax_spp_sc_apply', function() {
     $wpdb->query( "SET @r=0" );
     $wpdb->query(
         "UPDATE Results SET Rank = (@r:=@r+1)
-         ORDER BY CAST(RankOverride AS DECIMAL(6,2)) ASC, RankPrev ASC"
+         ORDER BY " . spp_rank_ordinal_order_sql()
     );
 
     // 5. Update user meta for all players in Results
