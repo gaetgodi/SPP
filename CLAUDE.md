@@ -142,7 +142,7 @@ convention as everywhere else):
   from. `spp_kq_history` is different on purpose: a **permanent** round-by-round archive, one row per
   player per round per court, written **once** per occurrence via
   `spp_kq_finalize_event_history_and_recap()` (`spp-kq-history.php`), triggered by `cancel_event`
-  immediately and by `end_event` only after midnight (deferred finalization, see End/Reopen below;
+  immediately and by `end_event` 60 minutes after End (deferred finalization, see End/Reopen below;
   a cancelled event's already-played rounds still count).
   Gated by `SPP_KQ_CLUB_RATING_LAUNCH_DATE` (`spp-kq-club-rating.php`, currently 2026-09-17, a
   permanent literal cutoff — never change to a dynamic "before today" check) — reused, not
@@ -168,18 +168,22 @@ convention as everywhere else):
   Add/Dropout), bypassing GL Events' own cutoff/waitlist-downgrade logic. Only usable while
   `phase === 'not_started'` (re-checked server-side).
 - **End Event confirmation + Reopen** (`spp-kq-end-reopen.php`, 2026-10-18) — End needs the
-  moderator to type END (checked server-side) and now only flips phase `organizing -> complete` and
-  records who/when (option `spp_kq_end_state_{occ}`, JSON, read/written with direct SQL). History,
-  recap emails, Club Rating, format rankings and the membership rebuild
-  (`spp_kq_run_event_finalization()`) run from the hourly cron `spp_kq_finalize_due` once the
-  site-local day the event was ended has passed. Until then any facilitator can Reopen (back to
-  `organizing`, same round) from the Complete screen; after it, "contact the administrator". Events
-  ended before this have no record and can't be reopened. A row stuck at status `finalizing` means a
-  finalization run died part-way — never retried automatically (no double emails); look before
-  re-running. Cancel Event still finalizes immediately. Test: `tests/spp-kq-end-reopen-test.php`
-  (zz tables via the `spp_kq_table_name` / `spp_kq_end_store_table` filters, no DB writes elsewhere).
+  moderator to type END (checked server-side) and only flips phase `organizing -> complete` and
+  records who/when plus `reopen_until` = ended_at + 60 min (option `spp_kq_end_state_{occ}`, JSON,
+  read/written with direct SQL). Any facilitator can Reopen (back to `organizing`, same round) from
+  the Complete screen until `reopen_until`; after it, "contact the administrator". History, recap
+  emails, Club Rating, format rankings and the membership rebuild (`spp_kq_run_event_finalization()`)
+  run once, from the 5-minute WP-cron sweep `spp_kq_finalize_sweep`, at or after `reopen_until`.
+  WP-cron only fires on site visits. Events ended before this have no record and can't be reopened;
+  a status-`ended` row without `reopen_until` (1.0.0) is never auto-finalized. A row stuck at
+  `finalizing` for 15+ min sends one alert email to `admin_email` and is never retried
+  automatically (no double emails); look before re-running. Doubleheaders: only the last same-day
+  session of a format to finalize charges inactivity misses (`spp-kq-format-ranking.php` 1.6.0).
+  Cancel Event still finalizes immediately. Test: `tests/spp-kq-end-reopen-test.php` (zz tables via
+  the `spp_kq_table_name` / `spp_kq_end_store_table` filters, in-memory usermeta, no DB writes
+  elsewhere).
 - **Recap email** — fires automatically at the same point as the history archive (Cancel: at once;
-  End: after midnight), one HTML email per player, plain round-by-round score log (no ranking — KQ has
+  End: 60 minutes after End), one HTML email per player, plain round-by-round score log (no ranking — KQ has
   none; Glicko Club Ratings are a separate, already-published concern this email never mentions). A
   `spp_kq_recap_email_dry_run` filter (default `false`) intercepts sends for testing — set it `true`
   to get the intended send list back instead of real `wp_mail()` calls.
