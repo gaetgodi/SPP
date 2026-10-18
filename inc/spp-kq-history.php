@@ -1,8 +1,13 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Permanent History, Live Scoreboard, Recap Email
-   Version: 1.13.0
-   Date: 2026-09-26
+   Version: 1.14.0
+   Date: 2026-10-18
+
+   Changes from 1.13.0: the Full Scoreboard's Save Correction now shows
+   the server's one-line result (what happened to the next round, inc/
+   spp-kq-fix.php 1.0.0) -- as a SppKqLiveApp.notify() line inside the
+   live app, otherwise in the scoreboard's own message box.
 
    Changes from 1.12.0 -- [spp_kq_event_detail] and same-day sessions.
    The Date dropdown listed DISTINCT dates and the lookup selected by
@@ -582,6 +587,11 @@ function spp_kq_render_scoreboard_markup( array $scoreboard, string $empty_messa
                             row.dataset.origBlack = String(res.data.black_score);
                             savedTag.style.display = 'inline';
                             updateSaveState();
+                            // 1.14.0: what happened to the next round (calm).
+                            if (res.data.message) {
+                                if (window.SppKqLiveApp && SppKqLiveApp.notify) SppKqLiveApp.notify(res.data.message);
+                                else showMsg(res.data.message, true);
+                            }
                         })
                         .catch(function() {
                             showMsg('Network error -- try again.', false);

@@ -182,6 +182,18 @@ convention as everywhere else):
   Cancel Event still finalizes immediately. Test: `tests/spp-kq-end-reopen-test.php` (zz tables via
   the `spp_kq_table_name` / `spp_kq_end_store_table` filters, in-memory usermeta, no DB writes
   elsewhere).
+- **Score entry and corrections** (`spp-kq-fix.php`, 2026-10-18) — rule: a game that has been played
+  stays as played. In-Play has **Save All** (`spp_kq_save_scores_bulk()`, each court through the
+  unchanged `spp_kq_submit_court_score()`; problems shown per court, blanks skipped) beside the
+  per-court Save. A correction (Full Scoreboard or Fix a mistake) or a Swap players in round N then
+  runs `spp_kq_next_round_followup()`: round N+1 is set up again only if it has no score, hasn't
+  started (organizing) and its courts would change; a played N+1 is never touched (the message says
+  to use Swap players there if different players actually played). Rebuild Round refuses any round
+  that has a score (`spp-kq-live.php` 1.16.0). **Fix a mistake** (`?kq_view=fix`, overlay inside the
+  live app) groups correct a score / swap players / set up the round again / play a round again /
+  don't count a round. Scores and assignments are separate rows keyed by court, so a swap moves
+  players, never scores; history/ratings/rankings read both at finalization. Test:
+  `tests/spp-kq-score-fix-test.php`.
 - **Recap email** — fires automatically at the same point as the history archive (Cancel: at once;
   End: 60 minutes after End), one HTML email per player, plain round-by-round score log (no ranking — KQ has
   none; Glicko Club Ratings are a separate, already-published concern this email never mentions). A
