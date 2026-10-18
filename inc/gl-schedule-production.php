@@ -1,8 +1,22 @@
 <?php
 /* =========================================================
    GL Schedule Production
-   Version: 2.2.3
-   Date: 2026-10-15
+   Version: 2.3.0
+   Date: 2026-10-18
+
+   Changes from 2.2.3 -- the "adjustments queued for notification" stop
+   is now explained in plain words (spp_schedule_guard_pending_message(),
+   data from spp_schedule_guard_pending_data(), read-only): what it is
+   (Adjust Schedule changes the players haven't been told about), one
+   line per waiting group ("Group 02: moved to Court 4 at 6:40 pm (was
+   Court 2 at 5:30 pm).", "Group 03: a player added at the last minute.")
+   with the event and its date, and what to do next with a link to
+   Adjust Schedule: Discard when the event was already played (date past
+   or results posted -- sending would email about a game that is over),
+   Send when it is current or upcoming; and what each button does. What
+   can't be described (no recorded label, unknown label, group gone) is
+   said plainly, falling back to one generic line. The guard condition
+   and when it fires are unchanged; the old one-line text is gone.
 
    Changes from 2.2.2:
    - Phase 3 preferred-swap candidates and the ScheduleTest_{event}
@@ -413,6 +427,176 @@ function spp_schedule_guard_scores_message( int $event, int $scores_entered ) : 
     return $h;
 }
 
+/**
+ * 2.3.0: the plain words for each Adjust Schedule action label, as they
+ * appear after "Group 03: ". Labels are spp_sa2_finalize_notify_or_queue()'s
+ * $action_label values (inc/spp-schedule-adjust.php).
+ */
+function spp_schedule_guard_change_words( string $label ) : ?string {
+    $map = array(
+        'Player Swap'                     => 'a player moved to a different group',
+        'Last-Minute Add'                 => 'a player added at the last minute',
+        'Group Time-Slot Swap'            => 'swapped court and time with another group',
+        'Move Group to Another Time Slot' => 'moved to another time slot',
+        'Dropout Adjustment'              => 'a player dropped out',
+    );
+    return $map[ $label ] ?? null;
+}
+
+/**
+ * 2.3.0: Create Schedule's stop message while Adjust Schedule changes are
+ * waiting to be emailed. Pure: everything comes in as arrays, so it can be
+ * tested on made-up data.
+ *
+ * @param array  $queue      ['groups' => [gid], 'moves' => [gid => from],
+ *                           'changes' => [gid => [label]]] (the queue).
+ * @param array  $groups     gid => ['name', 'time', 'court', 'from_time',
+ *                           'from_court'] for groups still in the schedule.
+ * @param array  $event      ['id', 'title', 'date' (Y-m-d or ''), 'played'
+ *                           (bool), 'results_posted' (bool)].
+ * @param string $adjust_url Adjust Schedule page, '' if missing.
+ * @param int    $count      Number of groups the guard counted.
+ */
+function spp_schedule_guard_pending_message( array $queue, array $groups, array $event, string $adjust_url, int $count ) : string {
+    $box = 'max-width:100%;box-sizing:border-box;border-radius:6px;padding:12px 16px;margin:12px 0;';
+
+    // One line per queued group; honest when we can't tell what changed.
+    $lines   = array();
+    $unknown = 0;
+    foreach ( (array) ( $queue['groups'] ?? array() ) as $gid ) {
+        $gid  = (int) $gid;
+        $g    = $groups[ $gid ] ?? null;
+        $name = $g['name'] ?? ( 'Group ' . str_pad( (string) $gid, 2, '0', STR_PAD_LEFT ) );
+        if ( ! $g ) {
+            $lines[] = esc_html( $name ) . ': no longer in the schedule, so there is nothing to describe.';
+            $unknown++;
+            continue;
+        }
+        $parts = array();
+        $move  = $queue['moves'][ $gid ] ?? null;
+        if ( $move && ! empty( $g['time'] ) && ! empty( $g['court'] ) ) {
+            if ( ( $g['from_time'] ?? '' ) === $g['time'] && ( $g['from_court'] ?? '' ) === $g['court'] ) {
+                $parts[] = 'moved, then back to its original ' . $g['court'] . ' at ' . $g['time'];
+            } else {
+                $parts[] = 'moved to ' . $g['court'] . ' at ' . $g['time']
+                    . ( ! empty( $g['from_court'] ) && ! empty( $g['from_time'] ) ? ' (was ' . $g['from_court'] . ' at ' . $g['from_time'] . ')' : '' );
+            }
+        }
+        foreach ( (array) ( $queue['changes'][ $gid ] ?? array() ) as $label ) {
+            if ( $label === 'Move Group to Another Time Slot' && $move ) continue; // already said above
+            $words = spp_schedule_guard_change_words( (string) $label );
+            if ( $words === null ) {
+                $parts[] = 'changed in a way this page can\'t describe ("' . $label . '")';
+                $unknown++;
+            } else {
+                $parts[] = $words;
+            }
+        }
+        if ( ! $parts ) {
+            $parts[] = 'changed (the details weren\'t recorded)';
+            $unknown++;
+        }
+        $lines[] = esc_html( $name . ': ' . implode( '; ', $parts ) . '.' );
+    }
+
+    $when = '';
+    if ( ! empty( $event['date'] ) ) {
+        $when = date( 'l, F j, Y', strtotime( $event['date'] ) );
+    }
+    $what = esc_html( trim( ( $event['title'] ?? '' ) !== '' ? $event['title'] . ( $when ? ', ' . $when : '' ) : ( $when ?: 'the current event' ) ) )
+        . ' (event ' . (int) ( $event['id'] ?? 0 ) . ')';
+
+    $h  = '<div style="max-width:100%;overflow-x:auto;font-family:Arial,sans-serif;font-size:15px;">';
+    $h .= '<div style="' . $box . 'background:#fff8e1;border:1px solid #e67e22;">';
+    $h .= '<p style="font-weight:bold;font-size:17px;margin:0 0 8px;">Next week\'s schedule can\'t be created yet.</p>';
+    $h .= '<p style="margin:0;">Changes were made on Adjust Schedule (such as moving a group, a last-minute add or a drop-out) and the players haven\'t been told yet. '
+        . 'Creating a new schedule would replace the groups those emails describe, so the waiting list has to be sent or cleared first.</p></div>';
+
+    $h .= '<div style="' . $box . 'background:#fff;border:1px solid #ddd;">';
+    $h .= '<p style="margin:0 0 6px;"><strong>Waiting to be sent</strong> &mdash; ' . $what . ', ' . (int) $count . ' group(s):</p>';
+    if ( $lines && $unknown < count( $lines ) ) {
+        $h .= '<ul style="margin:0 0 0 20px;">';
+        foreach ( $lines as $l ) {
+            $h .= '<li>' . $l . '</li>';
+        }
+        $h .= '</ul>';
+    } else {
+        // Nothing we can describe: one short honest line, no guessing.
+        $h .= '<p style="margin:0;">' . (int) $count . ' group(s) are waiting. What changed for them wasn\'t recorded, so it can\'t be listed here; Adjust Schedule shows the groups as they are now.</p>';
+    }
+    $h .= '</div>';
+
+    $h .= '<div style="' . $box . 'background:#f0f7ff;border:1px solid #3766AB;">';
+    if ( ! empty( $event['played'] ) ) {
+        $why = ! empty( $event['results_posted'] ) ? 'its results are already posted' : 'it was on ' . ( $when ?: 'an earlier date' );
+        $h .= '<p style="margin:0 0 6px;"><strong>What to do: choose Discard.</strong> This event has already been played (' . esc_html( $why ) . '), so these changes are old. Sending them would email players about a game that is over.</p>';
+    } else {
+        $h .= '<p style="margin:0 0 6px;"><strong>What to do: choose Send.</strong> This event hasn\'t been played yet, so the players should hear about their changes before the schedule is rebuilt.</p>';
+    }
+    $h .= '<p style="margin:0 0 6px;">On Adjust Schedule, at the top of the page:</p><ul style="margin:0 0 6px 20px;">';
+    $h .= '<li><strong>Send Pending Notifications</strong> emails the players in the groups above.</li>';
+    $h .= '<li><strong>Discard</strong> clears this list without emailing anyone. The schedule changes themselves stay as they are.</li></ul>';
+    $h .= $adjust_url
+        ? '<p style="margin:0;"><a href="' . esc_url( $adjust_url ) . '"><strong>Open Adjust Schedule</strong></a>, then come back here to create the schedule.</p>'
+        : '<p style="margin:0;"><strong>Adjust Schedule</strong> (page not found -- contact Gaetan), then come back here to create the schedule.</p>';
+    $h .= '</div>';
+
+    $h .= '<p style="font-weight:bold;">Nothing has been changed.</p></div>';
+    return $h;
+}
+
+/**
+ * 2.3.0: real data for spp_schedule_guard_pending_message(), read-only.
+ * Returns its argument list.
+ */
+function spp_schedule_guard_pending_data( int $count ) : array {
+    global $wpdb;
+    $queue = function_exists( 'spp_sa2_get_pending_notify_queue' ) ? ( spp_sa2_get_pending_notify_queue() ?? array() ) : array();
+    $gids  = array_map( 'intval', (array) ( $queue['groups'] ?? array() ) );
+
+    $groups = array();
+    foreach ( $gids as $gid ) {
+        $row = $wpdb->get_row( $wpdb->prepare(
+            "SELECT g.GP_name, t.T_desc, c.Crt_name
+             FROM Schedules s
+             JOIN Groups g ON s.group_id = g.GP_ID
+             LEFT JOIN Times t  ON s.time_id = t.T_ID
+             LEFT JOIN Courts c ON s.Crt_ID = c.Crt_ID
+             WHERE s.group_id = %d LIMIT 1", $gid
+        ), ARRAY_A );
+        if ( ! $row ) continue;
+        $info = array( 'name' => $row['GP_name'], 'time' => (string) $row['T_desc'], 'court' => (string) $row['Crt_name'] );
+        $from = $queue['moves'][ $gid ] ?? null;
+        if ( $from ) {
+            $was = $wpdb->get_row( $wpdb->prepare(
+                "SELECT t.T_desc, c.Crt_name FROM Times t, Courts c WHERE t.T_ID = %d AND c.Crt_ID = %d",
+                (int) $from['time_id'], (int) $from['Crt_ID']
+            ), ARRAY_A );
+            if ( $was ) {
+                $info['from_time']  = (string) $was['T_desc'];
+                $info['from_court'] = (string) $was['Crt_name'];
+            }
+        }
+        $groups[ $gid ] = $info;
+    }
+
+    $event_id = (int) ( $queue['event'] ?? get_option( 'spp_current_event', 0 ) );
+    $occ = $event_id ? $wpdb->get_row( $wpdb->prepare(
+        "SELECT title, event_date FROM {$wpdb->prefix}gl_event_occurrences WHERE id = %d", $event_id
+    ), ARRAY_A ) : null;
+    $date    = $occ ? substr( (string) $occ['event_date'], 0, 10 ) : '';
+    $posted  = (bool) get_option( 'spp_results_posted', 0 );
+    $event   = array(
+        'id'             => $event_id,
+        'title'          => $occ['title'] ?? '',
+        'date'           => $date,
+        'results_posted' => $posted,
+        'played'         => $posted || ( $date !== '' && $date < wp_date( 'Y-m-d' ) ),
+    );
+    $url = function_exists( 'spp_ppr_tool_page_url' ) ? spp_ppr_tool_page_url( 'adjust-schedule' ) : '';
+    return array( $queue, $groups, $event, $url, $count );
+}
+
 function spp_run_schedule_production_locked() {
 
 // Administrator + editor, per this page's Ultimate Member menu
@@ -514,7 +698,8 @@ if (isset($Event) and $Event <> 0) {
     if ( function_exists( 'spp_sa2_get_pending_notify_groups' ) ) {
         $pending_check = spp_sa2_get_pending_notify_groups();
         if ( ! empty( $pending_check ) ) {
-            echo '<p class="gl-error">Cannot produce a new schedule -- ' . count( $pending_check ) . ' group(s) have adjustments queued for notification from the current event. Go to Schedule Adjustment and either send or discard those notifications first.</p>';
+            // 2.3.0: same stop, plain explanation (spp_schedule_guard_pending_message()).
+            echo spp_schedule_guard_pending_message( ...spp_schedule_guard_pending_data( count( $pending_check ) ) );
             return;
         }
     }

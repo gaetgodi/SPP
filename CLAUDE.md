@@ -70,6 +70,11 @@ roughly in pipeline order:
    "your time has changed from X to Y" line in that group's player emails. Backup/restore take an
    optional table and the queue option is filterable — test-only hooks for
    `tests/spp-schedule-adjust-movegroup-test.php` (throwaway tables, stubbed `wp_mail`).
+   The queue also records, per group, which action queued it (`changes`, 1.2.0). Create Schedule
+   refuses to run while the queue is non-empty; its stop message (`spp_schedule_guard_pending_message()`,
+   `gl-schedule-production.php` 2.3.0) lists each waiting group and its change, the event and date,
+   advises Discard when that event was already played (date past or results posted) and Send otherwise,
+   and links to Adjust Schedule. Test: `tests/spp-schedule-guard-pending-message-test.php`.
 5. **Schedule check** (`spp-schedule-check.php`, `[spp_schedule_check]`) — validation/diagnostic pass
    over a produced schedule, also invoked internally by the adjust tool after every mutation.
 6. **Score entry & correction** (`spp-score-entry.php`, `spp-score-correction.php`) —

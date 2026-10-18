@@ -38,8 +38,15 @@ $FLAGS = array( 'pub' => 1, 'posted' => 0 );
 add_filter( 'pre_option_spp_schedule_published', function() use ( &$FLAGS ) { return $FLAGS['pub']; } );
 add_filter( 'pre_option_spp_results_posted',     function() use ( &$FLAGS ) { return $FLAGS['posted']; } );
 $ZERO_SCORES = false;
-add_filter( 'query', function( $q ) use ( &$ZERO_SCORES ) {
-    return ( $ZERO_SCORES && strpos( $q, 'COUNT(*) FROM Schedules' ) !== false && strpos( $q, 'Game1 IS NOT NULL OR Game2' ) !== false ) ? 'SELECT 0' : $q;
+// 2026-10-18: the "scores entered" cases used to need real scores in
+// Schedules, so they failed whenever the live week had none yet (13
+// environmental fails on event 315). With no real scores, the guard's own
+// count is answered with 12 in memory -- same technique as $ZERO_SCORES.
+$FAKE_SCORES = (int) $wpdb->get_var( "SELECT COUNT(*) FROM Schedules WHERE group_id != 99 AND (Game1 IS NOT NULL OR Game2 IS NOT NULL OR Game3 IS NOT NULL OR Game4 IS NOT NULL OR Game5 IS NOT NULL)" ) === 0;
+add_filter( 'query', function( $q ) use ( &$ZERO_SCORES, &$FAKE_SCORES ) {
+    if ( strpos( $q, 'COUNT(*) FROM Schedules' ) === false || strpos( $q, 'Game1 IS NOT NULL OR Game2' ) === false ) return $q;
+    if ( $ZERO_SCORES ) return 'SELECT 0';
+    return $FAKE_SCORES ? 'SELECT 12' : $q;
 }, 5 );
 
 function sgm_run( string $fn ) : string {
@@ -56,7 +63,7 @@ $date  = date( 'F j, Y', strtotime( $occ['event_date'] ) );
 $adm   = (int) $wpdb->get_var( "SELECT user_id FROM {$wpdb->prefix}usermeta WHERE meta_key = '{$wpdb->prefix}capabilities' AND meta_value LIKE '%administrator%' LIMIT 1" );
 $edi   = (int) $wpdb->get_var( "SELECT user_id FROM {$wpdb->prefix}usermeta WHERE meta_key = '{$wpdb->prefix}capabilities' AND meta_value LIKE '%\"editor\"%' LIMIT 1" );
 $sub   = (int) $wpdb->get_var( "SELECT user_id FROM {$wpdb->prefix}usermeta WHERE meta_key = '{$wpdb->prefix}capabilities' AND meta_value LIKE '%subscriber%' AND meta_value NOT LIKE '%editor%' AND meta_value NOT LIKE '%administrator%' LIMIT 1" );
-echo "Schedules holds event $event ($date); admin $adm, editor $edi, subscriber $sub\n";
+echo "Schedules holds event $event ($date); admin $adm, editor $edi, subscriber $sub" . ( $FAKE_SCORES ? ' (no real scores: count faked in memory)' : '' ) . "\n";
 
 foreach ( array( 'administrator' => $adm, 'editor' => $edi ) as $role => $uid ) {
     echo "1. published=1, results_posted=0, scores entered -- $role\n";
