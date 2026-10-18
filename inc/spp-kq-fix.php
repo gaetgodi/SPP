@@ -1,8 +1,42 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Save All + Fix a mistake
-   Version: 1.0.0
+   Version: 1.1.0
    Date: 2026-10-18
+
+   Changes from 1.0.0 -- confirmation before discarding played games.
+   Only two tools remove or stop counting rounds beyond the one picked:
+   Reset Round ("Play a round again": clears round N's scores, deletes
+   every later round) on the Overview and Fix a mistake, and Void Round
+   ("Don't count a round": rounds N..current stop counting) on Fix a
+   mistake and the Full Scoreboard's "Fix a round" panel. (Rebuild
+   already refuses played rounds; Cancel Event / Reset Event / Cancel
+   Court only drop unscored courts; Full Reset is admin-only, sandbox
+   events only.) For those two, spp_kq_run_guarded_round_action():
+   - works out exactly which rounds are affected and how many scores
+     each has (spp_kq_destructive_impact());
+   - if any has a score and the request carries no confirmation token,
+     does nothing and answers with a plain warning ("Playing Round 2
+     again clears its 4 scores and also removes Round 3 and its 4
+     scores. Those games will no longer count.") plus a token -- an HMAC
+     (wp_hash) of occurrence, action, round, current round and the
+     per-round score counts that were shown;
+   - with a token that no longer matches (a score arrived, the round
+     moved on), does nothing and answers with the new warning;
+   - with a matching token, runs the transition, which re-checks the
+     same counts inside its own lock (inc/spp-kq-live.php 1.17.0).
+   Nothing scored affected: runs straight away, as before. A repeated
+   request after success finds a different state and is a silent no-op.
+   The warning travels as an SPP_KQ_NOTICE_CONFIRM_PREFIX notice: the
+   Void Round has no round compare-and-swap of its own, so its warning is
+   always measured against the actual current round: a confirmation
+   from a page whose round has since moved on no longer matches and gets
+   the new warning instead of running.
+   AJAX front door returns it as {confirm, changed, message, token,
+   fields}; window.SppKqConfirm (spp_kq_confirm_script()) shows an
+   inline panel with Cancel (focused, the default) and "Yes, do it";
+   without JavaScript the page header renders the same panel as a form.
+   Warning styling is the calm amber box; red stays for real failures.
 
    1.0.0 -- new. Score entry and correction improvements.
 
@@ -518,7 +552,7 @@ function spp_kq_render_fix_screen( int $occurrence_id ) : string {
         <p style="margin:0 0 4px;"><strong>Play a round again</strong></p>
         <p class="kq-hint" style="margin:0 0 8px;">Use this only when a round has to be replayed on court (for example everyone had the wrong partners). Its courts stay the same, its scores are cleared, and every round after it is removed, scores included.</p>
         <?php if ( $reset_targets ) : ?>
-            <form method="post" class="kq-inline-form kq-fix-form" data-confirm-template="Play Round {n} again? Its scores are cleared and every round after it is removed, scores included.">
+            <form method="post" class="kq-inline-form kq-fix-form">
                 <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
                 <input type="hidden" name="spp_kq_action" value="reset_round">
                 <input type="hidden" name="spp_kq_round" value="<?php echo esc_attr( $current ); ?>">
@@ -541,7 +575,7 @@ function spp_kq_render_fix_screen( int $occurrence_id ) : string {
         <p style="margin:0 0 4px;"><strong>Don't count a round</strong></p>
         <p class="kq-hint" style="margin:0 0 8px;">Use this only when a round should not count at all and won't be replayed. That round and every round after it stop counting (history, Club Ratings, rankings). This can't be undone.</p>
         <?php if ( $void_rounds ) : ?>
-            <form method="post" class="kq-inline-form kq-fix-form" data-confirm-template="Stop counting Round {n} and every round after it? This can't be undone.">
+            <form method="post" class="kq-inline-form kq-fix-form">
                 <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
                 <input type="hidden" name="spp_kq_action" value="void_round">
                 <input type="hidden" name="spp_kq_round" value="<?php echo esc_attr( $current ); ?>">
@@ -560,7 +594,7 @@ function spp_kq_render_fix_screen( int $occurrence_id ) : string {
     </div>
     </div>
     <?php
-    echo spp_kq_render_fix_script( $occurrence_id, $current );
+    echo spp_kq_confirm_script() . spp_kq_render_fix_script( $occurrence_id, $current );
     return ob_get_clean();
 }
 
@@ -678,7 +712,12 @@ function spp_kq_render_fix_script( int $occurrence_id, int $current ) : string {
                 .then(function(r) { return r.json(); })
                 .then(function(res) {
                     if (btn) btn.disabled = false;
-                    if (!res.success) { showResult(res.data || 'That didn\'t work. Nothing was changed.', true); return; }
+                    if (!res.success) {
+                        // 1.1.0: played games affected -> plain warning panel.
+                        if (window.SppKqConfirm && SppKqConfirm.isConfirm(res.data)) { SppKqConfirm.show(form, res.data, post); return; }
+                        showResult(res.data || 'That didn\'t work. Nothing was changed.', true);
+                        return;
+                    }
                     var notice = res.data && res.data.notice ? res.data.notice : '';
                     // An empty notice means the action didn't run: the
                     // screen was out of date (someone else acted first).
@@ -690,4 +729,227 @@ function spp_kq_render_fix_script( int $occurrence_id, int $current ) : string {
     </script>
     <?php
     return ob_get_clean();
+}
+
+// =============================================================
+// 1.1.0: confirmation before discarding played games
+// =============================================================
+
+const SPP_KQ_NOTICE_CONFIRM_PREFIX = "\u{2753}KQCONFIRM:";
+
+/**
+ * Which rounds Reset Round / Void Round would affect right now and how
+ * many scores each has. 'valid' is false when the request doesn't match
+ * the current state (stale page, out-of-range round) -- the transition
+ * then refuses or no-ops on its own, so no warning is needed.
+ *
+ * @return array ['valid'=>bool, 'rounds'=>[n=>count], 'total'=>int, 'current_round'=>int]
+ */
+function spp_kq_destructive_impact( int $occurrence_id, string $action, int $expected_round, int $target ) : array {
+    $none  = array( 'valid' => false, 'rounds' => array(), 'total' => 0, 'current_round' => 0 );
+    $state = spp_kq_get_event_state( $occurrence_id );
+    if ( ! $state ) {
+        return $none;
+    }
+    $current = (int) $state['current_round'];
+    if ( $action === 'reset_round' ) {
+        // A stale page (posted round != current) is left to Reset's own
+        // compare-and-swap, which then does nothing.
+        if ( $current !== $expected_round || $state['phase'] !== 'organizing' || $target < SPP_KQ_RESET_ROUND_MIN || $target >= $current ) {
+            return $none;
+        }
+    } elseif ( $action === 'void_round' ) {
+        if ( ! in_array( $state['phase'], array( 'organizing', 'in_play' ), true ) || $target < SPP_KQ_VOID_ROUND_MIN || $target > $current ) {
+            return $none;
+        }
+    } else {
+        return $none;
+    }
+    $rounds = spp_kq_scored_counts( $occurrence_id, $target, $current );
+    return array( 'valid' => true, 'rounds' => $rounds, 'total' => array_sum( $rounds ), 'current_round' => $current );
+}
+
+function spp_kq_confirm_token( int $occurrence_id, string $action, int $target, array $impact ) : string {
+    return wp_hash( 'spp_kq_confirm|' . wp_json_encode( array( $occurrence_id, $action, $target, $impact['current_round'], $impact['rounds'] ) ) );
+}
+
+function spp_kq_rounds_phrase( array $ns ) : string {
+    $ns = array_values( $ns );
+    if ( count( $ns ) === 1 ) {
+        return "Round {$ns[0]}";
+    }
+    $last = array_pop( $ns );
+    return 'Rounds ' . implode( ', ', $ns ) . " and {$last}";
+}
+
+function spp_kq_scores_phrase( int $n ) : string {
+    return $n === 1 ? '1 score' : "{$n} scores";
+}
+
+/** The plain warning text for a Reset/Void that affects scored rounds. */
+function spp_kq_confirm_message( string $action, int $target, array $rounds ) : string {
+    $own   = (int) ( $rounds[ $target ] ?? 0 );
+    $later = array_filter( $rounds, fn( $c, $n ) => $n > $target && $c > 0, ARRAY_FILTER_USE_BOTH );
+    $later_part = '';
+    if ( $later ) {
+        $later_part = spp_kq_rounds_phrase( array_keys( $later ) ) . ' and ' . ( count( $later ) === 1 ? 'its' : 'their' ) . ' ' . spp_kq_scores_phrase( array_sum( $later ) );
+    }
+    if ( $action === 'reset_round' ) {
+        $text = "Playing Round {$target} again";
+        if ( $own > 0 ) {
+            $text .= ' clears its ' . spp_kq_scores_phrase( $own );
+            $text .= $later ? " and also removes {$later_part}" : '';
+        } else {
+            $text .= " also removes {$later_part}";
+        }
+        return $text . '. Those games will no longer count.';
+    }
+    $text = "Not counting Round {$target}";
+    if ( $own > 0 ) {
+        $text .= ' stops counting its ' . spp_kq_scores_phrase( $own );
+        $text .= $later ? " and also {$later_part}" : '';
+    } else {
+        $text .= " also stops counting {$later_part}";
+    }
+    return $text . ". Those games will no longer count, and this can't be undone.";
+}
+
+function spp_kq_confirm_notice( int $occurrence_id, string $action, int $target, array $impact, bool $changed ) : string {
+    $field = $action === 'reset_round' ? 'spp_kq_reset_target' : 'spp_kq_target_round';
+    $message = spp_kq_confirm_message( $action, $target, $impact['rounds'] );
+    return SPP_KQ_NOTICE_CONFIRM_PREFIX . wp_json_encode( array(
+        'confirm' => true,
+        'changed' => $changed,
+        'message' => ( $changed ? 'Something changed since the warning, so nothing was done. Please check again: ' : '' ) . $message,
+        'token'   => spp_kq_confirm_token( $occurrence_id, $action, $target, $impact ),
+        'fields'  => array( 'spp_kq_action' => $action, 'spp_kq_round' => (string) $impact['current_round'], $field => (string) $target ),
+    ) );
+}
+
+/** Decode a confirmation notice, or null if $notice isn't one. */
+function spp_kq_parse_confirm_notice( string $notice ) : ?array {
+    if ( ! str_starts_with( $notice, SPP_KQ_NOTICE_CONFIRM_PREFIX ) ) {
+        return null;
+    }
+    $data = json_decode( substr( $notice, strlen( SPP_KQ_NOTICE_CONFIRM_PREFIX ) ), true );
+    return is_array( $data ) ? $data : null;
+}
+
+/**
+ * Reset Round / Void Round behind the confirmation (see header). Returns
+ * a spp_kq_handle_post_actions() notice: OK-prefixed on success, a
+ * confirmation notice, plain text on refusal, '' for a no-op.
+ */
+function spp_kq_run_guarded_round_action( int $occurrence_id, string $action, int $expected_round, int $target, int $user_id, string $token ) : string {
+    $impact   = spp_kq_destructive_impact( $occurrence_id, $action, $expected_round, $target );
+    $expected = null;
+    if ( $impact['valid'] ) {
+        if ( $impact['total'] > 0 ) {
+            if ( $token === '' ) {
+                return spp_kq_confirm_notice( $occurrence_id, $action, $target, $impact, false );
+            }
+            if ( ! hash_equals( spp_kq_confirm_token( $occurrence_id, $action, $target, $impact ), $token ) ) {
+                return spp_kq_confirm_notice( $occurrence_id, $action, $target, $impact, true );
+            }
+        }
+        $expected = $impact['rounds']; // re-checked inside the transition's lock
+    }
+
+    $r = $action === 'reset_round'
+        ? spp_kq_transition_reset_round( $occurrence_id, $expected_round, $target, $expected )
+        : spp_kq_transition_void_round( $occurrence_id, $target, $user_id, $expected );
+
+    if ( ! empty( $r['stale'] ) ) {
+        $now = spp_kq_destructive_impact( $occurrence_id, $action, $expected_round, $target );
+        return ( $now['valid'] && $now['total'] > 0 ) ? spp_kq_confirm_notice( $occurrence_id, $action, $target, $now, true ) : '';
+    }
+    if ( $r['won'] ) {
+        return SPP_KQ_NOTICE_OK_PREFIX . ( $action === 'reset_round'
+            ? "Round {$target} will be played again on the same courts. Its scores were cleared and the rounds after it removed. Start it when everyone is ready."
+            : "Round {$target} and the rounds after it no longer count. You can set the round up again to replay it, or end the event." );
+    }
+    return $r['error'] ?? '';
+}
+
+/** No-JavaScript fallback: the confirmation as a form in the page header. */
+function spp_kq_render_confirm_form( array $data ) : string {
+    ob_start();
+    ?>
+    <div class="kq-warn kq-confirm-panel" style="margin:0 0 14px;">
+        <p style="margin:0 0 10px;"><?php echo esc_html( $data['message'] ); ?></p>
+        <form method="post" class="kq-inline-form">
+            <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
+            <?php foreach ( (array) $data['fields'] as $k => $v ) : ?>
+                <input type="hidden" name="<?php echo esc_attr( $k ); ?>" value="<?php echo esc_attr( $v ); ?>">
+            <?php endforeach; ?>
+            <input type="hidden" name="spp_kq_confirm_token" value="<?php echo esc_attr( $data['token'] ); ?>">
+            <a class="kq-btn kq-btn-secondary kq-confirm-cancel" href="<?php echo esc_url( remove_query_arg( 'kq_confirm' ) ); ?>" autofocus style="text-decoration:none;display:inline-block;">Cancel</a>
+            <button type="submit" class="kq-btn kq-btn-primary kq-confirm-yes">Yes, do it</button>
+        </form>
+    </div>
+    <?php
+    return ob_get_clean();
+}
+
+/**
+ * window.SppKqConfirm.show(form, data, resubmit): the inline panel under
+ * $form. Cancel is focused (Enter/Space hits Cancel) and removes the
+ * panel and any token; "Yes, do it" puts the token in the form and calls
+ * resubmit(form). Emitted wherever a Reset/Void form can appear; the
+ * first copy wins.
+ */
+function spp_kq_confirm_script() : string {
+    return <<<'JS'
+<script>
+(function() {
+    if (window.SppKqConfirm) return;
+    window.SppKqConfirm = {
+        show: function(form, data, resubmit) {
+            var btn = form.querySelector('button[type="submit"]');
+            var old = form.parentNode.querySelector('.kq-confirm-panel');
+            if (old) old.parentNode.removeChild(old);
+            var panel = document.createElement('div');
+            panel.className = 'kq-warn kq-confirm-panel';
+            panel.style.margin = '10px 0';
+            var p = document.createElement('p');
+            p.style.margin = '0 0 10px';
+            p.textContent = data.message;
+            var cancel = document.createElement('button');
+            cancel.type = 'button';
+            cancel.className = 'kq-btn kq-btn-secondary kq-confirm-cancel';
+            cancel.textContent = 'Cancel';
+            var yes = document.createElement('button');
+            yes.type = 'button';
+            yes.className = 'kq-btn kq-btn-primary kq-confirm-yes';
+            yes.textContent = 'Yes, do it';
+            yes.style.marginLeft = '10px';
+            panel.appendChild(p);
+            panel.appendChild(cancel);
+            panel.appendChild(yes);
+            form.parentNode.insertBefore(panel, form.nextSibling);
+            if (btn) btn.disabled = true;
+            function tokenInput() {
+                var t = form.querySelector('input[name="spp_kq_confirm_token"]');
+                if (!t) { t = document.createElement('input'); t.type = 'hidden'; t.name = 'spp_kq_confirm_token'; form.appendChild(t); }
+                return t;
+            }
+            cancel.addEventListener('click', function() {
+                var t = form.querySelector('input[name="spp_kq_confirm_token"]');
+                if (t) t.parentNode.removeChild(t);
+                panel.parentNode.removeChild(panel);
+                if (btn) btn.disabled = false;
+            });
+            yes.addEventListener('click', function() {
+                yes.disabled = true; cancel.disabled = true; // one click only
+                tokenInput().value = data.token;
+                panel.parentNode.removeChild(panel);
+                resubmit(form);
+            });
+            cancel.focus();
+        },
+        isConfirm: function(d) { return d && typeof d === 'object' && d.confirm === true; }
+    };
+})();
+</script>
+JS;
 }

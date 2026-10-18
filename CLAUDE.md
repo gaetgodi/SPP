@@ -191,7 +191,14 @@ convention as everywhere else):
   to use Swap players there if different players actually played). Rebuild Round refuses any round
   that has a score (`spp-kq-live.php` 1.16.0). **Fix a mistake** (`?kq_view=fix`, overlay inside the
   live app) groups correct a score / swap players / set up the round again / play a round again /
-  don't count a round. Scores and assignments are separate rows keyed by court, so a swap moves
+  don't count a round. **Confirmation before discarding played games** (fix 1.1.0): Reset Round ("Play
+  a round again") and Void Round ("Don't count a round") are the only tools that remove or stop counting
+  rounds beyond the one picked. When any affected round has a score, the server does nothing and answers
+  with a plain warning naming the rounds and score counts plus a token (HMAC of what was shown); the
+  request must come back with that token, the counts are re-checked inside the transition's lock, and a
+  change in between gets the new warning. Panel: Cancel (focused) / "Yes, do it"
+  (`window.SppKqConfirm`). Test: `tests/spp-kq-confirm-played-test.php`. Scores and assignments are
+  separate rows keyed by court, so a swap moves
   players, never scores; history/ratings/rankings read both at finalization. Test:
   `tests/spp-kq-score-fix-test.php`.
 - **Recap email** — fires automatically at the same point as the history archive (Cancel: at once;
