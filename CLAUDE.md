@@ -278,4 +278,28 @@ discovered via `kq_history` only because it was the first report ever actually e
 - Files guard against direct access with `defined( 'ABSPATH' ) || exit;`.
 - AJAX handlers are plain `add_action('wp_ajax_...')` / `wp_ajax_nopriv_...` closures beside the
   shortcode they support, not a separate controller layer.
-- No automated tests exist. Verifying a change means exercising the shortcode/page on staging.
+- Verifying a change still means exercising the shortcode/page; the CLI tests below cover specific
+  features. Run them as `php tests/<file>` from the theme directory (most accept
+  `SPP_TEST_THEME_DIR=<worktree>` to test undeployed code).
+
+## Tests (`tests/`)
+
+**Safe to run on production** (no DB, read-only, or throwaway `zz*` tables behind a write firewall,
+stubbed `wp_mail`):
+- No DB: `spp-kq-movement-test.php`, `spp-board-nomination-test.php`.
+- Read-only: `spp-schedule-guard-message-test.php` (fakes the scores count in memory when the live week
+  has none), `spp-schedule-admin-help-render-test.php`.
+- Throwaway tables/options: `spp-ao-rank-tiebreak-test.php`, `spp-master-rank-sort-test.php`,
+  `spp-create-results-force-rerun-test.php`, `spp-nc-group-status-test.php`,
+  `spp-publish-partial-results-test.php`, `spp-schedule-admin-walkin-guard-test.php`,
+  `spp-schedule-guard-pending-message-test.php`, `spp-kq-end-reopen-test.php`,
+  `spp-kq-score-fix-test.php`, `spp-kq-confirm-played-test.php`, and
+  `spp-schedule-adjust-movegroup-test.php` -- self-contained since 2026-10-18: a fixed synthetic
+  layout of real player ids from the permanent `Schedules_Scores_169` under fake event 990169,
+  published/current event answered in memory, reads of `Schedules` redirected in memory to the
+  throwaway copy. It no longer depends on the live week, publication state or event number (it still
+  reads the `Courts`/`Times`/`Groups` configuration tables and `membership` emails).
+
+**Do NOT run against production** -- they write fake occurrence ids into the real KQ tables, and some are
+stale: `spp-kq-end-cancel-test.php`, `spp-kq-score-entry-test.php`, `spp-kq-score-concurrency-*`,
+`spp-kq-concurrency-*`, `spp-kq-draw-concurrency-*`.
