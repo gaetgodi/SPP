@@ -1,8 +1,18 @@
 <?php
 /* =========================================================
    SPP Schedule Adjust
-   Version: 1.1.0
-   Date: 2026-10-12
+   Version: 1.2.0
+   Date: 2026-10-18
+
+   Changes from 1.1.0:
+   - The pending-notification queue also keeps, per group, which
+     action(s) queued it ('changes' => group_id => [action label]) --
+     spp_sa2_queue_pending_notify() takes the label, passed by
+     spp_sa2_finalize_notify_or_queue(). New read-only
+     spp_sa2_get_pending_notify_queue(). Used only by Create Schedule's
+     "changes not sent yet" message (gl-schedule-production.php 2.3.0);
+     sending, discarding and the emails are unchanged. A queue written
+     before this has no 'changes' and is still read as before.
 
    Changes from 1.0.0:
    - New action "Move group to another time slot" (action
@@ -2116,7 +2126,9 @@ function spp_sa2_pending_option() {
 // $group_moves: group_id => array( 'time_id', 'Crt_ID' ) the group was in
 // BEFORE a Move Group. The first one queued for a group is kept, so it stays
 // "the time you were originally sent" across several moves in one sitting.
-function spp_sa2_queue_pending_notify( array $group_ids, array $group_moves = array() ) {
+// $label (1.2.0): the action that queued these groups ('Last-Minute Add',
+// ...), kept per group so Create Schedule's guard can say what changed.
+function spp_sa2_queue_pending_notify( array $group_ids, array $group_moves = array(), string $label = '' ) {
     $current_event = (int) get_option( 'spp_current_event', 0 );
     $stored = get_option( spp_sa2_pending_option(), array() );
     // If a queue exists from a DIFFERENT event (e.g. left unsent, then a new
@@ -2126,11 +2138,18 @@ function spp_sa2_queue_pending_notify( array $group_ids, array $group_moves = ar
     $same_event = is_array( $stored ) && (int) ( $stored['event'] ?? 0 ) === $current_event;
     $pending = $same_event ? $stored['groups'] : array();
     $moves   = ( $same_event && is_array( $stored['moves'] ?? null ) ) ? $stored['moves'] : array();
+    $changes = ( $same_event && is_array( $stored['changes'] ?? null ) ) ? $stored['changes'] : array();
+    if ( $label !== '' ) {
+        foreach ( $group_ids as $gid ) {
+            $gid = (int) $gid;
+            if ( ! in_array( $label, $changes[ $gid ] ?? array(), true ) ) $changes[ $gid ][] = $label;
+        }
+    }
     $pending = array_values( array_unique( array_merge( $pending, array_map( 'intval', $group_ids ) ) ) );
     foreach ( $group_moves as $gid => $from ) {
         if ( ! isset( $moves[ (int) $gid ] ) ) $moves[ (int) $gid ] = array( 'time_id' => (int) $from['time_id'], 'Crt_ID' => (int) $from['Crt_ID'] );
     }
-    update_option( spp_sa2_pending_option(), array( 'event' => $current_event, 'groups' => $pending, 'moves' => $moves ) );
+    update_option( spp_sa2_pending_option(), array( 'event' => $current_event, 'groups' => $pending, 'moves' => $moves, 'changes' => $changes ) );
     return count( $pending );
 }
 
@@ -2139,6 +2158,18 @@ function spp_sa2_get_pending_notify_groups() {
     $stored = get_option( spp_sa2_pending_option(), array() );
     if ( ! is_array( $stored ) || (int) ( $stored['event'] ?? 0 ) !== $current_event ) return array();
     return is_array( $stored['groups'] ?? null ) ? $stored['groups'] : array();
+}
+
+/**
+ * 1.2.0: the whole queue for the current event (event, groups, moves,
+ * changes), or null when nothing is pending. Read-only. A queue written
+ * before 1.2.0 has no 'changes'.
+ */
+function spp_sa2_get_pending_notify_queue() {
+    $current_event = (int) get_option( 'spp_current_event', 0 );
+    $stored = get_option( spp_sa2_pending_option(), array() );
+    if ( ! is_array( $stored ) || (int) ( $stored['event'] ?? 0 ) !== $current_event || empty( $stored['groups'] ) || ! is_array( $stored['groups'] ) ) return null;
+    return $stored;
 }
 
 function spp_sa2_get_pending_notify_moves() {
@@ -2170,7 +2201,7 @@ function spp_sa2_finalize_notify_or_queue( array $affected_group_ids, string $ch
         return;
     }
 
-    $pending_count = spp_sa2_queue_pending_notify( $affected_group_ids, $group_moves );
+    $pending_count = spp_sa2_queue_pending_notify( $affected_group_ids, $group_moves, $action_label );
     echo '<div class="box box-warn">Schedule is published -- <strong>' . count( $affected_group_ids ) . ' group(s) queued for notification</strong> ('
        . $pending_count . ' group(s) pending in total). No emails sent yet -- make any further adjustments, then use '
        . '<strong>"Send Pending Notifications"</strong> at the top of the menu once you\'re done, so anyone affected '
