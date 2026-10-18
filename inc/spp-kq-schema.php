@@ -1,8 +1,14 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Live Event Schema
-   Version: 1.8.0
-   Date: 2026-09-20
+   Version: 1.8.1
+   Date: 2026-10-18
+
+   Changes from 1.8.0: the five table-name helpers at the bottom pass
+   their name through apply_filters( 'spp_kq_table_name', $name, $key )
+   so tests/spp-kq-end-reopen-test.php can point the live runner at
+   throwaway zz tables. No filter is registered in production; names
+   are unchanged. No schema change -- SPP_KQ_DB_VERSION stays 1.8.0.
 
    Changes from 1.7.0 (serve-first indicator -- real usage feedback,
    reviewed and approved; see inc/spp-kq-live.php's own changelog for
@@ -377,21 +383,21 @@ add_action( 'after_setup_theme', 'spp_kq_create_tables' );
  */
 function spp_kq_events_table() {
     global $wpdb;
-    return $wpdb->prefix . 'spp_kq_events';
+    return apply_filters( 'spp_kq_table_name', $wpdb->prefix . 'spp_kq_events', 'events' );
 }
 function spp_kq_assignments_table() {
     global $wpdb;
-    return $wpdb->prefix . 'spp_kq_assignments';
+    return apply_filters( 'spp_kq_table_name', $wpdb->prefix . 'spp_kq_assignments', 'assignments' );
 }
 function spp_kq_scores_table() {
     global $wpdb;
-    return $wpdb->prefix . 'spp_kq_scores';
+    return apply_filters( 'spp_kq_table_name', $wpdb->prefix . 'spp_kq_scores', 'scores' );
 }
 function spp_kq_history_table() {
     global $wpdb;
-    return $wpdb->prefix . 'spp_kq_history';
+    return apply_filters( 'spp_kq_table_name', $wpdb->prefix . 'spp_kq_history', 'history' );
 }
 function spp_kq_checkins_table() {
     global $wpdb;
-    return $wpdb->prefix . 'spp_kq_checkins';
+    return apply_filters( 'spp_kq_table_name', $wpdb->prefix . 'spp_kq_checkins', 'checkins' );
 }

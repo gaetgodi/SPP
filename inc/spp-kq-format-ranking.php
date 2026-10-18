@@ -1,8 +1,18 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Format Rankings
-   Version: 1.4.0
-   Date: 2026-09-26
+   Version: 1.5.0
+   Date: 2026-10-18
+
+   Changes from 1.4.0 -- End Event's finalization is now deferred to
+   after midnight (inc/spp-kq-end-reopen.php 1.0.0), so an ended
+   same-day sibling may not be archived yet when another session's pass
+   runs. spp_kq_get_same_day_excused() now also treats a 'complete'
+   sibling whose finalization is still pending (spp_kq_end_finalize_
+   pending()) as "still to play" -- its confirmed registrants are
+   excused, exactly as before End was deferred. Finalized siblings are
+   excused through spp_kq_history as before. Called only from the
+   finalization run, which is the only caller of this file's entry point.
 
    Changes from 1.3.0 -- same-day sibling sessions (reviewed and
    approved). The inactivity pass treated each OCCURRENCE as its own
@@ -358,15 +368,25 @@ function spp_kq_get_same_day_excused( int $occurrence_id, string $source, string
     }
 
     $category = ( $source === 'ace' ) ? 2 : 3; // spp_kq_category_source()'s mapping, reversed
-    $pending  = $wpdb->get_col( $wpdb->prepare(
-        "SELECT v.occurrence_id
+    // 1.5.0: an ended sibling still waiting for its deferred finalization
+    // (inc/spp-kq-end-reopen.php) hasn't been archived or processed yet,
+    // so it counts as still to play, same as an unfinished one.
+    $siblings = $wpdb->get_results( $wpdb->prepare(
+        "SELECT v.occurrence_id, e.phase
          FROM {$wpdb->prefix}gl_events_v v
          LEFT JOIN " . spp_kq_events_table() . " e ON e.occurrence_id = v.occurrence_id
          WHERE v.eff_category_id = %d AND v.event_date = %s AND v.cancelled = 0
            AND v.occurrence_id <> %d
-           AND ( e.phase IS NULL OR e.phase NOT IN ('complete','cancelled') )",
+           AND ( e.phase IS NULL OR e.phase <> 'cancelled' )",
         $category, $event_date, $occurrence_id
-    ) );
+    ), ARRAY_A );
+    $pending = array();
+    foreach ( $siblings as $row ) {
+        if ( $row['phase'] === 'complete' && ! spp_kq_end_finalize_pending( (int) $row['occurrence_id'] ) ) {
+            continue;
+        }
+        $pending[] = (int) $row['occurrence_id'];
+    }
     foreach ( $pending as $sibling ) {
         foreach ( spp_kq_confirmed_user_ids( (int) $sibling ) as $uid ) {
             $excused[ $uid ] = true;
