@@ -1,8 +1,28 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Screens
-   Version: 1.35.0
-   Date: 2026-09-27
+   Version: 1.36.0
+   Date: 2026-10-18
+
+   Changes from 1.35.0 -- End Event confirmation + Reopen (see
+   inc/spp-kq-end-reopen.php 1.0.0 for the full design):
+   - The Overview's one-click End Event (confirm()) is replaced by
+     spp_kq_render_end_confirm(): a warning (no more rounds; how much of
+     the current round has no score; scores can't be corrected after;
+     results go out after midnight; reopen possible today) and a box
+     where the moderator types END.
+   - 'end_event' now also requires spp_kq_end_confirm (END, any case,
+     trimmed) and a current spp_kq_end_gen, checked server-side, and
+     re-checks spp_kq_can_facilitate(). It only ends the event and
+     records who/when; history, recap emails, Club Ratings, format
+     rankings and the membership rebuild run after midnight from
+     spp_kq_finalize_due_events().
+   - New 'reopen_event' case -> spp_kq_reopen_event(): same gate as End,
+     same local day only.
+   - Complete screen shows spp_kq_render_ended_panel() under "Event
+     complete.": ended at/by, earlier reopen, and Reopen while allowed.
+   - 'cancel_event' calls spp_kq_run_event_finalization() -- the same
+     steps it ran inline before, moved, not changed.
 
    Changes from 1.34.0 -- Swap Positions on a played round, from the
    Full Scoreboard's "Fix a round" panel:
@@ -1810,6 +1830,8 @@ function spp_kq_styles() : string {
         .kq-action-row { display:flex; gap:10px; margin-top:16px; }
         .kq-action-row-right { justify-content:flex-end; }
         .kq-inline-form { display:inline-block; }
+        .kq-end-confirm > summary::-webkit-details-marker { display:none; }
+        .kq-end-confirm > summary::marker { content:none; }
         .kq-picker-list { display:flex; flex-direction:column; gap:8px; }
         .kq-picker-row { display:flex; align-items:center; gap:4px; padding:10px 10px; border:1px solid #ddd; border-radius:8px; text-decoration:none; color:#222; flex-wrap:wrap; }
         .kq-picker-row:hover { background:#f5f8fc; }
@@ -3106,14 +3128,10 @@ Any Roster Adjust swaps made in round {$round} will need to be redone." ); ?>)) 
     <?php endif; ?>
 
     <?php if ( $scores_exist ) : ?>
-    <div class="kq-action-row kq-action-row-right">
-        <form method="post" class="kq-inline-form" onsubmit="return confirm('End the event now? This closes the day — no more rounds.');">
-            <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
-            <input type="hidden" name="spp_kq_action" value="end_event">
-            <input type="hidden" name="spp_kq_round" value="<?php echo esc_attr( $round ); ?>">
-            <button type="submit" class="kq-btn kq-btn-secondary">End Event</button>
-        </form>
-    </div>
+        <?php
+        // 1.36.0: typed-END confirmation (inc/spp-kq-end-reopen.php).
+        echo spp_kq_render_end_confirm( $occurrence_id, $round );
+        ?>
     <?php endif; ?>
     <?php
     return ob_get_clean();
@@ -3619,6 +3637,7 @@ function spp_kq_render_complete_screen( int $occurrence_id, int $round ) : strin
     <?php if ( $winner ) : ?>
         <p class="kq-meta">Final round winners (Aces): <strong><?php echo esc_html( $winner ); ?></strong></p>
     <?php endif; ?>
+    <?php echo spp_kq_render_ended_panel( $occurrence_id ); // 1.36.0: who/when + Reopen ?>
     <?php echo spp_kq_render_photo_prompt( $occurrence_id ); ?>
     <?php echo spp_kq_render_scoreboard_link( $occurrence_id, false ); ?>
     <?php
@@ -3785,6 +3804,13 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date, ?st
             return ( ! $r['won'] && $r['error'] ) ? $r['error'] : '';
 
         case 'end_event':
+            // 1.36.0: typed confirmation + deferred finalization -- see
+            // inc/spp-kq-end-reopen.php's header. Gate re-checked here too
+            // (the dispatchers already check it) so this case is safe on
+            // its own.
+            if ( ! spp_kq_can_facilitate() ) {
+                return 'You do not have permission to do that.';
+            }
             // Same gate the Overview screen's own button visibility
             // enforces (see spp_kq_render_overview_screen()) -- must
             // match what the UI offers, re-checked here so a crafted or
@@ -3793,81 +3819,48 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date, ?st
             if ( ! spp_kq_has_any_recorded_score( $occurrence_id ) ) {
                 return 'End Event isn\'t available yet -- no scores have been recorded for this event.';
             }
-            $r = spp_kq_transition_end_event( $occurrence_id, $round );
+            if ( ! spp_kq_end_confirm_matches( $_POST['spp_kq_end_confirm'] ?? '' ) ) {
+                return 'The event was not ended. To end it, type END in the box.';
+            }
+            $end_gen = isset( $_POST['spp_kq_end_gen'] ) ? intval( $_POST['spp_kq_end_gen'] ) : -1;
+            $r = spp_kq_end_event_confirmed( $occurrence_id, $round, $event_date, get_current_user_id(), $end_gen );
             if ( ! $r['won'] ) {
-                return '';
+                return $r['error'] ?? '';
             }
-            // 1.24.0: permanent history archive (spp_kq_history) now runs
-            // FIRST, before Club Rating/format rankings -- spp_kq_get_
-            // final_courts() (inc/spp-kq-format-ranking.php) reads a
-            // player's final court from spp_kq_history, not the live
-            // spp_kq_scores/spp_kq_assignments tables, so that table must
-            // already hold THIS occurrence's rows by the time format
-            // rankings run. Club Rating is unaffected by this reordering
-            // either way (spp_kq_build_club_rating_games() has always
-            // read the live tables, never spp_kq_history). Same trigger
-            // point/pre-launch guard for all three either way; only the
-            // ORDER changed, not what runs. 'cancel_event' below calls
-            // all three this exact same way -- any round that had
-            // already reported before a cancellation is still real data,
-            // worth archiving/rating/ranking exactly as if the event had
-            // ended normally.
-            $history_notice = spp_kq_finalize_event_history_and_recap( $occurrence_id, $event_date );
-            // Stage 4: automatic Club Rating publish on a successful
-            // transition only -- spp_kq_maybe_publish_to_club_ratings()
-            // (inc/spp-kq-club-rating.php) owns the pre-launch date guard
-            // and the source ('ace'/'queen') resolution; this dispatcher
-            // has no rating-engine knowledge of its own.
-            $rating_result = spp_kq_maybe_publish_to_club_ratings( $occurrence_id, $event_date );
-            // Ace/Queen of the Courts format rankings (inc/spp-kq-format-
-            // ranking.php) -- same trigger point and pre-launch guard as
-            // the Club Rating publish just above, but a completely
-            // separate, independent-decay-average concern of its own;
-            // see that file's own header for the full design.
-            $format_result = spp_kq_update_format_rankings( $occurrence_id, $event_date );
-            // 1.19.0: membership/Master/Masterlist{year}/Membershiplist{year}
-            // are wholesale-rebuilt snapshot tables (spp_create_membership_
-            // table(), inc/spp-create-membership-table.php) that pivot
-            // usermeta (spp_glicko_rating et al) into the tables reports
-            // actually read from -- every existing caller of that rebuild
-            // is ladder-pipeline-specific, so a KQ-driven rating change
-            // never used to propagate there until some UNRELATED ladder
-            // action next happened to trigger a rebuild. Only called when
-            // 'published' is true -- usermeta genuinely changed (not the
-            // pre-launch-date/no-games/aborted/not-enough-established
-            // paths, none of which touch usermeta) -- so a sandbox/test
-            // event that correctly skipped publishing never triggers a
-            // rebuild for nothing. Safe to call synchronously here: no
-            // ladder-pipeline-specific assumption in its own implementation
-            // (pure usermeta+users pivot, occurrence-agnostic), same
-            // full-table-rebuild cost the ladder's own pipeline already
-            // accepts synchronously today (spp-apply-override-to-results-
-            // table.php).
-            if ( $rating_result['published'] || $format_result['updated'] ) {
-                spp_create_membership_table();
+            // History, recap emails, Club Ratings, format rankings and the
+            // membership rebuild used to run right here; they now run
+            // after midnight (spp_kq_finalize_due_events()), once Reopen
+            // is no longer possible.
+            return SPP_KQ_NOTICE_OK_PREFIX . 'Event ended. Ended by mistake? You can reopen it until midnight tonight.';
+
+        case 'reopen_event':
+            // 1.36.0: same gate as End. Same-day rule, CAS and double-click
+            // handling live in spp_kq_reopen_event() (inc/spp-kq-end-
+            // reopen.php).
+            if ( ! spp_kq_can_facilitate() ) {
+                return 'You do not have permission to do that.';
             }
-            return trim( $rating_result['notice'] . ( $format_result['notice'] !== '' ? ' ' . $format_result['notice'] : '' ) . ( $history_notice !== '' ? ' ' . $history_notice : '' ) );
+            $ended_at = isset( $_POST['spp_kq_ended_at'] ) ? intval( $_POST['spp_kq_ended_at'] ) : 0;
+            $r = spp_kq_reopen_event( $occurrence_id, get_current_user_id(), $ended_at );
+            if ( ! $r['won'] ) {
+                return $r['error'] ?? '';
+            }
+            return SPP_KQ_NOTICE_OK_PREFIX . "Event reopened -- back to Round {$r['round']}.";
 
         case 'cancel_event':
             $r = spp_kq_transition_cancel_event( $occurrence_id, $round );
             if ( ! $r['won'] ) {
                 return '';
             }
-            // Same trigger point, same call pattern, same ORDER as
-            // 'end_event' above (see that case's own 1.24.0 comment for
-            // why history archival now runs first) -- any round that had
-            // already reported before a cancellation is still real data,
-            // worth archiving/rating/ranking exactly as if the event had
-            // ended normally. See inc/spp-kq-history.php's own header:
-            // cancel_event and end_event both trigger this, differing
-            // only in which CAS transition got them here.
-            $history_notice = spp_kq_finalize_event_history_and_recap( $occurrence_id, $event_date );
-            $rating_result = spp_kq_maybe_publish_to_club_ratings( $occurrence_id, $event_date );
-            $format_result = spp_kq_update_format_rankings( $occurrence_id, $event_date );
-            if ( $rating_result['published'] || $format_result['updated'] ) {
-                spp_create_membership_table();
-            }
-            return trim( $rating_result['notice'] . ( $format_result['notice'] !== '' ? ' ' . $format_result['notice'] : '' ) . ( $history_notice !== '' ? ' ' . $history_notice : '' ) );
+            // Unchanged behavior: Cancel still finalizes immediately (no
+            // Reopen for a cancelled event). Same steps, same ORDER End
+            // used to run inline -- history archival first (format
+            // rankings read it), then Club Ratings, format rankings and
+            // the membership rebuild; any round that had already
+            // reported before a cancellation is still real data. 1.36.0:
+            // the sequence itself moved to spp_kq_run_event_finalization()
+            // (inc/spp-kq-end-reopen.php), shared with End's deferred run.
+            return spp_kq_run_event_finalization( $occurrence_id, $event_date );
 
         case 'complete_draw_randomly':
             // 1.17.0 -- see spp_kq_complete_draw_randomly()'s own
