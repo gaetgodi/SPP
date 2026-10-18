@@ -1,8 +1,36 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Screens
-   Version: 1.36.1
+   Version: 1.37.0
    Date: 2026-10-18
+
+   Changes from 1.36.1 -- score entry and correction (inc/spp-kq-fix.php
+   1.0.0 has the logic and the Fix a mistake screen):
+   - In-Play: Save All button (spp_kq_submit_scores_bulk AJAX) next to
+     the per-court Save buttons, which stay. Score problems now show
+     calmly under the court instead of a red banner; red is kept for
+     real failures (network, server refusal of the whole request).
+   - "Fix a mistake" link on In-Play, Overview and Full Scoreboard.
+     ?kq_view=fix renders spp_kq_render_fix_screen(); inside the live app
+     the link opens it as an overlay through the scoreboard fragment
+     endpoint (kq_view=fix), so sound/timers survive. New
+     SppKqLiveApp.notify(): a dismissible result line above the game
+     screen (#kq-app-notice) that survives fragment swaps.
+   - spp_kq_correct_score AJAX now goes through spp_kq_correct_score_
+     with_followup(): the round after it is set up again if nobody has
+     played it and its courts would change; a played round is never
+     touched, and the reply says what happened in one line.
+   - 'past_swap_positions' does the same follow-up and returns a success
+     notice; the Full Scoreboard's "Rebuild Round N+1 now" prompt after a
+     swap is gone (done automatically when allowed).
+   - 'reset_round'/'rebuild_round'/'void_round' return a success notice
+     when they win (still '' for a lost race); wp_ajax_spp_kq_live_action
+     now returns that notice as data.notice.
+   - Full Scoreboard's Rebuild list only offers the current round while
+     it has no score (Rebuild refuses played rounds, inc/spp-kq-live.php
+     1.16.0).
+   - Complete screen and an ended event's scoreboard: spp_kq_render_
+     ended_fix_note() (no corrections while ended; Reopen or admin).
 
    Changes from 1.36.0: End's success notice says how long Reopen is
    available ("You can reopen it until 4:42 pm") -- the window is now
@@ -3132,6 +3160,7 @@ Any Roster Adjust swaps made in round {$round} will need to be redone." ); ?>)) 
     </script>
     <?php endif; ?>
 
+    <?php if ( $scores_exist ) echo spp_kq_render_fix_link(); // 1.37.0 ?>
     <?php if ( $scores_exist ) : ?>
         <?php
         // 1.36.0: typed-END confirmation (inc/spp-kq-end-reopen.php).
@@ -3219,9 +3248,18 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round, ?int $rou
                     <button type="button" class="kq-btn kq-btn-primary kq-save-score-btn">Save Score</button>
                     <span class="kq-saved" style="display:none;">Saved &#10003;</span>
                 </div>
+                <p class="kq-hint kq-court-msg" style="margin:6px 0 0;display:none;"></p>
             <?php endif; ?>
         </div>
     <?php endforeach; ?>
+
+    <?php // 1.37.0: Save All -- see spp_kq_save_scores_bulk() (inc/spp-kq-fix.php). ?>
+    <div class="kq-action-row" style="align-items:center;flex-wrap:wrap;">
+        <button type="button" class="kq-btn kq-btn-primary" id="kq-save-all-btn">Save All</button>
+        <span class="kq-hint" id="kq-save-all-msg" style="margin:0;"></span>
+    </div>
+    <p class="kq-hint" style="margin:6px 0 14px;">Save All saves every court with both scores filled in. Empty courts are left for later.</p>
+    <?php echo spp_kq_render_fix_link(); ?>
 
     <script>
     (function() {
@@ -3465,25 +3503,34 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round, ?int $rou
             // nothing to wire up for it.
             if (!redInput || !blackInput || !saveBtn) return;
 
+            var courtMsg = card.querySelector('.kq-court-msg');
+            function setCourtMsg(text) {
+                if (!courtMsg) return;
+                courtMsg.textContent = text || '';
+                courtMsg.style.display = text ? 'block' : 'none';
+            }
             function updateSaveState() {
                 if (!saveBtn) return;
                 var r = redInput.value, b = blackInput.value;
-                if (r === '' || b === '') { saveBtn.disabled = true; return; }
+                if (r === '' || b === '') { saveBtn.disabled = true; setCourtMsg(''); return; }
                 var rn = parseInt(r, 10), bn = parseInt(b, 10);
-                // Same rules, same order, as spp_kq_submit_court_score()'s
-                // server-side checks -- this is immediate feedback only,
-                // the server re-validates independently regardless.
+                // Same rules as the server (spp_kq_score_entry_problem());
+                // 1.37.0: shown calmly under this court, not as a red banner.
                 if (rn === 11 && bn === 11) {
                     saveBtn.disabled = true;
-                    showMsg("11-11 isn't possible -- the game ends the instant either team reaches 11. Please double-check.", false);
+                    setCourtMsg("Both teams can't have 11: the game ends when one team reaches 11.");
                 } else if (rn === bn) {
                     saveBtn.disabled = true;
-                    showMsg("Scores can't be tied -- games are extended by a point specifically to avoid this.", false);
+                    setCourtMsg("The scores can't be equal: one team has to win.");
+                } else if (rn < 0 || rn > 11 || bn < 0 || bn > 11) {
+                    saveBtn.disabled = true;
+                    setCourtMsg('Scores go from 0 to 11.');
                 } else {
                     saveBtn.disabled = false;
-                    if (msgEl) msgEl.style.display = 'none';
+                    setCourtMsg('');
                 }
             }
+            card.kqSetMsg = setCourtMsg;
 
             redInput.addEventListener('input', updateSaveState);
             blackInput.addEventListener('input', updateSaveState);
@@ -3512,7 +3559,7 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round, ?int $rou
                     .then(function(res) {
                         updateSaveState();
                         if (!res.success) {
-                            showMsg(res.data || 'Save failed.', false);
+                            setCourtMsg(res.data || 'Not saved. Please try again.');
                             return;
                         }
                         if (res.data.applied === false) {
@@ -3522,7 +3569,7 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round, ?int $rou
                             // the inputs to the actual current values instead.
                             if (res.data.red_score !== null) redInput.value = res.data.red_score;
                             if (res.data.black_score !== null) blackInput.value = res.data.black_score;
-                            showMsg('A newer entry for this court was already saved -- showing the current value.', true);
+                            setCourtMsg('A newer score was already saved for this court. Showing it now.');
                         } else {
                             savedTag.style.display = 'inline';
                         }
@@ -3557,6 +3604,70 @@ function spp_kq_render_in_play_screen( int $occurrence_id, int $round, ?int $rou
         // OWN save-button click resolved, or a full fragment swap
         // happened to occur for an unrelated reason -- root cause: the
         // poll payload simply never carried per-court values at all).
+        // 1.37.0: Save All -- one request for every filled-in court. The
+        // server validates and saves each court on its own (spp_kq_save_
+        // scores_bulk()); problems come back per court and are shown in
+        // place. Blank courts are skipped.
+        var saveAllBtn = document.getElementById('kq-save-all-btn');
+        var saveAllMsg = document.getElementById('kq-save-all-msg');
+        if (saveAllBtn) {
+            saveAllBtn.addEventListener('click', function() {
+                if (saveAllBtn.disabled) return;
+                var entries = {};
+                var count = 0;
+                document.querySelectorAll('.kq-court-card').forEach(function(card) {
+                    var ri = card.querySelector('.kq-court-red-input');
+                    var bi = card.querySelector('.kq-court-black-input');
+                    if (!ri || !bi) return;
+                    if (ri.value === '' && bi.value === '') return;
+                    entries[card.dataset.court] = { red: ri.value, black: bi.value };
+                    count++;
+                });
+                if (!count) { saveAllMsg.textContent = 'Nothing to save yet: no scores filled in.'; return; }
+                saveAllBtn.disabled = true;
+                saveAllMsg.textContent = 'Saving\u2026';
+                var data = new FormData();
+                data.append('action', 'spp_kq_submit_scores_bulk');
+                data.append('nonce', nonce);
+                data.append('occ', occ);
+                data.append('round', renderedRound);
+                data.append('entries', JSON.stringify(entries));
+                data.append('client_ts', Date.now());
+                fetch(ajaxUrl, { method: 'POST', body: data, credentials: 'same-origin' })
+                    .then(function(r) { return r.json(); })
+                    .then(function(res) {
+                        saveAllBtn.disabled = false;
+                        if (!res.success) { saveAllMsg.textContent = ''; showMsg(res.data || 'Not saved. Please try again.', false); return; }
+                        var d = res.data;
+                        document.querySelectorAll('.kq-court-card').forEach(function(card) {
+                            var r = d.results[card.dataset.court];
+                            if (!r) return;
+                            var tag = card.querySelector('.kq-saved');
+                            if (r.status === 'saved') {
+                                if (r.red_score !== undefined && r.red_score !== null) card.querySelector('.kq-court-red-input').value = r.red_score;
+                                if (r.black_score !== undefined && r.black_score !== null) card.querySelector('.kq-court-black-input').value = r.black_score;
+                                if (tag) tag.style.display = 'inline';
+                                if (card.kqSetMsg) card.kqSetMsg(r.message || '');
+                            } else if (r.status === 'problem') {
+                                if (tag) tag.style.display = 'none';
+                                if (card.kqSetMsg) card.kqSetMsg(r.message);
+                            }
+                        });
+                        var parts = [];
+                        if (d.saved) parts.push('Saved ' + d.saved + (d.saved === 1 ? ' court.' : ' courts.'));
+                        if (d.problems) parts.push(d.problems + (d.problems === 1 ? ' court needs' : ' courts need') + ' a look (see below the court).');
+                        saveAllMsg.textContent = parts.join(' ');
+                        if (progressEl) progressEl.textContent = d.reported + ' of ' + d.total + ' courts reported';
+                        if (d.total > 0 && d.reported === d.total) markRoundComplete();
+                    })
+                    .catch(function() {
+                        saveAllBtn.disabled = false;
+                        saveAllMsg.textContent = '';
+                        showMsg('Network problem: please try Save All again.', false);
+                    });
+            });
+        }
+
         window.SppKqLiveApp.onProgress = function(reported, total, scores) {
             if (progressEl) progressEl.textContent = reported + ' of ' + total + ' courts reported';
             if (scores) {
@@ -3643,6 +3754,7 @@ function spp_kq_render_complete_screen( int $occurrence_id, int $round ) : strin
         <p class="kq-meta">Final round winners (Aces): <strong><?php echo esc_html( $winner ); ?></strong></p>
     <?php endif; ?>
     <?php echo spp_kq_render_ended_panel( $occurrence_id ); // 1.36.0: who/when + Reopen ?>
+    <?php echo spp_kq_render_ended_fix_note( $occurrence_id ); // 1.37.0 ?>
     <?php echo spp_kq_render_photo_prompt( $occurrence_id ); ?>
     <?php echo spp_kq_render_scoreboard_link( $occurrence_id, false ); ?>
     <?php
@@ -3773,7 +3885,11 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date, ?st
             // every other transition here.
             $target = isset( $_POST['spp_kq_reset_target'] ) ? intval( $_POST['spp_kq_reset_target'] ) : 0;
             $r = spp_kq_transition_reset_round( $occurrence_id, $round, $target );
-            return ( ! $r['won'] && $r['error'] ) ? $r['error'] : '';
+            if ( $r['won'] ) {
+                // 1.37.0: say what happened (Fix a mistake shows it).
+                return SPP_KQ_NOTICE_OK_PREFIX . "Round {$target} will be played again on the same courts. Its scores were cleared and the rounds after it removed. Start it when everyone is ready.";
+            }
+            return $r['error'] ?? '';
 
         case 'rebuild_round':
             // 1.32.0: any facilitator. The expected round + courts_
@@ -3784,7 +3900,10 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date, ?st
             $expected_raw = isset( $_POST['spp_kq_expected_announced'] ) ? sanitize_text_field( wp_unslash( $_POST['spp_kq_expected_announced'] ) ) : '';
             $expected_ann = ( $expected_raw === '' ) ? null : intval( $expected_raw );
             $r = spp_kq_transition_rebuild_round( $occurrence_id, $target, $round, $expected_ann );
-            return ( ! $r['won'] && $r['error'] ) ? $r['error'] : '';
+            if ( $r['won'] ) {
+                return SPP_KQ_NOTICE_OK_PREFIX . "Round {$target} has been set up again with new courts. Players get them after the short rest.";
+            }
+            return $r['error'] ?? '';
 
         case 'void_round':
             // 1.32.0: moved here from its own AJAX endpoint so the Full
@@ -3793,7 +3912,10 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date, ?st
             // transition, which now refuses a scoreless round.
             $target = isset( $_POST['spp_kq_target_round'] ) ? intval( $_POST['spp_kq_target_round'] ) : 0;
             $r = spp_kq_transition_void_round( $occurrence_id, $target, get_current_user_id() );
-            return ( ! $r['won'] && $r['error'] ) ? $r['error'] : '';
+            if ( $r['won'] ) {
+                return SPP_KQ_NOTICE_OK_PREFIX . "Round {$target} and the rounds after it no longer count. You can set the round up again to replay it, or end the event.";
+            }
+            return $r['error'] ?? '';
 
         case 'start_play':
             // 1.10.0: facilitator-set match-timer length, locked in for
@@ -4005,7 +4127,14 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date, ?st
             $past_a      = isset( $_POST['spp_kq_swap_pos_user_a'] ) ? absint( $_POST['spp_kq_swap_pos_user_a'] ) : 0;
             $past_b      = isset( $_POST['spp_kq_swap_pos_user_b'] ) ? absint( $_POST['spp_kq_swap_pos_user_b'] ) : 0;
             $past_result = spp_kq_swap_positions_past_round( $occurrence_id, $past_target, $round, $past_a, $past_b );
-            return $past_result['success'] ? '' : ( $past_result['error'] ?? '' );
+            if ( ! $past_result['success'] ) {
+                return $past_result['error'] ?? '';
+            }
+            // 1.37.0: the next round is set up again only if nobody has
+            // played it; a played round is never touched (spp_kq_next_
+            // round_followup(), inc/spp-kq-fix.php).
+            $swap_follow = spp_kq_next_round_followup( $occurrence_id, $past_target, 'swap' );
+            return SPP_KQ_NOTICE_OK_PREFIX . trim( "Players swapped in Round {$past_target}." . ( $past_result['had_scores'] ? ' The scores stay the same.' : '' ) . ' ' . $swap_follow['message'] );
 
         case 'roster_fill_slot':
             // 1.1.0 -- re-staffs one EMPTY slot on a court
@@ -4521,10 +4650,38 @@ function spp_kq_render_live_app( int $occurrence_id, array $state ) : string {
         // never a real transition (BUG 2 fix, see swapFragment()'s own
         // comment) -- isTransition=false here, unconditionally, is what
         // that link means every time it's pressed.
+        // 1.37.0: a calm result line that stays above the game screen
+        // until dismissed, so a Fix a mistake result survives the screen
+        // changing underneath it (e.g. a round set up again).
+        function notify(text) {
+            var el = document.getElementById('kq-app-notice');
+            if (!el) return;
+            el.innerHTML = '';
+            if (!text) { el.style.display = 'none'; return; }
+            var span = document.createElement('span');
+            span.textContent = text + ' ';
+            var x = document.createElement('a');
+            x.href = '#';
+            x.textContent = 'OK';
+            x.style.marginLeft = '6px';
+            x.addEventListener('click', function(e) { e.preventDefault(); el.style.display = 'none'; });
+            el.appendChild(span);
+            el.appendChild(x);
+            el.style.display = 'block';
+        }
+        // 1.37.0: "Fix a mistake" links open as an overlay like the scoreboard.
+        document.addEventListener('click', function(e) {
+            var a = e.target.closest ? e.target.closest('.kq-fix-link') : null;
+            if (!a) return;
+            e.preventDefault();
+            showScoreboard({ kq_view: 'fix' });
+        });
+
         window.SppKqLiveApp = {
             refreshNow: function() { swapFragment(false); },
             wireAjaxForm: wireAjaxForm,
             showScoreboard: showScoreboard,
+            notify: notify,
             onProgress: null,
             cleanup: null
         };
@@ -4609,6 +4766,7 @@ function spp_kq_render_live_app( int $occurrence_id, array $state ) : string {
         pollInterval = setInterval(poll, 2500);
     })();
     </script>
+    <div id="kq-app-notice" class="kq-status" style="display:none;"></div>
     <div id="kq-live-app">
         <?php echo spp_kq_render_live_fragment( $occurrence_id )['html']; ?>
     </div>
@@ -4671,6 +4829,7 @@ function spp_kq_live_shortcode() : string {
     $kq_view = isset( $_GET['kq_view'] ) ? sanitize_key( wp_unslash( $_GET['kq_view'] ) ) : '';
     $viewing_scoreboard = ( $kq_view === 'scoreboard' );
     $viewing_roster      = ( $kq_view === 'roster' );
+    $viewing_fix         = ( $kq_view === 'fix' ); // 1.37.0
 
     ob_start();
     echo spp_kq_styles();
@@ -4685,11 +4844,13 @@ function spp_kq_live_shortcode() : string {
     // $viewing_roster toggle (including the "&laquo; Back" link) is
     // completely unaffected -- still rendered here, unconditionally,
     // regardless of phase, exactly as before.
-    if ( $viewing_scoreboard || $viewing_roster || ! in_array( $phase, array( 'complete', 'cancelled' ), true ) ) {
-        echo spp_kq_render_scoreboard_link( $occurrence_id, $viewing_scoreboard );
+    if ( $viewing_scoreboard || $viewing_roster || $viewing_fix || ! in_array( $phase, array( 'complete', 'cancelled' ), true ) ) {
+        echo spp_kq_render_scoreboard_link( $occurrence_id, $viewing_scoreboard || $viewing_fix );
     }
 
-    if ( $viewing_scoreboard ) {
+    if ( $viewing_fix ) {
+        echo spp_kq_render_fix_screen( $occurrence_id );
+    } elseif ( $viewing_scoreboard ) {
         $kq_swapped = isset( $_GET['kq_swapped'] ) ? absint( $_GET['kq_swapped'] ) : 0;
         echo spp_kq_render_full_scoreboard_screen( $occurrence_id, $kq_swapped );
     } elseif ( $viewing_roster ) {
@@ -4792,10 +4953,12 @@ function spp_kq_render_full_scoreboard_screen( int $occurrence_id, int $swapped_
     $rebuild_rounds = array();
     $void_rounds    = array();
     if ( $in_progress ) {
-        for ( $n = $current_round; $n >= SPP_KQ_REBUILD_ROUND_MIN; $n-- ) {
-            if ( spp_kq_round_is_complete( $occurrence_id, $n - 1 ) ) {
-                $rebuild_rounds[] = $n;
-            }
+        // 1.37.0: only the current round, and only while it has no score
+        // -- a played round is never rebuilt (inc/spp-kq-live.php 1.16.0).
+        if ( $current_round >= SPP_KQ_REBUILD_ROUND_MIN
+            && ! spp_kq_round_has_any_score( $occurrence_id, $current_round )
+            && spp_kq_round_is_complete( $occurrence_id, $current_round - 1 ) ) {
+            $rebuild_rounds[] = $current_round;
         }
         for ( $n = $current_round; $n >= SPP_KQ_VOID_ROUND_MIN; $n-- ) {
             if ( spp_kq_get_round_progress( $occurrence_id, $n )['reported'] > 0 ) {
@@ -4810,9 +4973,9 @@ function spp_kq_render_full_scoreboard_screen( int $occurrence_id, int $swapped_
     // after it, offered only when Rebuild itself would accept it.
     $swap_rounds    = $in_progress ? spp_kq_get_past_swap_rounds( $occurrence_id, $current_round ) : array();
     $just_swapped   = ( $in_progress && $swapped_round >= 1 && $swapped_round <= $current_round ) ? $swapped_round : 0;
-    $rebuild_prompt = ( $just_swapped && $just_swapped < $current_round && spp_kq_round_is_complete( $occurrence_id, $just_swapped ) )
-        ? $just_swapped + 1
-        : 0;
+    // 1.37.0: the next round is now set up again automatically when
+    // nobody has played it (spp_kq_next_round_followup()), so no prompt.
+    $rebuild_prompt = 0;
 
     ob_start();
     ?>
@@ -4826,16 +4989,24 @@ function spp_kq_render_full_scoreboard_screen( int $occurrence_id, int $swapped_
     // of a not-yet-played event, not a "something's missing" read.
     ?>
     <?php echo spp_kq_render_scoreboard_markup( $scoreboard, 'No scores entered yet.', $editable, $occurrence_id ); ?>
+    <?php
+    // 1.37.0
+    if ( $in_progress ) {
+        echo spp_kq_render_fix_link();
+    } elseif ( $state && in_array( $state['phase'], array( 'complete', 'cancelled' ), true ) ) {
+        echo spp_kq_render_ended_fix_note( $occurrence_id );
+    }
+    ?>
 
     <?php if ( $rebuild_rounds || $void_rounds || $swap_rounds || $just_swapped ) : ?>
     <div class="kq-round-actions" id="kq-round-actions">
         <h3 class="kq-picker-section-heading">Fix a round</h3>
-        <p class="kq-hint">Correcting a score above only changes that score. The actions below change whole rounds.</p>
+        <p class="kq-hint">Correcting a score above saves it and, if the next round hasn't been played yet, sets that round up again. Played rounds are never changed. All the options are also on <a class="kq-fix-link" href="<?php echo esc_url( add_query_arg( 'kq_view', 'fix' ) ); ?>">Fix a mistake</a>.</p>
         <div class="kq-notice kq-notice-err" id="kq-round-action-msg" style="display:none;"></div>
 
         <?php if ( $just_swapped ) : ?>
         <div class="kq-notice kq-notice-ok" id="kq-past-swap-done">
-            Positions swapped in round <?php echo esc_html( $just_swapped ); ?>. Scores are unchanged.
+            Players swapped in Round <?php echo esc_html( $just_swapped ); ?>. Scores are unchanged.
             <?php if ( $rebuild_prompt ) : ?>
                 <br>Round <?php echo esc_html( $rebuild_prompt ); ?> was set up from the old round <?php echo esc_html( $just_swapped ); ?> lineup.
                 <form method="post" class="kq-inline-form kq-round-action-form" data-kind="rebuild" style="margin-top:8px;">
@@ -4968,10 +5139,11 @@ function spp_kq_render_full_scoreboard_screen( int $occurrence_id, int $swapped_
                             if (msgEl) { msgEl.textContent = res.data || 'That didn\'t work.'; msgEl.style.display = 'block'; msgEl.scrollIntoView({ block: 'center' }); }
                             return;
                         }
-                        // Re-render the scoreboard with the success notice
-                        // (and the Rebuild prompt, when there's a later round).
+                        // 1.37.0: the server's result line (incl. what happened
+                        // to the next round) stays above the game screen.
                         if (window.SppKqLiveApp && SppKqLiveApp.showScoreboard) {
-                            SppKqLiveApp.showScoreboard({ kq_swapped: n });
+                            if (SppKqLiveApp.notify && res.data && res.data.notice) SppKqLiveApp.notify(res.data.notice);
+                            SppKqLiveApp.showScoreboard();
                         } else {
                             var u = new URL(window.location.href);
                             u.searchParams.set('kq_view', 'scoreboard');
@@ -5264,7 +5436,8 @@ add_action( 'wp_ajax_spp_kq_correct_score', function() {
         wp_send_json_error( 'Missing parameters.' );
     }
 
-    $result = spp_kq_correct_court_score( $occurrence_id, $round, $court_name, $red_score, $black_score, get_current_user_id() );
+    // 1.37.0: + the round-N+1 follow-up (inc/spp-kq-fix.php).
+    $result = spp_kq_correct_score_with_followup( $occurrence_id, $round, $court_name, $red_score, $black_score, get_current_user_id() );
     if ( ! $result['success'] ) {
         wp_send_json_error( $result['error'] );
     }
@@ -5449,6 +5622,10 @@ add_action( 'wp_ajax_spp_kq_render_scoreboard_fragment', function() {
         wp_send_json_error( 'Missing parameters.' );
     }
 
+    // 1.37.0: the same overlay mechanism also serves Fix a mistake.
+    if ( isset( $_POST['kq_view'] ) && $_POST['kq_view'] === 'fix' ) {
+        wp_send_json_success( array( 'html' => spp_kq_render_fix_fragment( $occurrence_id ) ) );
+    }
     // 1.35.0: kq_swapped -- the round a "Fix a round" swap just changed.
     $swapped_round = isset( $_POST['kq_swapped'] ) ? absint( $_POST['kq_swapped'] ) : 0;
     wp_send_json_success( array( 'html' => spp_kq_render_scoreboard_fragment( $occurrence_id, $swapped_round ) ) );
@@ -5504,5 +5681,7 @@ add_action( 'wp_ajax_spp_kq_live_action', function() {
     if ( $notice !== '' && ! str_starts_with( $notice, SPP_KQ_NOTICE_OK_PREFIX ) ) {
         wp_send_json_error( $notice );
     }
-    wp_send_json_success();
+    // 1.37.0: hand back the success text (Fix a mistake shows it); ''
+    // means the action didn't run (stale screen / lost race).
+    wp_send_json_success( array( 'notice' => $notice === '' ? '' : substr( $notice, strlen( SPP_KQ_NOTICE_OK_PREFIX ) ) ) );
 } );

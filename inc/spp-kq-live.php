@@ -1,8 +1,16 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Live Event Runner
-   Version: 1.15.0
-   Date: 2026-09-27
+   Version: 1.16.0
+   Date: 2026-10-18
+
+   Changes from 1.15.0 -- "a game that has been played stays as played":
+   spp_kq_transition_rebuild_round() now refuses when round N or any
+   later round has a real score (checked inside its transaction, FOR
+   UPDATE), instead of deleting played games. Rebuild is therefore only
+   possible for the current round while nobody has scored it. Swap
+   positions in the played round is the tool for "different players
+   actually played" (inc/spp-kq-fix.php 1.0.0). Nothing else changed.
 
    Changes from 1.14.0 -- Swap Positions on a played round: new
    spp_kq_swap_positions_past_round(), the Full Scoreboard "Fix a round"
@@ -1543,6 +1551,20 @@ function spp_kq_transition_rebuild_round( int $occurrence_id, int $target_round,
     if ( $target_round > $current_round ) {
         $wpdb->query( 'ROLLBACK' );
         return array( 'won' => false, 'error' => "Round {$target_round} hasn't been reached yet." );
+    }
+
+    // 1.16.0: a game that has been played stays as played -- never
+    // rebuild (delete) a round that has a score, or any later one.
+    $played_later = (int) $wpdb->get_var( $wpdb->prepare(
+        "SELECT COUNT(*) FROM " . spp_kq_scores_table() . "
+         WHERE occurrence_id = %d AND round_number >= %d
+           AND red_score IS NOT NULL AND black_score IS NOT NULL
+         FOR UPDATE",
+        $occurrence_id, $target_round
+    ) );
+    if ( $played_later > 0 ) {
+        $wpdb->query( 'ROLLBACK' );
+        return array( 'won' => false, 'error' => "Round {$target_round} already has scores, so it stays as played. If different players actually played, use Swap players instead." );
     }
 
     $from_round = $target_round - 1;
