@@ -1,8 +1,13 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Screens
-   Version: 1.36.0
+   Version: 1.36.1
    Date: 2026-10-18
+
+   Changes from 1.36.0: End's success notice says how long Reopen is
+   available ("You can reopen it until 4:42 pm") -- the window is now
+   60 minutes after End, not the rest of the day (inc/spp-kq-end-
+   reopen.php 1.1.0). The End warning/ended panel wording lives there.
 
    Changes from 1.35.0 -- End Event confirmation + Reopen (see
    inc/spp-kq-end-reopen.php 1.0.0 for the full design):
@@ -3828,10 +3833,10 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date, ?st
                 return $r['error'] ?? '';
             }
             // History, recap emails, Club Ratings, format rankings and the
-            // membership rebuild used to run right here; they now run
-            // after midnight (spp_kq_finalize_due_events()), once Reopen
-            // is no longer possible.
-            return SPP_KQ_NOTICE_OK_PREFIX . 'Event ended. Ended by mistake? You can reopen it until midnight tonight.';
+            // membership rebuild used to run right here; they now run once
+            // the 60-minute Reopen window has closed (spp_kq_finalize_due_
+            // events(), 5-minute sweep).
+            return SPP_KQ_NOTICE_OK_PREFIX . 'Event ended. Ended by mistake? You can reopen it until ' . spp_kq_end_when( $r['reopen_until'] ) . '.';
 
         case 'reopen_event':
             // 1.36.0: same gate as End. Same-day rule, CAS and double-click

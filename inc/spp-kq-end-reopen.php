@@ -1,24 +1,46 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — End Event confirmation + Reopen
-   Version: 1.0.0
+   Version: 1.1.0
    Date: 2026-10-18
+
+   Changes from 1.0.0 -- 60-minute window instead of "same Toronto day":
+   - Reopen is allowed until ended_at + 60 minutes (SPP_KQ_REOPEN_WINDOW_
+     SECONDS), checked server-side against the stored reopen_until
+     (written by End as ended_at + 60 min); refused from that second on.
+   - Finalization runs once, at or after reopen_until, from a new
+     5-minute WP-cron sweep ('spp_kq_finalize_sweep', schedule
+     'spp_kq_five_minutes'). The 1.0.0 hourly 'spp_kq_finalize_due'
+     event is unscheduled.
+   - An end-state row with status 'ended' but no reopen_until (written by
+     1.0.0) is never finalized automatically and can't be reopened -- it
+     needs an administrator. None existed at deploy.
+   - A run left 'finalizing' for 15+ minutes (SPP_KQ_FINALIZE_STALL_
+     SECONDS) sends ONE alert email to the site admin_email
+     (spp_kq_send_stall_alert(), stall_alerted_at recorded first, under
+     the lock). The run itself is never retried automatically.
+   - spp_kq_end_finalize_pending() now means "ended, not finalized yet"
+     ('ended' or 'finalizing') -- used by the doubleheader check in
+     inc/spp-kq-format-ranking.php 1.6.0.
+   - Complete screen: "You can reopen until 4:42 pm"; after the window,
+     "Results are being processed" / "Results were processed at …". The
+     page reloads itself when the window closes. End warning wording
+     updated to match.
 
    1.0.0 -- new. A moderator ended a live event by mistake while also
    trying to fix wrongly entered scores; End Event was a one-click
    confirm() and could not be undone.
 
    END (typed confirmation):
-   - The Overview's End Event button now opens a short warning (what
-     ending does, how many courts of the current round have no score)
-     and a box where the moderator must type END (case-insensitive,
-     trimmed). spp_kq_handle_post_actions()'s 'end_event' case checks
-     the typed word server-side (spp_kq_end_confirm_matches()), on top
-     of the existing nonce; anything else ends nothing.
+   - The Overview's End Event button opens a short warning (what ending
+     does, how many courts of the current round have no score) and a
+     box where the moderator must type END (case-insensitive, trimmed).
+     spp_kq_handle_post_actions()'s 'end_event' case checks the typed
+     word server-side (spp_kq_end_confirm_matches()), on top of the
+     nonce; anything else ends nothing.
    - The form also carries spp_kq_end_gen (how many times the event has
      been reopened). A stale End page resubmitted after a Reopen has the
-     old count and is refused, so a browser "resubmit form" can't end
-     the event a second time behind someone's back.
+     old count and is refused.
 
    DEFERRED FINALIZATION -- why:
    End used to run, in the same request: permanent spp_kq_history rows,
@@ -26,40 +48,32 @@
    Ace/Queen format-ranking update (EMA averages + inactivity misses,
    all usermeta) and a membership-table rebuild. None of that can be
    cleanly undone (emails are sent; the format EMA has no snapshot; the
-   Glicko rollback aborts once a later event builds on it). So End now
-   only flips phase organizing -> complete and records who/when; all of
-   the above runs later from spp_kq_finalize_due_events() (hourly
-   WP-cron 'spp_kq_finalize_due'), once the site-local calendar day the
-   event was ended on (America/Toronto) has passed -- i.e. after the
-   Reopen window has closed for good. Reopen therefore only has to flip
-   phase back; nothing else was written. Cancel Event is unchanged
-   (still finalizes immediately, no Reopen).
+   Glicko rollback aborts once a later event builds on it). So End only
+   flips phase organizing -> complete and records who/when; all of the
+   above runs later (spp_kq_run_event_finalization()), once the Reopen
+   window has closed for good. Reopen therefore only has to flip phase
+   back. Cancel Event is unchanged (finalizes immediately, no Reopen).
 
-   REOPEN:
-   - complete -> organizing, same current_round (CAS on both), only on
-     the same local day the event was ended, only for an event ended
-     through this file (an older event already finalized at End time
-     can't be reopened -- the message says to contact the
-     administrator). Same gate as End: spp_kq_can_facilitate().
-   - The form carries the ended_at it was rendered with; a Reopen whose
-     ended_at no longer matches (the event was reopened and ended again)
-     is refused. A second click after a successful Reopen is a silent
-     no-op.
+   REOPEN: complete -> organizing, same current_round (CAS on both),
+   only inside the window, only for an event ended through this file.
+   Same gate as End: spp_kq_can_facilitate(). The form carries the
+   ended_at it was rendered with; a mismatch (ended again since) is
+   refused. A second click after a successful Reopen is a silent no-op.
 
    STORE: one row per occurrence in wp_options, name
    spp_kq_end_state_{occurrence_id}, JSON, autoload off -- read and
    written with direct SQL (never get_option()/update_option(): the
    Redis object cache could hand back a stale copy inside the lock).
    Holds status (ended / reopened / finalizing / finalized), round,
-   event_date, ended_at/ended_by/ended_day, finalize result, and a log
-   of every end/reopen/finalize with user id and time.
+   event_date, ended_at/ended_by/ended_day/reopen_until, finalize
+   result, stall_alerted_at, and a log of every end/reopen/finalize.
 
-   CONCURRENCY: End, Reopen and the finalizer's claim all run under one
-   MySQL named lock (spp_kq_end_lock()), and each still uses the events
-   row CAS. The finalizer marks a row 'finalizing' under the lock
-   before doing any work, so it runs at most once; a crash mid-run
-   leaves it 'finalizing' (never retried automatically -- no double
-   emails), which needs an administrator to look.
+   CONCURRENCY: End, Reopen, the finalizer's claim and the stall alert's
+   claim all run under one MySQL named lock (spp_kq_end_lock()), and End/
+   Reopen still use the events row CAS. The finalizer marks a row
+   'finalizing' under the lock before doing any work, so it runs at
+   most once; a crash mid-run leaves it 'finalizing' (never retried --
+   no double emails) and triggers the one alert email.
 
    TEST HOOKS (tests/spp-kq-end-reopen-test.php only): the store table
    ('spp_kq_end_store_table'), the clock ('spp_kq_end_now') and the KQ
@@ -69,8 +83,10 @@
 
 defined( 'ABSPATH' ) || exit;
 
-const SPP_KQ_END_CONFIRM_WORD  = 'END';
-const SPP_KQ_END_STATE_PREFIX  = 'spp_kq_end_state_';
+const SPP_KQ_END_CONFIRM_WORD        = 'END';
+const SPP_KQ_END_STATE_PREFIX        = 'spp_kq_end_state_';
+const SPP_KQ_REOPEN_WINDOW_SECONDS   = 3600;
+const SPP_KQ_FINALIZE_STALL_SECONDS  = 900;
 
 // =============================================================
 // Store, clock, lock
@@ -116,6 +132,24 @@ function spp_kq_end_state_put( int $occurrence_id, array $state ) : bool {
     return $ok !== false;
 }
 
+/** Every end-state row: occurrence_id => state. */
+function spp_kq_end_state_all() : array {
+    global $wpdb;
+    $rows = $wpdb->get_results( $wpdb->prepare(
+        "SELECT option_name, option_value FROM " . spp_kq_end_store_table() . " WHERE option_name LIKE %s",
+        $wpdb->esc_like( SPP_KQ_END_STATE_PREFIX ) . '%'
+    ), ARRAY_A );
+    $out = array();
+    foreach ( $rows as $r ) {
+        $occurrence_id = (int) substr( $r['option_name'], strlen( SPP_KQ_END_STATE_PREFIX ) );
+        $state = json_decode( $r['option_value'], true );
+        if ( $occurrence_id > 0 && is_array( $state ) ) {
+            $out[ $occurrence_id ] = $state;
+        }
+    }
+    return $out;
+}
+
 function spp_kq_end_lock_name() : string {
     return substr( 'spp_kq_end_reopen:' . spp_kq_end_store_table(), 0, 64 );
 }
@@ -138,10 +172,16 @@ function spp_kq_end_reopen_count( ?array $end_state ) : int {
     return count( array_filter( $end_state['log'], fn( $e ) => ( $e['action'] ?? '' ) === 'reopen' ) );
 }
 
-/** True while an ended event is waiting for its deferred finalization. */
+/** True while an ended event has not finished finalizing ('ended' or 'finalizing'). */
 function spp_kq_end_finalize_pending( int $occurrence_id ) : bool {
     $s = spp_kq_end_state_get( $occurrence_id );
-    return $s !== null && ( $s['status'] ?? '' ) === 'ended';
+    return $s !== null && in_array( $s['status'] ?? '', array( 'ended', 'finalizing' ), true );
+}
+
+/** Short local time, e.g. "4:42 pm"; with the date when not today. */
+function spp_kq_end_when( int $ts ) : string {
+    $same_day = spp_kq_end_local_day( $ts ) === spp_kq_end_local_day( spp_kq_end_now() );
+    return $same_day ? wp_date( 'g:i a', $ts ) : wp_date( 'l, F j \a\t g:i a', $ts );
 }
 
 // =============================================================
@@ -174,33 +214,35 @@ function spp_kq_end_unfinished_summary( int $occurrence_id, int $round ) : array
  * file header). If the record can't be written the phase flip is undone,
  * so an event can never sit 'complete' with nothing to finalize it.
  *
- * @return array ['won'=>bool, 'error'=>?string]
+ * @return array ['won'=>bool, 'error'=>?string, 'reopen_until'=>int]
  */
 function spp_kq_end_event_confirmed( int $occurrence_id, int $expected_round, string $event_date, int $user_id, int $expected_gen ) : array {
     if ( ! spp_kq_end_lock() ) {
-        return array( 'won' => false, 'error' => 'The event is busy -- please try again.' );
+        return array( 'won' => false, 'error' => 'The event is busy -- please try again.', 'reopen_until' => 0 );
     }
     try {
         $end_state = spp_kq_end_state_get( $occurrence_id );
         if ( $expected_gen !== spp_kq_end_reopen_count( $end_state ) ) {
-            return array( 'won' => false, 'error' => 'This page was out of date. The event was not ended -- check the screen and try again.' );
+            return array( 'won' => false, 'error' => 'This page was out of date. The event was not ended -- check the screen and try again.', 'reopen_until' => 0 );
         }
 
         $r = spp_kq_transition_end_event( $occurrence_id, $expected_round );
         if ( ! $r['won'] ) {
-            return array( 'won' => false, 'error' => null );
+            return array( 'won' => false, 'error' => null, 'reopen_until' => 0 );
         }
 
         $now   = spp_kq_end_now();
         $state = $end_state ?? array();
-        $state['status']     = 'ended';
-        $state['round']      = $expected_round;
-        $state['event_date'] = $event_date;
-        $state['ended_at']   = $now;
-        $state['ended_by']   = $user_id;
-        $state['ended_day']  = spp_kq_end_local_day( $now );
-        $state['log']        = $state['log'] ?? array();
-        $state['log'][]      = array( 'action' => 'end', 'by' => $user_id, 'at' => $now, 'round' => $expected_round );
+        unset( $state['stall_alerted_at'], $state['finalize_started_at'] );
+        $state['status']       = 'ended';
+        $state['round']        = $expected_round;
+        $state['event_date']   = $event_date;
+        $state['ended_at']     = $now;
+        $state['ended_by']     = $user_id;
+        $state['ended_day']    = spp_kq_end_local_day( $now );
+        $state['reopen_until'] = $now + SPP_KQ_REOPEN_WINDOW_SECONDS;
+        $state['log']          = $state['log'] ?? array();
+        $state['log'][]        = array( 'action' => 'end', 'by' => $user_id, 'at' => $now, 'round' => $expected_round );
 
         if ( ! spp_kq_end_state_put( $occurrence_id, $state ) ) {
             global $wpdb;
@@ -209,9 +251,9 @@ function spp_kq_end_event_confirmed( int $occurrence_id, int $expected_round, st
                  WHERE occurrence_id = %d AND current_round = %d AND phase = 'complete'",
                 $occurrence_id, $expected_round
             ) );
-            return array( 'won' => false, 'error' => 'The event could not be ended -- please try again.' );
+            return array( 'won' => false, 'error' => 'The event could not be ended -- please try again.', 'reopen_until' => 0 );
         }
-        return array( 'won' => true, 'error' => null );
+        return array( 'won' => true, 'error' => null, 'reopen_until' => $state['reopen_until'] );
     } finally {
         spp_kq_end_unlock();
     }
@@ -224,8 +266,9 @@ function spp_kq_end_event_confirmed( int $occurrence_id, int $expected_round, st
 const SPP_KQ_REOPEN_CONTACT_ADMIN = 'This event can no longer be reopened here. Please contact the administrator.';
 
 /**
- * Whether Reopen is allowed right now. Shared by the button's visibility
- * and the server-side action so the two can't disagree.
+ * Whether Reopen is allowed right now: until (not at) reopen_until.
+ * Shared by the button's visibility and the server-side action so the
+ * two can't disagree.
  *
  * @return array ['allowed'=>bool, 'reason'=>string]
  */
@@ -234,11 +277,12 @@ function spp_kq_reopen_status( ?array $event_state, ?array $end_state, int $now 
         return array( 'allowed' => false, 'reason' => 'This event is not ended.' );
     }
     if ( ! $end_state || ( $end_state['status'] ?? '' ) !== 'ended'
+        || empty( $end_state['reopen_until'] )
         || (int) ( $end_state['round'] ?? -1 ) !== (int) $event_state['current_round'] ) {
         return array( 'allowed' => false, 'reason' => SPP_KQ_REOPEN_CONTACT_ADMIN );
     }
-    if ( spp_kq_end_local_day( $now ) !== ( $end_state['ended_day'] ?? '' ) ) {
-        return array( 'allowed' => false, 'reason' => 'Reopen is only possible on the day the event was ended. Please contact the administrator.' );
+    if ( $now >= (int) $end_state['reopen_until'] ) {
+        return array( 'allowed' => false, 'reason' => 'Reopen was only possible for 60 minutes after the event ended. Please contact the administrator.' );
     }
     return array( 'allowed' => true, 'reason' => '' );
 }
@@ -325,8 +369,8 @@ function spp_kq_run_event_finalization( int $occurrence_id, string $event_date )
 }
 
 /**
- * Finalize one ended event if its Reopen day has passed. Claims the row
- * ('finalizing') under the lock first, so it can only ever run once.
+ * Finalize one ended event once its Reopen window has closed. Claims the
+ * row ('finalizing') under the lock first, so it can only ever run once.
  *
  * @return string|null The finalization notice, or null if nothing ran.
  */
@@ -337,18 +381,18 @@ function spp_kq_finalize_ended_event( int $occurrence_id ) : ?string {
     try {
         $end_state   = spp_kq_end_state_get( $occurrence_id );
         $event_state = spp_kq_get_event_state( $occurrence_id );
-        if ( ! $end_state || ( $end_state['status'] ?? '' ) !== 'ended' ) {
-            return null;
+        if ( ! $end_state || ( $end_state['status'] ?? '' ) !== 'ended' || empty( $end_state['reopen_until'] ) ) {
+            return null; // not ended, already claimed, or a 1.0.0 row (left for an administrator)
         }
         if ( ! $event_state || $event_state['phase'] !== 'complete' ) {
             return null;
         }
         $now = spp_kq_end_now();
-        if ( spp_kq_end_local_day( $now ) <= ( $end_state['ended_day'] ?? '' ) ) {
-            return null; // still the Reopen day
+        if ( $now < (int) $end_state['reopen_until'] ) {
+            return null; // Reopen window still open
         }
-        $end_state['status']               = 'finalizing';
-        $end_state['finalize_started_at']  = $now;
+        $end_state['status']              = 'finalizing';
+        $end_state['finalize_started_at'] = $now;
         if ( ! spp_kq_end_state_put( $occurrence_id, $end_state ) ) {
             return null;
         }
@@ -369,30 +413,88 @@ function spp_kq_finalize_ended_event( int $occurrence_id ) : ?string {
     return $notice;
 }
 
-/** Hourly sweep: finalize every ended event whose Reopen day has passed. */
-function spp_kq_finalize_due_events() : array {
-    global $wpdb;
-    $names = $wpdb->get_col( $wpdb->prepare(
-        "SELECT option_name FROM " . spp_kq_end_store_table() . " WHERE option_name LIKE %s",
-        $wpdb->esc_like( SPP_KQ_END_STATE_PREFIX ) . '%'
-    ) );
-    $done = array();
-    foreach ( $names as $name ) {
-        $occurrence_id = (int) substr( $name, strlen( SPP_KQ_END_STATE_PREFIX ) );
-        if ( $occurrence_id <= 0 || ! spp_kq_end_finalize_pending( $occurrence_id ) ) {
-            continue;
+/**
+ * One alert email to the site admin for a run stuck in 'finalizing' for
+ * SPP_KQ_FINALIZE_STALL_SECONDS or more. stall_alerted_at is written under
+ * the lock BEFORE sending, so it goes out once per event even if two
+ * sweeps overlap. Never touches the run itself.
+ *
+ * @return bool True if this call sent (claimed) the alert.
+ */
+function spp_kq_send_stall_alert( int $occurrence_id ) : bool {
+    if ( ! spp_kq_end_lock() ) {
+        return false;
+    }
+    try {
+        $end_state = spp_kq_end_state_get( $occurrence_id );
+        $now       = spp_kq_end_now();
+        if ( ! $end_state || ( $end_state['status'] ?? '' ) !== 'finalizing' || ! empty( $end_state['stall_alerted_at'] )
+            || $now - (int) ( $end_state['finalize_started_at'] ?? $now ) < SPP_KQ_FINALIZE_STALL_SECONDS ) {
+            return false;
         }
-        $notice = spp_kq_finalize_ended_event( $occurrence_id );
-        if ( $notice !== null ) {
-            $done[ $occurrence_id ] = $notice;
+        $end_state['stall_alerted_at'] = $now;
+        if ( ! spp_kq_end_state_put( $occurrence_id, $end_state ) ) {
+            return false;
+        }
+    } finally {
+        spp_kq_end_unlock();
+    }
+
+    global $wpdb;
+    $started  = wp_date( 'Y-m-d g:i a', (int) $end_state['finalize_started_at'] );
+    $subject  = "SPP: Ace/Queen event {$occurrence_id} ({$end_state['event_date']}) did not finish finalizing";
+    $body     = "The Ace/Queen of the Courts event {$occurrence_id} ({$end_state['event_date']}) started finalizing at {$started} and has not finished.\n\n"
+        . "State (option " . SPP_KQ_END_STATE_PREFIX . "{$occurrence_id}):\n" . wp_json_encode( $end_state, JSON_PRETTY_PRINT ) . "\n\n"
+        . "It will NOT be retried automatically. Before re-running anything, check which steps finished:\n"
+        . "1. History: SELECT COUNT(*) FROM {$wpdb->prefix}spp_kq_history WHERE occurrence_id = {$occurrence_id};\n"
+        . "2. Recap emails: the mail log for \"Recap for {$end_state['event_date']}\" (sent right after history).\n"
+        . "3. Club Rating: SELECT * FROM club_rating_event_log WHERE event_id = {$occurrence_id};\n"
+        . "4. Format rankings: spp_kq_ace_avg / spp_kq_queen_avg usermeta of that day's players.\n"
+        . "5. PHP error log around {$started}.\n"
+        . "Re-running a step that already ran would double count it (or re-send emails).\n";
+    wp_mail( get_option( 'admin_email' ), $subject, $body );
+    return true;
+}
+
+/**
+ * The 5-minute sweep: finalize every ended event whose window has closed,
+ * and alert once on any run stuck in 'finalizing'.
+ *
+ * @return array ['finalized' => [occ => notice], 'alerted' => [occ, ...]]
+ */
+function spp_kq_finalize_due_events() : array {
+    $done = array( 'finalized' => array(), 'alerted' => array() );
+    foreach ( spp_kq_end_state_all() as $occurrence_id => $state ) {
+        $status = $state['status'] ?? '';
+        if ( $status === 'ended' && ! empty( $state['reopen_until'] ) && spp_kq_end_now() >= (int) $state['reopen_until'] ) {
+            $notice = spp_kq_finalize_ended_event( $occurrence_id );
+            if ( $notice !== null ) {
+                $done['finalized'][ $occurrence_id ] = $notice;
+            }
+        } elseif ( $status === 'finalizing' && empty( $state['stall_alerted_at'] ) ) {
+            if ( spp_kq_send_stall_alert( $occurrence_id ) ) {
+                $done['alerted'][] = $occurrence_id;
+            }
         }
     }
     return $done;
 }
-add_action( 'spp_kq_finalize_due', 'spp_kq_finalize_due_events' );
+add_action( 'spp_kq_finalize_sweep', 'spp_kq_finalize_due_events' );
 
-if ( ! defined( 'SPP_KQ_NO_CRON_SCHEDULE' ) && ! wp_next_scheduled( 'spp_kq_finalize_due' ) ) {
-    wp_schedule_event( time(), 'hourly', 'spp_kq_finalize_due' );
+add_filter( 'cron_schedules', function ( $schedules ) {
+    $schedules['spp_kq_five_minutes'] = array( 'interval' => 5 * MINUTE_IN_SECONDS, 'display' => 'Every 5 minutes (KQ finalize sweep)' );
+    return $schedules;
+} );
+
+if ( ! defined( 'SPP_KQ_NO_CRON_SCHEDULE' ) ) {
+    add_action( 'init', function () {
+        if ( wp_next_scheduled( 'spp_kq_finalize_due' ) ) {
+            wp_clear_scheduled_hook( 'spp_kq_finalize_due' ); // 1.0.0's hourly event
+        }
+        if ( ! wp_next_scheduled( 'spp_kq_finalize_sweep' ) ) {
+            wp_schedule_event( time(), 'spp_kq_five_minutes', 'spp_kq_finalize_sweep' );
+        }
+    } );
 }
 
 // =============================================================
@@ -402,12 +504,6 @@ if ( ! defined( 'SPP_KQ_NO_CRON_SCHEDULE' ) && ! wp_next_scheduled( 'spp_kq_fina
 function spp_kq_end_user_name( int $user_id ) : string {
     $u = $user_id ? get_userdata( $user_id ) : false;
     return $u ? $u->display_name : 'unknown';
-}
-
-/** Short local time for "ended at": time only today, date + time otherwise. */
-function spp_kq_end_when( int $ts ) : string {
-    $same_day = spp_kq_end_local_day( $ts ) === spp_kq_end_local_day( spp_kq_end_now() );
-    return $same_day ? wp_date( 'g:ia', $ts ) : wp_date( 'l, F j \a\t g:ia', $ts );
 }
 
 /**
@@ -432,8 +528,8 @@ function spp_kq_render_end_confirm( int $occurrence_id, int $round ) : string {
                     <li>Round <?php echo esc_html( $u['round'] ); ?>: <?php echo esc_html( $u['missing'] ); ?> of <?php echo esc_html( $u['total'] ); ?> courts have no score. Those games will not count.</li>
                 <?php endif; ?>
                 <li>Scores can no longer be corrected. Fix any wrong score first (View Full Scoreboard).</li>
-                <li>After midnight tonight, results are saved, Club Ratings are updated and players get their recap email.</li>
-                <li>Ended by mistake? You can reopen it until midnight tonight.</li>
+                <li>Ended by mistake? You can reopen it for 60 minutes.</li>
+                <li>After that, results are saved, Club Ratings are updated and players get their recap email.</li>
             </ul>
             <form method="post" class="kq-end-confirm-form">
                 <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
@@ -463,9 +559,9 @@ function spp_kq_render_end_confirm( int $occurrence_id, int $round ) : string {
 }
 
 /**
- * Complete screen panel: who ended it and when, and Reopen while allowed.
- * Legacy events (ended before 1.0.0, already finalized at End) have no
- * record and show nothing here.
+ * Complete screen panel: who ended it and when, Reopen while allowed,
+ * then the processing status. Events ended before 1.0.0 (already
+ * finalized at End) have no record and show nothing here.
  */
 function spp_kq_render_ended_panel( int $occurrence_id ) : string {
     $end_state = spp_kq_end_state_get( $occurrence_id );
@@ -478,6 +574,7 @@ function spp_kq_render_ended_panel( int $occurrence_id ) : string {
     $reopens     = array_values( array_filter( $end_state['log'] ?? array(), fn( $e ) => ( $e['action'] ?? '' ) === 'reopen' ) );
     $check       = spp_kq_reopen_status( $event_state, $end_state, $now );
     $can_reopen  = $check['allowed'] && spp_kq_can_facilitate();
+    $until       = (int) ( $end_state['reopen_until'] ?? 0 );
 
     ob_start();
     ?>
@@ -486,48 +583,54 @@ function spp_kq_render_ended_panel( int $occurrence_id ) : string {
         <?php if ( $reopens ) : $last = end( $reopens ); ?>
             <p class="kq-hint" style="margin:0 0 4px;">Reopened earlier at <?php echo esc_html( spp_kq_end_when( (int) $last['at'] ) ); ?> by <?php echo esc_html( spp_kq_end_user_name( (int) $last['by'] ) ); ?>.</p>
         <?php endif; ?>
-        <?php if ( $status === 'ended' ) : ?>
-            <p class="kq-hint" style="margin:0 0 8px;">Results, Club Ratings and recap emails go out after midnight.</p>
+        <?php if ( $status === 'ended' && $check['allowed'] ) : ?>
+            <p class="kq-hint" style="margin:0 0 8px;">Results, Club Ratings and recap emails go out after <?php echo esc_html( spp_kq_end_when( $until ) ); ?>.</p>
             <?php if ( $can_reopen ) : ?>
                 <form method="post" class="kq-inline-form kq-reopen-form" onsubmit="return confirm(<?php echo esc_attr( wp_json_encode( 'Reopen this event? It goes back to Round ' . (int) $end_state['round'] . ' and End Event is available again.' ) ); ?>);">
                     <?php wp_nonce_field( 'spp_kq_live_action', 'spp_kq_nonce' ); ?>
                     <input type="hidden" name="spp_kq_action" value="reopen_event">
                     <input type="hidden" name="spp_kq_round" value="<?php echo esc_attr( (int) $end_state['round'] ); ?>">
                     <input type="hidden" name="spp_kq_ended_at" value="<?php echo esc_attr( (int) $end_state['ended_at'] ); ?>">
-                    <span class="kq-hint" style="display:block;margin:0 0 6px;">Ended by mistake? You can reopen it until midnight tonight.</span>
+                    <span class="kq-hint" style="display:block;margin:0 0 6px;">Ended by mistake? You can reopen until <?php echo esc_html( spp_kq_end_when( $until ) ); ?>.</span>
                     <button type="submit" class="kq-btn kq-btn-primary">Reopen event</button>
                 </form>
-                <script>
-                (function() {
-                    // Another device may reopen it: go back to the live screen when it does.
-                    if (window.__kqEndedPoll) clearInterval(window.__kqEndedPoll);
-                    var body = new FormData();
-                    body.append('action', 'spp_kq_poll_status');
-                    body.append('nonce', <?php echo wp_json_encode( wp_create_nonce( 'spp_kq_live_action' ) ); ?>);
-                    body.append('occ', <?php echo wp_json_encode( (string) $occurrence_id ); ?>);
-                    window.__kqEndedPoll = setInterval(function() {
-                        fetch(<?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>, { method: 'POST', body: body, credentials: 'same-origin' })
-                            .then(function(r) { return r.json(); })
-                            .then(function(d) {
-                                if (d && d.success && d.data.phase !== 'complete') {
-                                    clearInterval(window.__kqEndedPoll);
-                                    window.location.replace(window.location.href);
-                                }
-                            })
-                            .catch(function() {});
-                    }, 10000);
-                    if (window.SppKqLiveApp) {
-                        window.SppKqLiveApp.cleanup = function() { clearInterval(window.__kqEndedPoll); };
-                    }
-                })();
-                </script>
-            <?php else : ?>
-                <p class="kq-hint" style="margin:0;"><?php echo esc_html( $check['reason'] ); ?></p>
             <?php endif; ?>
+            <script>
+            (function() {
+                // Reload when another device reopens it, and when the window closes.
+                if (window.__kqEndedPoll) clearInterval(window.__kqEndedPoll);
+                if (window.__kqEndedTimer) clearTimeout(window.__kqEndedTimer);
+                var body = new FormData();
+                body.append('action', 'spp_kq_poll_status');
+                body.append('nonce', <?php echo wp_json_encode( wp_create_nonce( 'spp_kq_live_action' ) ); ?>);
+                body.append('occ', <?php echo wp_json_encode( (string) $occurrence_id ); ?>);
+                window.__kqEndedPoll = setInterval(function() {
+                    fetch(<?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>, { method: 'POST', body: body, credentials: 'same-origin' })
+                        .then(function(r) { return r.json(); })
+                        .then(function(d) {
+                            if (d && d.success && d.data.phase !== 'complete') {
+                                clearInterval(window.__kqEndedPoll);
+                                window.location.replace(window.location.href);
+                            }
+                        })
+                        .catch(function() {});
+                }, 10000);
+                window.__kqEndedTimer = setTimeout(function() {
+                    window.location.replace(window.location.href);
+                }, <?php echo (int) max( 0, ( $until - $now ) * 1000 + 2000 ); ?>);
+                if (window.SppKqLiveApp) {
+                    window.SppKqLiveApp.cleanup = function() { clearInterval(window.__kqEndedPoll); clearTimeout(window.__kqEndedTimer); };
+                }
+            })();
+            </script>
+        <?php elseif ( $status === 'ended' && ! empty( $end_state['reopen_until'] ) ) : ?>
+            <p class="kq-hint" style="margin:0;">Reopen closed at <?php echo esc_html( spp_kq_end_when( $until ) ); ?>. Results, Club Ratings and recap emails are being processed (within a few minutes).</p>
         <?php elseif ( $status === 'finalizing' ) : ?>
-            <p class="kq-hint" style="margin:0;">Results are being saved now.</p>
+            <p class="kq-hint" style="margin:0;">Results, Club Ratings and recap emails are being processed now.</p>
         <?php elseif ( $status === 'finalized' ) : ?>
-            <p class="kq-hint" style="margin:0;">Results were processed <?php echo esc_html( spp_kq_end_when( (int) $end_state['finalized_at'] ) ); ?>. The event can no longer be reopened.</p>
+            <p class="kq-hint" style="margin:0;">Results were processed at <?php echo esc_html( spp_kq_end_when( (int) $end_state['finalized_at'] ) ); ?>. The event can no longer be reopened.</p>
+        <?php else : ?>
+            <p class="kq-hint" style="margin:0;"><?php echo esc_html( $check['reason'] ); ?></p>
         <?php endif; ?>
     </div>
     <?php

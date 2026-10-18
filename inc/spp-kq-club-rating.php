@@ -1,8 +1,13 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Club Rating Integration
-   Version: 1.3.0
-   Date: 2026-09-17
+   Version: 1.3.1
+   Date: 2026-10-18
+
+   Changes from 1.3.0: spp_kq_category_source() passes the gl_events_v
+   name through the 'spp_kq_table_name' filter (key 'gl_events_v') so
+   tests/spp-kq-end-reopen-test.php can use a throwaway copy. No filter
+   is registered in production; behavior unchanged.
 
    Changes from 1.2.0 (keep membership/Master/Masterlist{year}/
    Membershiplist{year} in sync with a KQ-driven rating change --
@@ -109,7 +114,7 @@ const SPP_KQ_CLUB_RATING_LAUNCH_DATE = '2026-09-17';
  */
 function spp_kq_category_source( int $occurrence_id ) : ?string {
     global $wpdb;
-    $view = $wpdb->prefix . 'gl_events_v';
+    $view = apply_filters( 'spp_kq_table_name', $wpdb->prefix . 'gl_events_v', 'gl_events_v' ); // 1.3.1: tests only
     $cat = $wpdb->get_var( $wpdb->prepare(
         "SELECT eff_category_id FROM {$view} WHERE occurrence_id = %d",
         $occurrence_id

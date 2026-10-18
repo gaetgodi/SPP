@@ -1,8 +1,26 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Format Rankings
-   Version: 1.5.0
+   Version: 1.6.0
    Date: 2026-10-18
+
+   Changes from 1.5.0 -- doubleheaders under the 60-minute finalization
+   (inc/spp-kq-end-reopen.php 1.1.0). The first session now finalizes
+   about an hour after it ends, which can be before the second session's
+   roster is final. 1.4.0/1.5.0 excused the second session's confirmed
+   registrants at that moment, so a player added to it later (walk-in,
+   roster change) was charged a miss plus a decay step by the first
+   pass, and the second pass could reset the miss but not the decay.
+   Now the inactivity pass runs only from the LAST session of that
+   format that day to finalize: while any same-day sibling is unfinished
+   (spp_kq_get_unfinished_same_day_siblings() -- not started, running,
+   or ended but not finalized), the pass charges nobody. The last pass
+   excuses its own players plus everyone archived for that day
+   (spp_kq_get_same_day_played()). The one-miss-per-day guard (last_
+   miss_date, 1.4.0) still applies. spp_kq_get_same_day_excused() is
+   replaced by those two functions. If a sibling is never ended, no
+   misses are charged for that day. spp_kq_get_format_population() and
+   the gl_events_v name are filterable for tests only.
 
    Changes from 1.4.0 -- End Event's finalization is now deferred to
    after midnight (inc/spp-kq-end-reopen.php 1.0.0), so an ended
@@ -308,12 +326,15 @@ function spp_kq_update_format_rankings( int $occurrence_id, string $event_date )
 
     // 1.3.0: sitewide inactivity pass over everyone who has EVER had an
     // average in this format but did NOT play today. See file header.
-    // 1.4.0: excuse same-day sibling sessions of this format -- see
-    // spp_kq_get_same_day_excused(). Only the inactivity pass sees the
-    // extra names; today's EMA update above is still this event's own
-    // players only.
-    $excused    = $participants + spp_kq_get_same_day_excused( $occurrence_id, $source, $event_date );
-    $inactivity = spp_kq_apply_format_inactivity( $source, $excused, $event_date );
+    // 1.6.0: only the LAST session of this format today runs it -- while
+    // another same-day session is unfinished (spp_kq_get_unfinished_same_
+    // day_siblings()) nobody is charged here; that session's own pass
+    // charges, excusing everyone archived for today (spp_kq_get_same_day_
+    // played()). Today's EMA update above is unaffected.
+    $excused    = $participants + spp_kq_get_same_day_played( $occurrence_id, $source, $event_date );
+    $inactivity = empty( spp_kq_get_unfinished_same_day_siblings( $occurrence_id, $source, $event_date ) )
+        ? spp_kq_apply_format_inactivity( $source, $excused, $event_date )
+        : array( 'changed' => false, 'removed' => 0 );
 
     if ( $updated_count === 0 && ! $inactivity['changed'] ) {
         return array( 'notice' => '', 'updated' => false );
@@ -337,63 +358,62 @@ function spp_kq_update_format_rankings( int $occurrence_id, string $event_date )
 }
 
 /**
- * 1.4.0: players who must NOT be charged an inactivity miss by this
- * occurrence's pass because of another session of the SAME format on the
- * SAME date (Ace 9:00 + Ace 10:30 on a Friday, Queen likewise on a
- * Thursday). Ace and Queen never excuse each other -- both lookups are
- * filtered by $source. Two groups:
- *   - played: anyone archived in spp_kq_history for another occurrence
- *     of this format on this date (a session that already ended);
- *   - still to play: confirmed registrants of another same-format,
- *     same-date occurrence that hasn't been processed yet (not complete/
- *     cancelled, not cancelled in GL Events). When the earlier session
- *     ends, the later one's players haven't played yet -- they're judged
- *     by that later session's own pass instead.
- * On a day with only one session of a format both lists are empty, so
- * nothing changes.
+ * 1.6.0 (was the "played" half of 1.4.0's spp_kq_get_same_day_excused()):
+ * everyone archived in spp_kq_history for ANOTHER occurrence of this
+ * format on this date -- they played today, so no miss. Ace and Queen
+ * never excuse each other.
  *
  * @return array uid => true.
  */
-function spp_kq_get_same_day_excused( int $occurrence_id, string $source, string $event_date ) : array {
+function spp_kq_get_same_day_played( int $occurrence_id, string $source, string $event_date ) : array {
     global $wpdb;
-    $excused = array();
-
     $played = $wpdb->get_col( $wpdb->prepare(
         "SELECT DISTINCT user_id FROM " . spp_kq_history_table() . "
          WHERE source = %s AND event_date = %s AND occurrence_id <> %d",
         $source, $event_date, $occurrence_id
     ) );
+    $out = array();
     foreach ( $played as $uid ) {
-        $excused[ (int) $uid ] = true;
+        $out[ (int) $uid ] = true;
     }
+    return $out;
+}
 
+/**
+ * 1.6.0: other occurrences of this format on this date that are not
+ * finished processing yet -- not started, running, or ended but not yet
+ * finalized ('ended'/'finalizing' in inc/spp-kq-end-reopen.php). While
+ * any exist, the calling pass charges no inactivity misses (see
+ * spp_kq_update_format_rankings()). Replaces 1.4.0/1.5.0's "excuse their
+ * confirmed registrants": a player added to the later session after the
+ * earlier one finalized (walk-in, roster change) was charged a miss and
+ * a decay step that the later pass could not undo. Cancelled sessions
+ * (GL Events or KQ) don't count; an older 'complete' event with no
+ * end-state record was finalized at End, so it doesn't count either.
+ *
+ * @return int[] occurrence_ids.
+ */
+function spp_kq_get_unfinished_same_day_siblings( int $occurrence_id, string $source, string $event_date ) : array {
+    global $wpdb;
     $category = ( $source === 'ace' ) ? 2 : 3; // spp_kq_category_source()'s mapping, reversed
-    // 1.5.0: an ended sibling still waiting for its deferred finalization
-    // (inc/spp-kq-end-reopen.php) hasn't been archived or processed yet,
-    // so it counts as still to play, same as an unfinished one.
+    $view     = apply_filters( 'spp_kq_table_name', $wpdb->prefix . 'gl_events_v', 'gl_events_v' );
     $siblings = $wpdb->get_results( $wpdb->prepare(
         "SELECT v.occurrence_id, e.phase
-         FROM {$wpdb->prefix}gl_events_v v
+         FROM {$view} v
          LEFT JOIN " . spp_kq_events_table() . " e ON e.occurrence_id = v.occurrence_id
          WHERE v.eff_category_id = %d AND v.event_date = %s AND v.cancelled = 0
            AND v.occurrence_id <> %d
            AND ( e.phase IS NULL OR e.phase <> 'cancelled' )",
         $category, $event_date, $occurrence_id
     ), ARRAY_A );
-    $pending = array();
+    $unfinished = array();
     foreach ( $siblings as $row ) {
         if ( $row['phase'] === 'complete' && ! spp_kq_end_finalize_pending( (int) $row['occurrence_id'] ) ) {
             continue;
         }
-        $pending[] = (int) $row['occurrence_id'];
+        $unfinished[] = (int) $row['occurrence_id'];
     }
-    foreach ( $pending as $sibling ) {
-        foreach ( spp_kq_confirmed_user_ids( (int) $sibling ) as $uid ) {
-            $excused[ $uid ] = true;
-        }
-    }
-
-    return $excused;
+    return $unfinished;
 }
 
 /**
@@ -500,7 +520,8 @@ function spp_kq_get_format_population( string $source ) : array {
         "SELECT user_id FROM {$usermeta} WHERE meta_key = %s", $avg_key
     ) );
 
-    return array_map( 'intval', $uids );
+    // 1.6.0: filterable for tests/spp-kq-end-reopen-test.php only.
+    return array_map( 'intval', (array) apply_filters( 'spp_kq_format_population', $uids, $source ) );
 }
 
 /**
