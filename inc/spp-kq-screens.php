@@ -1,8 +1,22 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Screens
-   Version: 1.37.0
+   Version: 1.38.0
    Date: 2026-10-18
+
+   Changes from 1.37.0 -- confirmation before discarding played games
+   (logic in inc/spp-kq-fix.php 1.1.0):
+   - 'reset_round' and 'void_round' go through spp_kq_run_guarded_round_
+     action() with the posted spp_kq_confirm_token.
+   - wp_ajax_spp_kq_live_action returns a confirmation request as an
+     error object {confirm, changed, message, token, fields}; the page
+     header renders it as a form when JavaScript isn't involved.
+   - The Overview's Reset Round and the Full Scoreboard's Void no longer
+     use a browser confirm(): wireAjaxForm() and the scoreboard's round-
+     action script show window.SppKqConfirm's panel instead (Cancel
+     focused, "Yes, do it" resubmits with the token). Rebuild keeps its
+     confirm(). The live app and the scoreboard emit spp_kq_confirm_
+     script().
 
    Changes from 1.36.1 -- score entry and correction (inc/spp-kq-fix.php
    1.0.0 has the logic and the Fix a mistake screen):
@@ -2184,7 +2198,10 @@ function spp_kq_render_occurrence_header( array $occurrence, string $notice = ''
     <p class="kq-back"><a href="<?php echo esc_url( remove_query_arg( 'occ' ) ); ?>">&larr; All events</a></p>
     <h2 class="kq-heading"><?php echo esc_html( $occurrence['eff_title'] ); ?></h2>
     <p class="kq-subheading"><?php echo esc_html( $date_str ) . ( $time_str ? ' &middot; ' . esc_html( $time_str ) : '' ); ?></p>
-    <?php if ( $notice ) : ?>
+    <?php $confirm = spp_kq_parse_confirm_notice( $notice ); // 1.38.0: no-JS confirmation ?>
+    <?php if ( $confirm !== null ) : ?>
+        <?php echo spp_kq_render_confirm_form( $confirm ); ?>
+    <?php elseif ( $notice ) : ?>
         <div class="kq-notice <?php echo $is_success ? 'kq-notice-ok' : 'kq-notice-err'; ?>"><?php echo esc_html( $display_notice ); ?></div>
     <?php endif; ?>
     <?php
@@ -3107,15 +3124,9 @@ function spp_kq_render_overview_screen( int $occurrence_id, int $round, ?int $co
     </div>
     <script>
     (function() {
-        var form = document.querySelector('.kq-reset-round-form');
-        if (!form) return;
-        form.addEventListener('submit', function(e) {
-            var n = form.querySelector('.kq-reset-round-select').value;
-            if (!confirm('Reset round ' + n + '? Its scores are cleared and it gets played again with the same courts. Every round after it is discarded.')) {
-                e.preventDefault();
-                e.stopImmediatePropagation();
-            }
-        });
+        // 1.38.0: no browser confirm() -- the server answers with a plain
+        // warning panel (Cancel / Yes, do it) whenever played games would
+        // be removed (wireAjaxForm() handles it).
         SppKqLiveApp.wireAjaxForm('.kq-reset-round-form', 'kq-reset-round-msg');
     })();
     </script>
@@ -3884,12 +3895,10 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date, ?st
             // (inc/spp-kq-live.php); a lost race is a silent no-op like
             // every other transition here.
             $target = isset( $_POST['spp_kq_reset_target'] ) ? intval( $_POST['spp_kq_reset_target'] ) : 0;
-            $r = spp_kq_transition_reset_round( $occurrence_id, $round, $target );
-            if ( $r['won'] ) {
-                // 1.37.0: say what happened (Fix a mistake shows it).
-                return SPP_KQ_NOTICE_OK_PREFIX . "Round {$target} will be played again on the same courts. Its scores were cleared and the rounds after it removed. Start it when everyone is ready.";
-            }
-            return $r['error'] ?? '';
+            // 1.38.0: asks for confirmation first whenever played games
+            // would be removed (inc/spp-kq-fix.php 1.1.0).
+            $confirm_token = isset( $_POST['spp_kq_confirm_token'] ) ? sanitize_text_field( wp_unslash( $_POST['spp_kq_confirm_token'] ) ) : '';
+            return spp_kq_run_guarded_round_action( $occurrence_id, 'reset_round', $round, $target, get_current_user_id(), $confirm_token );
 
         case 'rebuild_round':
             // 1.32.0: any facilitator. The expected round + courts_
@@ -3911,11 +3920,9 @@ function spp_kq_handle_post_actions( int $occurrence_id, string $event_date, ?st
             // the same way. Same access (any facilitator) and the same
             // transition, which now refuses a scoreless round.
             $target = isset( $_POST['spp_kq_target_round'] ) ? intval( $_POST['spp_kq_target_round'] ) : 0;
-            $r = spp_kq_transition_void_round( $occurrence_id, $target, get_current_user_id() );
-            if ( $r['won'] ) {
-                return SPP_KQ_NOTICE_OK_PREFIX . "Round {$target} and the rounds after it no longer count. You can set the round up again to replay it, or end the event.";
-            }
-            return $r['error'] ?? '';
+            // 1.38.0: see 'reset_round'.
+            $confirm_token = isset( $_POST['spp_kq_confirm_token'] ) ? sanitize_text_field( wp_unslash( $_POST['spp_kq_confirm_token'] ) ) : '';
+            return spp_kq_run_guarded_round_action( $occurrence_id, 'void_round', $round, $target, get_current_user_id(), $confirm_token );
 
         case 'start_play':
             // 1.10.0: facilitator-set match-timer length, locked in for
@@ -4632,15 +4639,23 @@ function spp_kq_render_live_app( int $occurrence_id, array $state ) : string {
             var form = document.querySelector(formSelector);
             if (!form) return;
             var msgEl = msgElId ? document.getElementById(msgElId) : null;
-            form.addEventListener('submit', function(e) {
-                e.preventDefault();
+            function send() {
                 var btn = form.querySelector('button[type="submit"]');
                 if (btn) btn.disabled = true;
                 if (msgEl) msgEl.style.display = 'none';
                 submitAction(form, null, function(errMsg) {
                     if (btn) btn.disabled = false;
+                    // 1.38.0: a confirmation request, not an error.
+                    if (window.SppKqConfirm && SppKqConfirm.isConfirm(errMsg)) {
+                        SppKqConfirm.show(form, errMsg, send);
+                        return;
+                    }
                     if (msgEl) { msgEl.textContent = errMsg; msgEl.style.display = 'block'; }
                 });
+            }
+            form.addEventListener('submit', function(e) {
+                e.preventDefault();
+                send();
             });
         }
 
@@ -4766,6 +4781,7 @@ function spp_kq_render_live_app( int $occurrence_id, array $state ) : string {
         pollInterval = setInterval(poll, 2500);
     })();
     </script>
+    <?php echo spp_kq_confirm_script(); // 1.38.0 ?>
     <div id="kq-app-notice" class="kq-status" style="display:none;"></div>
     <div id="kq-live-app">
         <?php echo spp_kq_render_live_fragment( $occurrence_id )['html']; ?>
@@ -4999,6 +5015,7 @@ function spp_kq_render_full_scoreboard_screen( int $occurrence_id, int $swapped_
     ?>
 
     <?php if ( $rebuild_rounds || $void_rounds || $swap_rounds || $just_swapped ) : ?>
+    <?php echo spp_kq_confirm_script(); // 1.38.0 ?>
     <div class="kq-round-actions" id="kq-round-actions">
         <h3 class="kq-picker-section-heading">Fix a round</h3>
         <p class="kq-hint">Correcting a score above saves it and, if the next round hasn't been played yet, sets that round up again. Played rounds are never changed. All the options are also on <a class="kq-fix-link" href="<?php echo esc_url( add_query_arg( 'kq_view', 'fix' ) ); ?>">Fix a mistake</a>.</p>
@@ -5176,7 +5193,13 @@ function spp_kq_render_full_scoreboard_screen( int $occurrence_id, int $swapped_
                 e.preventDefault();
                 var kind = form.getAttribute('data-kind');
                 var n = parseInt(form.querySelector('.kq-round-action-select').value, 10);
-                if (!confirm(confirmText(kind, n))) return;
+                // 1.38.0: Void asks through the server's warning panel
+                // (exact rounds and scores) instead of a browser confirm().
+                if (kind !== 'void' && !confirm(confirmText(kind, n))) return;
+                sendRoundAction(form);
+            });
+        });
+        function sendRoundAction(form) {
                 var btn = form.querySelector('button[type="submit"]');
                 btn.disabled = true;
                 if (msgEl) msgEl.style.display = 'none';
@@ -5188,9 +5211,15 @@ function spp_kq_render_full_scoreboard_screen( int $occurrence_id, int $swapped_
                     .then(function(res) {
                         if (!res.success) {
                             btn.disabled = false;
+                            // 1.38.0: a confirmation request, not an error.
+                            if (window.SppKqConfirm && SppKqConfirm.isConfirm(res.data)) {
+                                SppKqConfirm.show(form, res.data, sendRoundAction);
+                                return;
+                            }
                             if (msgEl) { msgEl.textContent = res.data || 'That didn\'t work.'; msgEl.style.display = 'block'; }
                             return;
                         }
+                        if (window.SppKqLiveApp && SppKqLiveApp.notify && res.data && res.data.notice) SppKqLiveApp.notify(res.data.notice);
                         // Back to the game screen (the rebuilt round's Overview,
                         // or End Event after a void). Inside the persistent app
                         // this is a passive swap; the rest countdown still runs
@@ -5202,8 +5231,7 @@ function spp_kq_render_full_scoreboard_screen( int $occurrence_id, int $swapped_
                         btn.disabled = false;
                         if (msgEl) { msgEl.textContent = 'Network error -- try again.'; msgEl.style.display = 'block'; }
                     });
-            });
-        });
+        }
     })();
     </script>
     <?php endif; ?>
@@ -5678,6 +5706,11 @@ add_action( 'wp_ajax_spp_kq_live_action', function() {
     // header()'s own comment), never applicable to announce_courts/
     // start_play specifically, but checked here for correctness anyway
     // rather than assuming.
+    // 1.38.0: a confirmation request comes back as an object, not text.
+    $confirm = spp_kq_parse_confirm_notice( $notice );
+    if ( $confirm !== null ) {
+        wp_send_json_error( $confirm );
+    }
     if ( $notice !== '' && ! str_starts_with( $notice, SPP_KQ_NOTICE_OK_PREFIX ) ) {
         wp_send_json_error( $notice );
     }

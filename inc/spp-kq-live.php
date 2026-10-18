@@ -1,8 +1,18 @@
 <?php
 /* =========================================================
    Ace/Queen of the Courts — Live Event Runner
-   Version: 1.16.0
+   Version: 1.17.0
    Date: 2026-10-18
+
+   Changes from 1.16.0 -- confirmation before discarding played games
+   (inc/spp-kq-fix.php 1.1.0): spp_kq_transition_reset_round() and
+   spp_kq_transition_void_round() take an optional $expected_scored
+   (round => number of scores, from the warning the moderator
+   confirmed). Inside the transaction, after the events-row lock, the
+   current counts (new spp_kq_scored_counts(), locking read) must still
+   match; otherwise nothing is done and 'stale' => true is returned so
+   the caller can show the new warning. Without the argument both behave
+   exactly as before.
 
    Changes from 1.15.0 -- "a game that has been played stays as played":
    spp_kq_transition_rebuild_round() now refuses when round N or any
@@ -1288,7 +1298,7 @@ const SPP_KQ_RESET_ROUND_MIN = 2;
  * and later rounds are actually gone. spp_kq_correct_court_score()
  * refuses to write into a row this cleared (see its own guard).
  */
-function spp_kq_transition_reset_round( int $occurrence_id, int $expected_round, int $target_round ) : array {
+function spp_kq_transition_reset_round( int $occurrence_id, int $expected_round, int $target_round, ?array $expected_scored = null ) : array {
     global $wpdb;
 
     if ( $target_round < SPP_KQ_RESET_ROUND_MIN || $target_round >= $expected_round ) {
@@ -1321,6 +1331,13 @@ function spp_kq_transition_reset_round( int $occurrence_id, int $expected_round,
         return array( 'won' => false, 'error' => "Round {$target_round} was voided -- there's nothing in it to replay." );
     }
 
+    // 1.17.0: the scores the moderator confirmed must still be exactly
+    // what would be removed (read under the lock).
+    if ( $expected_scored !== null && spp_kq_scored_counts( $occurrence_id, $target_round, $expected_round, true ) !== $expected_scored ) {
+        $wpdb->query( 'ROLLBACK' );
+        return array( 'won' => false, 'error' => null, 'stale' => true );
+    }
+
     $ok = false !== $wpdb->query( $wpdb->prepare(
         "DELETE FROM {$assignments_table} WHERE occurrence_id = %d AND round_number > %d",
         $occurrence_id, $target_round
@@ -1343,6 +1360,35 @@ function spp_kq_transition_reset_round( int $occurrence_id, int $expected_round,
 
     $wpdb->query( 'COMMIT' );
     return array( 'won' => true, 'error' => null, 'round' => $target_round );
+}
+
+/**
+ * 1.17.0: real (uncancelled, both sides) scores per round, $from..$to
+ * inclusive, every round present (0 when none) -- what Reset/Void Round
+ * would remove or stop counting. $locking reads with FOR UPDATE (inside
+ * a transition's transaction, so a score can't land unseen).
+ *
+ * @return array round_number => count
+ */
+function spp_kq_scored_counts( int $occurrence_id, int $from, int $to, bool $locking = false ) : array {
+    global $wpdb;
+    $out = array();
+    for ( $n = $from; $n <= $to; $n++ ) {
+        $out[ $n ] = 0;
+    }
+    if ( $to < $from ) {
+        return $out;
+    }
+    $rows = $wpdb->get_results( $wpdb->prepare(
+        "SELECT round_number, court_name FROM " . spp_kq_scores_table() . "
+         WHERE occurrence_id = %d AND round_number BETWEEN %d AND %d
+           AND cancelled = 0 AND red_score IS NOT NULL AND black_score IS NOT NULL" . ( $locking ? ' FOR UPDATE' : '' ),
+        $occurrence_id, $from, $to
+    ), ARRAY_A );
+    foreach ( $rows as $r ) {
+        $out[ (int) $r['round_number'] ]++;
+    }
+    return $out;
 }
 
 /**
@@ -1397,7 +1443,7 @@ const SPP_KQ_VOID_ROUND_MIN = 2;
  * void of the same (or a later) round finds nothing left un-cancelled
  * and is a silent no-op.
  */
-function spp_kq_transition_void_round( int $occurrence_id, int $target_round, int $user_id ) : array {
+function spp_kq_transition_void_round( int $occurrence_id, int $target_round, int $user_id, ?array $expected_scored = null ) : array {
     global $wpdb;
 
     if ( $target_round < SPP_KQ_VOID_ROUND_MIN ) {
@@ -1441,6 +1487,11 @@ function spp_kq_transition_void_round( int $occurrence_id, int $target_round, in
     if ( spp_kq_get_round_progress( $occurrence_id, $target_round )['reported'] === 0 ) {
         $wpdb->query( 'ROLLBACK' );
         return array( 'won' => false, 'error' => "Round {$target_round} has no scores to void. To get new court assignments for it, use Rebuild Round instead." );
+    }
+    // 1.17.0: see spp_kq_transition_reset_round().
+    if ( $expected_scored !== null && spp_kq_scored_counts( $occurrence_id, $target_round, $current_round, true ) !== $expected_scored ) {
+        $wpdb->query( 'ROLLBACK' );
+        return array( 'won' => false, 'error' => null, 'stale' => true );
     }
 
     $voided = $wpdb->query( $wpdb->prepare(
