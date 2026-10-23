@@ -288,7 +288,8 @@ discovered via `kq_history` only because it was the first report ever actually e
 stubbed `wp_mail`):
 - No DB: `spp-kq-movement-test.php`, `spp-board-nomination-test.php`.
 - Read-only: `spp-schedule-guard-message-test.php` (fakes the scores count in memory when the live week
-  has none), `spp-schedule-admin-help-render-test.php`.
+  has none), `spp-schedule-admin-help-render-test.php`, `spp-report-event-status-year-test.php`
+  (GL Event Status page: current-year scope, newest first; fixture rows swapped in memory).
 - Throwaway tables/options: `spp-ao-rank-tiebreak-test.php`, `spp-master-rank-sort-test.php`,
   `spp-create-results-force-rerun-test.php`, `spp-nc-group-status-test.php`,
   `spp-publish-partial-results-test.php`, `spp-schedule-admin-walkin-guard-test.php`,

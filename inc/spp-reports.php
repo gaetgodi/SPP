@@ -1,8 +1,23 @@
 <?php
 /* =========================================================
    Report Registry
-   Version: 1.16.0
-   Date: 2026-10-13
+   Version: 1.17.0
+   Date: 2026-10-23
+
+   Changes from 1.16.0:
+   - event_status (page 20010189 "gl-event-status-2"): shows every
+     event of the current calendar year, past and future, newest first.
+     The date filter was `event_date >= CURDATE()` (today onward, any
+     year), which left only the handful of upcoming events; it is now
+     event_date between Jan 1 and Dec 31 of the current year in
+     wp_timezone() (America/Toronto), computed by
+     spp_report_event_status_year_bounds() -- no hard-coded year, rolls
+     over on Jan 1. Next year's events stay hidden until then (by
+     decision). Cancelled events are still left out (by decision).
+     Default sort is now Date descending (date then time, same string);
+     the query also orders that way. No columns/layout changed; the
+     "Rows per page" choice is unchanged and this page's variant already
+     defaults to All. Test: tests/spp-report-event-status-year-test.php.
 
    Changes from 1.15.0:
    - results (the override editor): new read-only "Status" column
@@ -643,18 +658,20 @@ function spp_report_recent_results() {
  * rather than in the source page's human display format (sortability
  * under spp_render_report_table()'s plain string/numeric compare).
  *
- * Date scope: event_date >= CURDATE(), no upper cutoff -- deliberately
- * unbounded, unlike the source page's rolling 5-week window.
+ * Date scope: the current calendar year in wp_timezone() (1.17.0;
+ * was event_date >= CURDATE() with no upper cutoff), newest first.
+ * Cancelled occurrences are excluded. $now is for the test only.
  *
  * ACCESS: no report-specific gate -- matches [gl_event_registrations]'s
  * own real access level (no capability/login check of its own); only
  * the [spp_report] shortcode's blanket is_user_logged_in() floor applies.
  */
-function spp_report_event_status() {
+function spp_report_event_status( $now = null ) {
     global $wpdb;
     $p = $wpdb->prefix;
+    list( $year_start, $year_end ) = spp_report_event_status_year_bounds( $now );
 
-    $raw_rows = $wpdb->get_results(
+    $raw_rows = $wpdb->get_results( $wpdb->prepare(
         "SELECT
             o.id                AS occurrence_id,
             o.event_date        AS event_date,
@@ -669,10 +686,12 @@ function spp_report_event_status() {
          LEFT JOIN {$p}gl_event_categories c ON o.category_id = c.id
          LEFT JOIN {$p}gl_registrations r    ON r.occurrence_id = o.id
          WHERE o.cancelled = 0
-         AND o.event_date >= CURDATE()
-         GROUP BY o.id, o.event_date, o.event_time, o.title, o.capacity, c.name",
-        ARRAY_A
-    );
+         AND o.event_date BETWEEN %s AND %s
+         GROUP BY o.id, o.event_date, o.event_time, o.title, o.capacity, c.name
+         ORDER BY o.event_date DESC, o.event_time DESC",
+        $year_start,
+        $year_end
+    ), ARRAY_A );
 
     $rows = array();
     foreach ( $raw_rows as $r ) {
@@ -701,8 +720,21 @@ function spp_report_event_status() {
     return array(
         'columns'      => $columns,
         'rows'         => $rows,
-        'default_sort' => 'Date',
+        'default_sort' => array( 'column' => 'Date', 'direction' => 'desc' ),
     );
+}
+
+/**
+ * First and last day ('Y-m-d') of the calendar year containing $now
+ * (default: now), in the site timezone -- the event_status date scope.
+ */
+function spp_report_event_status_year_bounds( $now = null ) {
+    $tz  = wp_timezone();
+    $now = ( $now instanceof DateTimeInterface )
+        ? DateTimeImmutable::createFromInterface( $now )->setTimezone( $tz )
+        : new DateTimeImmutable( 'now', $tz );
+    $year = $now->format( 'Y' );
+    return array( "{$year}-01-01", "{$year}-12-31" );
 }
 
 /**
