@@ -15,6 +15,13 @@ if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
  * rewrite. A write firewall refuses every write except zzsamg_test_* tables
  * and the throwaway queue option.
  *
+ * 2026-10-23: Times is answered in memory too (a fixed 5:30/6:40/7:50
+ * table, all active, swapped in for "FROM/JOIN/, Times" as a derived
+ * table), so the live slot setup no longer matters -- 7:50 turned off in
+ * the real Times made "same slot refused" fail. One case turns 7:50 off in
+ * memory and expects the "Please select an active time slot" refusal.
+ * Courts is still read live (read-only).
+ *
  * Every write goes to throwaway zzsamg_test_* tables (the synthetic
  * fixture below) and a throwaway queue option via the
  * spp_sa2_pending_notify_option filter. wp_mail() is replaced by a capture
@@ -56,6 +63,22 @@ $GLOBALS['MG_REDIRECT'] = false;
 add_filter( 'query', function ( $q ) {
     if ( ! $GLOBALS['MG_REDIRECT'] ) return $q;
     return preg_replace( '/(?<![A-Za-z0-9_\\\\])`?Schedules`?(?![A-Za-z0-9_\\\\])/', '`zzsamg_test_Schedules`', $q );
+}, 5 );
+
+// Times answered in memory: every FROM/JOIN/comma reference to the table becomes a
+// derived table built from $MG_TIMES (T_ID => [T_desc, Active]); never the live Times.
+$GLOBALS['MG_TIMES'] = array( 1 => array( '5:30 pm', 1 ), 2 => array( '6:40 pm', 1 ), 3 => array( '7:50 pm', 1 ) );
+function mg_times_sql() {
+    $rows = array();
+    foreach ( $GLOBALS['MG_TIMES'] as $id => $t ) $rows[] = sprintf( "SELECT %d AS T_ID, '%s' AS T_desc, %d AS Active", $id, $t[0], $t[1] );
+    return '(' . implode( ' UNION ALL ', $rows ) . ')';
+}
+add_filter( 'query', function ( $q ) {
+    return preg_replace_callback( '/(\bFROM|\bJOIN|,)(\s+)`?Times`?(?![A-Za-z0-9_])(\s+(\w+))?/', function ( $m ) {
+        $next  = $m[4] ?? '';
+        $alias = $next !== '' && ! preg_match( '/^(WHERE|ON|JOIN|LEFT|RIGHT|INNER|CROSS|ORDER|GROUP|LIMIT|HAVING|UNION|AS)$/i', $next );
+        return $m[1] . $m[2] . mg_times_sql() . ( $alias ? $m[3] : ' AS Times' . ( $m[3] ?? '' ) );
+    }, $q );
 }, 5 );
 
 // Write firewall: only zzsamg_test_* tables and the throwaway option.
@@ -125,6 +148,8 @@ function mg_collisions() {
 }
 
 $E = MG_EVENT;
+$t_ids = $wpdb->get_col( 'SELECT T_ID FROM Times WHERE Active = 1 ORDER BY T_ID' );
+mg_ok( $t_ids === array( '1', '2', '3' ), 'Times answered in memory: all three fixture slots active (' . implode( ',', $t_ids ) . ')' );
 $REAL = array(
     'sched'   => $wpdb->get_var( 'CHECKSUM TABLE Schedules', 1 ),
     'queue'   => get_option( 'spp_sa2_pending_notify', 'absent' ),
@@ -163,6 +188,12 @@ $r = spp_sa2_movegroup_state( $G, $G_from['time_id'], $T, $E );
 mg_ok( isset( $r['error'] ) && strpos( $r['error'], 'already in' ) !== false, 'same slot refused: ' . strip_tags( $r['error'] ?? '' ) );
 $r = spp_sa2_movegroup_state( $G, 99, $T, $E );
 mg_ok( isset( $r['error'] ), 'inactive/unknown target slot refused' );
+$GLOBALS['MG_TIMES'][3][1] = 0; // 7:50 turned off, as in a two-slot week
+$r = spp_sa2_movegroup_state( $G1, 3, $T, $E );
+mg_ok( isset( $r['error'] ) && strpos( $r['error'], 'Please select an active time slot' ) !== false, '7:50 inactive: moving a group there refused: ' . ( $r['error'] ?? '' ) );
+$r = spp_sa2_movegroup_move_rows( $G1, 3, 4, $T, $E );
+mg_ok( isset( $r['error'] ) && mg_rows() == $before, '7:50 inactive: move_rows refuses and writes nothing' );
+$GLOBALS['MG_TIMES'][3][1] = 1;
 $r = spp_sa2_movegroup_move_rows( $G, $G_from['time_id'], 4, $T, $E );
 mg_ok( isset( $r['error'] ) && mg_rows() == $before, 'move_rows refuses same slot and writes nothing' );
 

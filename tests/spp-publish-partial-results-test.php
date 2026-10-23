@@ -11,6 +11,16 @@ if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
  * and end. The shortcode tests only reach paths that stop before
  * spp_ppr_run() (role, nonce, missing event) or are read-only (preview).
  *
+ * 2026-10-23: no longer depends on the current week. The fixture is built
+ * from the permanent Schedules_Scores_168 (47 rows, the week this tool was
+ * first used on), not from live Schedules, which moves on every Monday.
+ * The "real event 168" inspection and the dry run use the fixture (with the
+ * ladder check on); the shortcode preview reads it through an in-memory
+ * redirect of "Schedules". If an inspection that must be clean is not, the
+ * test stops with a FAIL instead of a fatal -- sections A-I run inside
+ * try/finally, so the cleanup and the section J "production untouched"
+ * checks always run.
+ *
  * Run: php tests/spp-publish-partial-results-test.php
  */
 
@@ -40,15 +50,19 @@ $REAL = array(
     'ledger' => $wpdb->get_var( 'CHECKSUM TABLE club_rating_event_log', 1 ),
     'sched' => $wpdb->get_var( 'CHECKSUM TABLE Schedules', 1 ),
     'ss168' => spp_ppr_table_exists( 'Schedules_Scores_168' ),
+    'ss168sum' => $wpdb->get_var( 'CHECKSUM TABLE Schedules_Scores_168', 1 ),
 );
 
+const PPR_SOURCE = 'Schedules_Scores_168'; // permanent; never written
 function ppr_fixture( int $event = 168 ) {
     global $wpdb, $P;
     ppr_cleanup();
+    $n = spp_ppr_table_exists( PPR_SOURCE ) ? (int) $wpdb->get_var( 'SELECT COUNT(*) FROM ' . PPR_SOURCE . ' WHERE event_id = 168' ) : 0;
+    if ( $n !== 47 ) throw new RuntimeException( PPR_SOURCE . " missing or changed ($n rows of event 168, expected 47)" );
     // Schedules copy keeps the generated Score column, like the real one.
     $wpdb->query( "CREATE TABLE {$P}Schedules LIKE Schedules" );
     $wpdb->query( "INSERT INTO {$P}Schedules (Sequence, registration_date, Rank, user_id, first_name, last_name, user_phone, user_email, event_id, Game1, Game2, Game3, Game4, Game5, group_id, Crt_ID, time_id, travel, RankPrime)
-                   SELECT Sequence, registration_date, Rank, user_id, first_name, last_name, '', '', event_id, Game1, Game2, Game3, Game4, Game5, group_id, Crt_ID, time_id, travel, RankPrime FROM Schedules" );
+                   SELECT Sequence, registration_date, Rank, user_id, first_name, last_name, '', '', event_id, Game1, Game2, Game3, Game4, Game5, group_id, Crt_ID, time_id, travel, RankPrime FROM " . PPR_SOURCE );
     if ( $event !== 168 ) $wpdb->query( "UPDATE {$P}Schedules SET event_id = $event" );
     $wpdb->query( "CREATE TABLE {$P}Results (event_id INT) ENGINE=InnoDB" );
     $wpdb->query( "INSERT INTO {$P}Results VALUES (167)" );
@@ -108,126 +122,155 @@ function ppr_sums() {
     );
 }
 function ppr_flags() { global $P; return array( (int) get_option( $P . 'flag_pub' ), (int) get_option( $P . 'flag_posted' ) ); }
+// An inspection the rest of a section depends on: stop the test (FAIL, then cleanup + J) if it has errors.
+function ppr_inspect_clean( int $event, array $cfg ) {
+    $i = spp_ppr_inspect( $event, $cfg );
+    if ( ! empty( $i['errors'] ) || ! isset( $i['build'] ) ) throw new RuntimeException( "inspection of event $event not clean: " . implode( ' / ', $i['errors'] ) );
+    return $i;
+}
+// Reads of the live table "Schedules" go to the fixture while this is on (section I preview only).
+$GLOBALS['PPR_REDIRECT'] = false;
+add_filter( 'query', function ( $q ) {
+    global $P;
+    if ( ! $GLOBALS['PPR_REDIRECT'] ) return $q;
+    $q = str_replace( "'Schedules'", "'{$P}Schedules'", $q ); // table-name lookups (information_schema)
+    return preg_replace( '/(?<![A-Za-z0-9_\\\\`\'])`?Schedules`?(?![A-Za-z0-9_])/', "`{$P}Schedules`", $q );
+} );
 
-echo "A. inspect guards\n";
-ppr_fixture();
-$c = spp_ppr_config(); // real config, read-only calls only
-ppr_ok( ! empty( spp_ppr_inspect( 0, $c )['errors'] ), 'event 0 refused' );
-ppr_ok( ! empty( spp_ppr_inspect( 999999999, $c )['errors'] ), 'nonexistent event refused' );
-ppr_ok( preg_grep( '/not a ladder/', spp_ppr_inspect( 311, $c )['errors'] ) == true, 'Ace event 311 refused as not ladder' );
-ppr_ok( preg_grep( '/no rows for event/', spp_ppr_inspect( 169, ppr_cfg() )['errors'] ) == true, 'Schedules holding another event refused' );
-$wpdb->query( "UPDATE {$P}Results SET event_id = 168" );
-ppr_ok( preg_grep( '/already stamped/', spp_ppr_inspect( 168, ppr_cfg() )['errors'] ) == true, 'Results already stamped with the event refused' );
-$wpdb->query( "UPDATE {$P}Schedules SET event_id = 169 WHERE user_id = 1" );
-$wpdb->query( "UPDATE {$P}Results SET event_id = 167" );
-ppr_ok( preg_grep( '/mixes events/', spp_ppr_inspect( 168, ppr_cfg() )['errors'] ) == true, 'mixed-event Schedules refused' );
-$i = spp_ppr_inspect( 168, $c );
-ppr_ok( empty( $i['errors'] ) && count( $i['build']['games'] ) === 21 && count( $i['build']['players'] ) === 33 && $i['build']['unreconstructed'] === 0,
-    'real event 168 inspects clean: 21 games, 33 players, 0 unreconstructed' );
+try {
+    echo "A. inspect guards\n";
+    ppr_fixture();
+    $c = spp_ppr_config(); // real config, read-only calls only
+    ppr_ok( ! empty( spp_ppr_inspect( 0, $c )['errors'] ), 'event 0 refused' );
+    ppr_ok( ! empty( spp_ppr_inspect( 999999999, $c )['errors'] ), 'nonexistent event refused' );
+    ppr_ok( preg_grep( '/not a ladder/', spp_ppr_inspect( 311, $c )['errors'] ) == true, 'Ace event 311 refused as not ladder' );
+    ppr_ok( preg_grep( '/no rows for event/', spp_ppr_inspect( 169, ppr_cfg() )['errors'] ) == true, 'Schedules holding another event refused' );
+    $wpdb->query( "UPDATE {$P}Results SET event_id = 168" );
+    ppr_ok( preg_grep( '/already stamped/', spp_ppr_inspect( 168, ppr_cfg() )['errors'] ) == true, 'Results already stamped with the event refused' );
+    $wpdb->query( "UPDATE {$P}Schedules SET event_id = 169 WHERE user_id = 1" );
+    $wpdb->query( "UPDATE {$P}Results SET event_id = 167" );
+    ppr_ok( preg_grep( '/mixes events/', spp_ppr_inspect( 168, ppr_cfg() )['errors'] ) == true, 'mixed-event Schedules refused' );
+    ppr_fixture(); // fresh, unmixed copy
+    $i = ppr_inspect_clean( 168, ppr_cfg( 'ok', array( 'require_ladder' => true ) ) );
+    ppr_ok( count( $i['build']['games'] ) === 21 && count( $i['build']['players'] ) === 33 && $i['build']['unreconstructed'] === 0,
+        'event 168 (fixture from ' . PPR_SOURCE . ', ladder check on) inspects clean: 21 games, 33 players, 0 unreconstructed' );
 
-echo "B. happy path (fake rater)\n";
-ppr_fixture();
-$before = ppr_sums();
-$r = spp_ppr_run( 168, ppr_cfg( 'ok' ) );
-ppr_ok( $r['ok'], 'run ok' );
-ppr_ok( spp_ppr_table_exists( "{$P}SS_168" ) && spp_ppr_tables_match( "{$P}SS_168", "{$P}Schedules" ), 'scores table created and matches' );
-ppr_ok( (int) $wpdb->get_var( "SELECT SUM((Game1 IS NULL)+(Game2 IS NULL)+(Game3 IS NULL)+(Game4 IS NULL)+(Game5 IS NULL)) FROM {$P}SS_168" )
-     === (int) $wpdb->get_var( "SELECT SUM((Game1 IS NULL)+(Game2 IS NULL)+(Game3 IS NULL)+(Game4 IS NULL)+(Game5 IS NULL)) FROM Schedules" ), 'blanks still NULL' );
-ppr_ok( (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$P}ledger WHERE event_id = 168" ) === 33, '33 ledger rows' );
-ppr_ok( ppr_flags() === array( 0, 1 ), 'test flags set published=0 posted=1' );
-ppr_ok( count( $r['backups'] ) === 4 && array_product( array_map( 'spp_ppr_table_exists', $r['backups'] ) ), '4 backup tables exist' );
-ppr_ok( (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$r['backups'][0]}" ) === 47, 'Schedules snapshot has 47 rows' );
-$log = get_option( "{$P}log" );
-ppr_ok( is_array( $log ) && count( $log ) === 1 && $log[0]['ok'] === true && $log[0]['event'] === 168, 'run logged' );
-
-echo "C. re-submit after success\n";
-$RATER_CALLS = 0; $mid = ppr_sums();
-$r2 = spp_ppr_run( 168, ppr_cfg( 'ok' ) );
-ppr_ok( $r2['ok'] && $RATER_CALLS === 0 && ppr_sums() === $mid, 'second run: ok, rater not called, rating tables unchanged' );
-ppr_ok( preg_grep( '/already exists and matches/', $r2['log'] ) == true && preg_grep( '/already applied/', $r2['log'] ) == true, 'second run reports kept/skipped' );
-
-echo "D. existing scores table that differs\n";
-ppr_fixture();
-$wpdb->query( "CREATE TABLE {$P}SS_168 SELECT * FROM {$P}Schedules" );
-$wpdb->query( "UPDATE {$P}SS_168 SET Game1 = 99 WHERE user_id = 3181" );
-$RATER_CALLS = 0; $before = ppr_sums();
-$r = spp_ppr_run( 168, ppr_cfg( 'ok' ) );
-ppr_ok( ! $r['ok'] && $RATER_CALLS === 0 && ppr_sums() === $before && ppr_flags() === array( 1, 0 ), 'stops, no rating, flags untouched' );
-ppr_ok( (int) $wpdb->get_var( "SELECT Game1 FROM {$P}SS_168 WHERE user_id = 3181" ) === 99, 'differing table not overwritten' );
-
-foreach ( array( 'throw' => 'rater throws mid-update', 'inconsistent' => 'verification mismatch', 'abort' => 'engine abort' ) as $mode => $label ) {
-    echo "E. rollback: $label\n";
+    echo "B. happy path (fake rater)\n";
     ppr_fixture();
     $before = ppr_sums();
-    $r = spp_ppr_run( 168, ppr_cfg( $mode ) );
-    ppr_ok( ! $r['ok'], 'run reports failure' );
-    ppr_ok( ppr_sums() === $before, 'state, ledger, usermeta identical to before (rolled back)' );
-    ppr_ok( ppr_flags() === array( 1, 0 ), 'flags untouched' );
-    ppr_ok( preg_grep( '/rolled back/', $r['log'] ) == true, 'log says rolled back' );
-    ppr_ok( spp_ppr_table_exists( "{$P}SS_168" ), 'scores table kept (scores still preserved)' );
+    $r = spp_ppr_run( 168, ppr_cfg( 'ok' ) );
+    ppr_ok( $r['ok'], 'run ok' );
+    ppr_ok( spp_ppr_table_exists( "{$P}SS_168" ) && spp_ppr_tables_match( "{$P}SS_168", "{$P}Schedules" ), 'scores table created and matches' );
+    ppr_ok( (int) $wpdb->get_var( "SELECT SUM((Game1 IS NULL)+(Game2 IS NULL)+(Game3 IS NULL)+(Game4 IS NULL)+(Game5 IS NULL)) FROM {$P}SS_168" )
+         === (int) $wpdb->get_var( "SELECT SUM((Game1 IS NULL)+(Game2 IS NULL)+(Game3 IS NULL)+(Game4 IS NULL)+(Game5 IS NULL)) FROM " . PPR_SOURCE ), 'blanks still NULL' );
+    ppr_ok( (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$P}ledger WHERE event_id = 168" ) === 33, '33 ledger rows' );
+    ppr_ok( ppr_flags() === array( 0, 1 ), 'test flags set published=0 posted=1' );
+    ppr_ok( count( $r['backups'] ) === 4 && array_product( array_map( 'spp_ppr_table_exists', $r['backups'] ) ), '4 backup tables exist' );
+    ppr_ok( (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$r['backups'][0]}" ) === 47, 'Schedules snapshot has 47 rows' );
+    $log = get_option( "{$P}log" );
+    ppr_ok( is_array( $log ) && count( $log ) === 1 && $log[0]['ok'] === true && $log[0]['event'] === 168, 'run logged' );
+
+    echo "C. re-submit after success\n";
+    $RATER_CALLS = 0; $mid = ppr_sums();
+    $r2 = spp_ppr_run( 168, ppr_cfg( 'ok' ) );
+    ppr_ok( $r2['ok'] && $RATER_CALLS === 0 && ppr_sums() === $mid, 'second run: ok, rater not called, rating tables unchanged' );
+    ppr_ok( preg_grep( '/already exists and matches/', $r2['log'] ) == true && preg_grep( '/already applied/', $r2['log'] ) == true, 'second run reports kept/skipped' );
+
+    echo "D. existing scores table that differs\n";
+    ppr_fixture();
+    $wpdb->query( "CREATE TABLE {$P}SS_168 SELECT * FROM {$P}Schedules" );
+    $wpdb->query( "UPDATE {$P}SS_168 SET Game1 = 99 WHERE user_id = 3181" );
+    $RATER_CALLS = 0; $before = ppr_sums();
+    $r = spp_ppr_run( 168, ppr_cfg( 'ok' ) );
+    ppr_ok( ! $r['ok'] && $RATER_CALLS === 0 && ppr_sums() === $before && ppr_flags() === array( 1, 0 ), 'stops, no rating, flags untouched' );
+    ppr_ok( (int) $wpdb->get_var( "SELECT Game1 FROM {$P}SS_168 WHERE user_id = 3181" ) === 99, 'differing table not overwritten' );
+
+    foreach ( array( 'throw' => 'rater throws mid-update', 'inconsistent' => 'verification mismatch', 'abort' => 'engine abort' ) as $mode => $label ) {
+        echo "E. rollback: $label\n";
+        ppr_fixture();
+        $before = ppr_sums();
+        $r = spp_ppr_run( 168, ppr_cfg( $mode ) );
+        ppr_ok( ! $r['ok'], 'run reports failure' );
+        ppr_ok( ppr_sums() === $before, 'state, ledger, usermeta identical to before (rolled back)' );
+        ppr_ok( ppr_flags() === array( 1, 0 ), 'flags untouched' );
+        ppr_ok( preg_grep( '/rolled back/', $r['log'] ) == true, 'log says rolled back' );
+        ppr_ok( spp_ppr_table_exists( "{$P}SS_168" ), 'scores table kept (scores still preserved)' );
+    }
+
+    echo "F. zero-score event\n";
+    ppr_fixture();
+    $wpdb->query( "UPDATE {$P}Schedules SET Game1=NULL, Game2=NULL, Game3=NULL, Game4=NULL, Game5=NULL" );
+    $RATER_CALLS = 0; $before = ppr_sums();
+    $r = spp_ppr_run( 168, ppr_cfg( 'ok' ) );
+    ppr_ok( $r['ok'] && $RATER_CALLS === 0 && ppr_sums() === $before, 'ok, rater not called, ratings unchanged' );
+    ppr_ok( ! spp_ppr_table_exists( "{$P}SS_168" ), 'no scores table created' );
+    ppr_ok( ppr_flags() === array( 0, 1 ), 'flags set' );
+
+    echo "G. lock held elsewhere (concurrent submit)\n";
+    ppr_fixture();
+    $other = new wpdb( DB_USER, DB_PASSWORD, DB_NAME, DB_HOST );
+    $other->get_var( "SELECT GET_LOCK('{$P}lock', 0)" );
+    $RATER_CALLS = 0;
+    $r = spp_ppr_run( 168, ppr_cfg( 'ok' ) );
+    ppr_ok( ! $r['ok'] && $RATER_CALLS === 0 && ! spp_ppr_table_exists( "{$P}SS_168" ) && ppr_flags() === array( 1, 0 ), 'refused, nothing touched' );
+    $other->get_var( "SELECT RELEASE_LOCK('{$P}lock')" );
+    $other->close();
+    $r = spp_ppr_run( 168, ppr_cfg( 'ok' ) );
+    ppr_ok( $r['ok'], 'runs once the lock is free' );
+
+    echo "H. real rating engine, dry run only\n";
+    ppr_fixture();
+    $i = ppr_inspect_clean( 168, ppr_cfg( 'ok', array( 'require_ladder' => true ) ) );
+    $d = spp_crt_process_event_ratings( $i['build']['games'], $i['build']['rank_by_user'], 168, 'ladder', true );
+    ppr_ok( ! $d['aborted'] && count( $d['dry_run_rows'] ) === 33, 'dry run: not aborted, 33 players' );
+    $max = 0; foreach ( $d['dry_run_rows'] as $row ) $max = max( $max, abs( $row['mu_after'] - $row['mu_before'] ) );
+    ppr_ok( $max < 15, sprintf( 'dry run: largest mu change %.1f (small)', $max ) );
+
+    echo "I. shortcode guard paths (real config; none reach spp_ppr_run)\n";
+    $sub = (int) $wpdb->get_var( "SELECT user_id FROM {$wpdb->prefix}usermeta WHERE meta_key = '{$wpdb->prefix}capabilities' AND meta_value LIKE '%subscriber%' LIMIT 1" );
+    $adm = (int) $wpdb->get_var( "SELECT user_id FROM {$wpdb->prefix}usermeta WHERE meta_key = '{$wpdb->prefix}capabilities' AND meta_value LIKE '%administrator%' LIMIT 1" );
+    $_GET = array(); $_POST = array();
+    wp_set_current_user( 0 );
+    ppr_ok( strpos( spp_publish_partial_results_shortcode(), 'do not have permission' ) !== false, 'logged-out refused' );
+    wp_set_current_user( $sub );
+    $_POST = array( 'spp_ppr_run' => '1', 'ppr_event' => '168', 'spp_ppr_nonce' => 'x' );
+    ppr_ok( strpos( spp_publish_partial_results_shortcode(), 'do not have permission' ) !== false, "subscriber (user $sub) refused, even with a POST" );
+    wp_set_current_user( $adm );
+    ppr_ok( strpos( spp_publish_partial_results_shortcode(), 'expired or is invalid' ) !== false, 'admin with bad nonce refused' );
+    $_POST = array( 'spp_ppr_run' => '1', 'ppr_event' => '168', 'spp_ppr_nonce' => wp_create_nonce( 'spp_ppr_run_167' ) );
+    ppr_ok( strpos( spp_publish_partial_results_shortcode(), 'expired or is invalid' ) !== false, 'nonce for a different event refused' );
+    $_POST = array( 'spp_ppr_run' => '1', 'spp_ppr_nonce' => 'x' );
+    ppr_ok( strpos( spp_publish_partial_results_shortcode(), 'No event id' ) !== false, 'POST without event refused' );
+    $_POST = array();
+    ppr_ok( strpos( spp_publish_partial_results_shortcode(), 'Enter the event id' ) !== false, 'no event: picker only' );
+    $_GET = array( 'ppr_event' => '999999999' );
+    ppr_ok( strpos( spp_publish_partial_results_shortcode(), 'Cannot run' ) !== false, 'missing event: Cannot run, no form' );
+    $_GET = array( 'ppr_event' => '168' );
+    ppr_fixture();
+    $GLOBALS['PPR_REDIRECT'] = true; // the preview reads the fixture, not this week's Schedules
+    $html = spp_publish_partial_results_shortcode();
+    $GLOBALS['PPR_REDIRECT'] = false;
+    ppr_ok( strpos( $html, 'spp_ppr_nonce' ) !== false && strpos( $html, 'Ladder rankings are <strong>NOT</strong> changed' ) !== false
+         && strpos( $html, 'results email is sent' ) !== false && strpos( $html, 'next schedule can be created' ) !== false, 'preview for 168: plain-language confirm wording + nonce form' );
+    $_GET = array();
+    wp_set_current_user( 0 );
+} catch ( Throwable $e ) {
+    ppr_ok( false, 'test stopped early: ' . $e->getMessage() . ' (' . basename( $e->getFile() ) . ':' . $e->getLine() . ')' );
+} finally {
+    $GLOBALS['PPR_REDIRECT'] = false;
+    $_GET = array(); $_POST = array();
+    wp_set_current_user( 0 );
+    ppr_cleanup();
 }
 
-echo "F. zero-score event\n";
-ppr_fixture();
-$wpdb->query( "UPDATE {$P}Schedules SET Game1=NULL, Game2=NULL, Game3=NULL, Game4=NULL, Game5=NULL" );
-$RATER_CALLS = 0; $before = ppr_sums();
-$r = spp_ppr_run( 168, ppr_cfg( 'ok' ) );
-ppr_ok( $r['ok'] && $RATER_CALLS === 0 && ppr_sums() === $before, 'ok, rater not called, ratings unchanged' );
-ppr_ok( ! spp_ppr_table_exists( "{$P}SS_168" ), 'no scores table created' );
-ppr_ok( ppr_flags() === array( 0, 1 ), 'flags set' );
-
-echo "G. lock held elsewhere (concurrent submit)\n";
-ppr_fixture();
-$other = new wpdb( DB_USER, DB_PASSWORD, DB_NAME, DB_HOST );
-$other->get_var( "SELECT GET_LOCK('{$P}lock', 0)" );
-$RATER_CALLS = 0;
-$r = spp_ppr_run( 168, ppr_cfg( 'ok' ) );
-ppr_ok( ! $r['ok'] && $RATER_CALLS === 0 && ! spp_ppr_table_exists( "{$P}SS_168" ) && ppr_flags() === array( 1, 0 ), 'refused, nothing touched' );
-$other->get_var( "SELECT RELEASE_LOCK('{$P}lock')" );
-$other->close();
-$r = spp_ppr_run( 168, ppr_cfg( 'ok' ) );
-ppr_ok( $r['ok'], 'runs once the lock is free' );
-
-echo "H. real rating engine, dry run only\n";
-$i = spp_ppr_inspect( 168, spp_ppr_config() );
-$d = spp_crt_process_event_ratings( $i['build']['games'], $i['build']['rank_by_user'], 168, 'ladder', true );
-ppr_ok( ! $d['aborted'] && count( $d['dry_run_rows'] ) === 33, 'dry run: not aborted, 33 players' );
-$max = 0; foreach ( $d['dry_run_rows'] as $row ) $max = max( $max, abs( $row['mu_after'] - $row['mu_before'] ) );
-ppr_ok( $max < 15, sprintf( 'dry run: largest mu change %.1f (small)', $max ) );
-
-echo "I. shortcode guard paths (real config; none reach spp_ppr_run)\n";
-$sub = (int) $wpdb->get_var( "SELECT user_id FROM {$wpdb->prefix}usermeta WHERE meta_key = '{$wpdb->prefix}capabilities' AND meta_value LIKE '%subscriber%' LIMIT 1" );
-$adm = (int) $wpdb->get_var( "SELECT user_id FROM {$wpdb->prefix}usermeta WHERE meta_key = '{$wpdb->prefix}capabilities' AND meta_value LIKE '%administrator%' LIMIT 1" );
-$_GET = array(); $_POST = array();
-wp_set_current_user( 0 );
-ppr_ok( strpos( spp_publish_partial_results_shortcode(), 'do not have permission' ) !== false, 'logged-out refused' );
-wp_set_current_user( $sub );
-$_POST = array( 'spp_ppr_run' => '1', 'ppr_event' => '168', 'spp_ppr_nonce' => 'x' );
-ppr_ok( strpos( spp_publish_partial_results_shortcode(), 'do not have permission' ) !== false, "subscriber (user $sub) refused, even with a POST" );
-wp_set_current_user( $adm );
-ppr_ok( strpos( spp_publish_partial_results_shortcode(), 'expired or is invalid' ) !== false, 'admin with bad nonce refused' );
-$_POST = array( 'spp_ppr_run' => '1', 'ppr_event' => '168', 'spp_ppr_nonce' => wp_create_nonce( 'spp_ppr_run_167' ) );
-ppr_ok( strpos( spp_publish_partial_results_shortcode(), 'expired or is invalid' ) !== false, 'nonce for a different event refused' );
-$_POST = array( 'spp_ppr_run' => '1', 'spp_ppr_nonce' => 'x' );
-ppr_ok( strpos( spp_publish_partial_results_shortcode(), 'No event id' ) !== false, 'POST without event refused' );
-$_POST = array();
-ppr_ok( strpos( spp_publish_partial_results_shortcode(), 'Enter the event id' ) !== false, 'no event: picker only' );
-$_GET = array( 'ppr_event' => '999999999' );
-ppr_ok( strpos( spp_publish_partial_results_shortcode(), 'Cannot run' ) !== false, 'missing event: Cannot run, no form' );
-$_GET = array( 'ppr_event' => '168' );
-$html = spp_publish_partial_results_shortcode();
-ppr_ok( strpos( $html, 'spp_ppr_nonce' ) !== false && strpos( $html, 'Ladder rankings are <strong>NOT</strong> changed' ) !== false
-     && strpos( $html, 'results email is sent' ) !== false && strpos( $html, 'next schedule can be created' ) !== false, 'preview for 168: plain-language confirm wording + nonce form' );
-$_GET = array();
-wp_set_current_user( 0 );
-
-ppr_cleanup();
 echo "J. production untouched by this test\n";
 ppr_ok( get_option( 'spp_schedule_published' ) === $REAL['published'] && get_option( 'spp_results_posted' ) === $REAL['posted'], 'real flags unchanged' );
 ppr_ok( get_option( 'spp_partial_publish_log', 'absent' ) === $REAL['log'], 'real log option unchanged' );
 ppr_ok( $wpdb->get_var( 'CHECKSUM TABLE club_rating_state', 1 ) === $REAL['state'] && $wpdb->get_var( 'CHECKSUM TABLE club_rating_event_log', 1 ) === $REAL['ledger'], 'real rating tables unchanged' );
-ppr_ok( $wpdb->get_var( 'CHECKSUM TABLE Schedules', 1 ) === $REAL['sched'] && spp_ppr_table_exists( 'Schedules_Scores_168' ) === $REAL['ss168'], 'real Schedules unchanged, no Schedules_Scores_168' );
+ppr_ok( $wpdb->get_var( 'CHECKSUM TABLE Schedules', 1 ) === $REAL['sched'] && spp_ppr_table_exists( 'Schedules_Scores_168' ) === $REAL['ss168'], 'real Schedules unchanged' );
+ppr_ok( $wpdb->get_var( 'CHECKSUM TABLE Schedules_Scores_168', 1 ) === $REAL['ss168sum'], 'fixture source Schedules_Scores_168 unchanged' );
 ppr_ok( ! $wpdb->get_var( "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name LIKE 'zzppr\\_test\\_%'" ), 'all throwaway tables dropped' );
+ppr_ok( ! $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->options} WHERE option_name LIKE 'zzppr\\_test\\_%'" ), 'all throwaway options deleted' );
 
 echo "\n$pass passed, $fail failed\n";
 exit( $fail ? 1 : 0 );
