@@ -36,6 +36,8 @@ if ( ( $argv[1] ?? '' ) === '--render' ) {
     function current_time( $f ) { return '2026-10-13'; }
     function spp_cr_current_event() { return array( 'event' => 169 ); }
     function spp_nc_groups_for_event( $e ) { return array( 2 ); }
+    // 1.5.1 asks Create Results whether the event was already processed (2026-10-23).
+    function spp_cr_event_processed( $e ) { return array( 'processed' => false, 'reasons' => array(), 'snapshot_valid' => false ); }
     $_SERVER['REQUEST_URI'] = '/schedule-admin/';
     class Stub_DB {
         public $prefix = 'wp_';

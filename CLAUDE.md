@@ -52,7 +52,10 @@ roughly in pipeline order:
    rank-tolerance-bounded swaps) to balance groups by skill (`Rank`) while respecting travel-time
    preferences and carpool pairings. The version-history comment block at the top of
    `gl-schedule-production.php` is the best source of truth for current algorithm behavior; read it
-   before changing scheduling logic.
+   before changing scheduling logic. Time slots come from `Times WHERE Active = 1`; two-slot weeks
+   (7:50 off) are normal since 2026-10-19 and slots may come back. The progress-text labels follow
+   the active slots (`spp_schedule_time_labels()`, 2.3.1, test `tests/spp-schedule-time-labels-test.php`),
+   but travel preferences (+/-5:30, 6:40, 7:50) still map to slot *positions* 0/1/2, not T_IDs.
 3. **Publishing** (`gl-publish-schedule.php`, `[gl_publish_schedule]`) and **player-facing view**
    (`gl-player-schedule-view.php`, `[spp_player_schedule_view]`).
 4. **Mid-event adjustments** (`spp-schedule-adjust.php`, `[spp_schedule_adjust]`) — dropout,
@@ -112,7 +115,8 @@ roughly in pipeline order:
    the `spp_partial_publish_log` option. Admin/editor only; the page is Published (editors here
    lack `read_private_pages`), noindex, out of menus/search, rejected by WP Super Cache. The Create
    Schedule guard links to it with the event prefilled. First use: event 168 (2026-10-05 rain-out),
-   run 2026-10-11. Tests: `tests/spp-publish-partial-results-test.php` (throwaway tables).
+   run 2026-10-11. Tests: `tests/spp-publish-partial-results-test.php` (throwaway tables; fixture
+   built from the permanent `Schedules_Scores_168`, not live `Schedules`, since 2026-10-23).
 
 10. **NC (Not Complete) groups** (`spp-nc-groups.php`, 2026-10-13) — a group whose session wasn't
    completed is marked NC with the "Mark NC" button on GL Schedule Admin (option `spp_nc_groups`,
@@ -286,9 +290,11 @@ discovered via `kq_history` only because it was the first report ever actually e
 
 **Safe to run on production** (no DB, read-only, or throwaway `zz*` tables behind a write firewall,
 stubbed `wp_mail`):
-- No DB: `spp-kq-movement-test.php`, `spp-board-nomination-test.php`.
+- No DB: `spp-kq-movement-test.php`, `spp-board-nomination-test.php`, `spp-schedule-time-labels-test.php`
+  (Create Schedule slot labels with 1-4 active slots, warnings turned into exceptions).
 - Read-only: `spp-schedule-guard-message-test.php` (fakes the scores count in memory when the live week
-  has none), `spp-schedule-admin-help-render-test.php`, `spp-report-event-status-year-test.php`
+  has none), `spp-schedule-admin-help-render-test.php` (no WP; its stand-ins must cover every function
+  the page calls -- a missing one fails every check), `spp-report-event-status-year-test.php`
   (GL Event Status page: current-year scope, newest first; fixture rows swapped in memory).
 - Throwaway tables/options: `spp-ao-rank-tiebreak-test.php`, `spp-master-rank-sort-test.php`,
   `spp-create-results-force-rerun-test.php`, `spp-nc-group-status-test.php`,
@@ -298,8 +304,11 @@ stubbed `wp_mail`):
   `spp-schedule-adjust-movegroup-test.php` -- self-contained since 2026-10-18: a fixed synthetic
   layout of real player ids from the permanent `Schedules_Scores_169` under fake event 990169,
   published/current event answered in memory, reads of `Schedules` redirected in memory to the
-  throwaway copy. It no longer depends on the live week, publication state or event number (it still
-  reads the `Courts`/`Times`/`Groups` configuration tables and `membership` emails).
+  throwaway copy, and (2026-10-23) `Times` answered in memory (5:30/6:40/7:50 all active, plus one
+  case with 7:50 off). It no longer depends on the live week, publication state, event number or slot
+  setup (it still reads the `Courts`/`Groups` configuration tables and `membership` emails).
+  `spp-publish-partial-results-test.php` runs its sections in try/finally, so its cleanup and
+  "production untouched" checks always run, even when a section stops early.
 
 **Do NOT run against production** -- they write fake occurrence ids into the real KQ tables, and some are
 stale: `spp-kq-end-cancel-test.php`, `spp-kq-score-entry-test.php`, `spp-kq-score-concurrency-*`,

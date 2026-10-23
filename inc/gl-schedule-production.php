@@ -1,8 +1,19 @@
 <?php
 /* =========================================================
    GL Schedule Production
-   Version: 2.3.0
-   Date: 2026-10-18
+   Version: 2.3.1
+   Date: 2026-10-23
+
+   Changes from 2.3.0 -- the swap-progress time labels ($time_labels) are
+   built from the ACTIVE rows of Times (spp_schedule_time_labels(), pure:
+   T_ID => T_desc without the space before am/pm), however many slots are
+   active. They were three hard-coded entries keyed $time_ids[0..2], so a
+   two-slot week (7:50 turned off, Times.Active = 0, first on 2026-10-19)
+   logged "Undefined array key 2" on every run. The labels only appear in
+   the progress text; with 5:30/6:40/7:50 active they read exactly as
+   before. The active-times query now also selects T_desc. Nothing else
+   changed: travel preferences (+/-5:30, 6:40, 7:50) still map to slot
+   positions 0/1/2 as before. Test: tests/spp-schedule-time-labels-test.php.
 
    Changes from 2.2.3 -- the "adjustments queued for notification" stop
    is now explained in plain words (spp_schedule_guard_pending_message(),
@@ -597,6 +608,20 @@ function spp_schedule_guard_pending_data( int $count ) : array {
     return array( $queue, $groups, $event, $url, $count );
 }
 
+// Progress-text labels for the active time slots (2.3.1): T_ID => label,
+// one per row of Times WHERE Active = 1, however many there are. The label
+// is Times.T_desc without the space before am/pm ('5:30 pm' -> '5:30pm',
+// the text the hard-coded labels used); 'slot <T_ID>' if T_desc is empty.
+function spp_schedule_time_labels( array $active_times ) : array {
+    $labels = array();
+    foreach ( $active_times as $t ) {
+        $t    = (array) $t;
+        $desc = preg_replace( '/\s+(am|pm)\b/i', '$1', trim( (string) ( $t['T_desc'] ?? '' ) ) );
+        $labels[ $t['T_ID'] ] = $desc !== '' ? $desc : 'slot ' . $t['T_ID'];
+    }
+    return $labels;
+}
+
 function spp_run_schedule_production_locked() {
 
 // Administrator + editor, per this page's Ultimate Member menu
@@ -778,7 +803,7 @@ if (isset($Event) and $Event <> 0) {
     $active_courts = $wpdb->get_results("SELECT Crt_ID FROM Courts WHERE active = 1 ORDER BY Crt_ID ASC");
     $num_crts = count($active_courts);
 
-    $active_times = $wpdb->get_results("SELECT T_ID FROM Times WHERE Active = 1 ORDER BY T_ID");
+    $active_times = $wpdb->get_results("SELECT T_ID, T_desc FROM Times WHERE Active = 1 ORDER BY T_ID");
     $num_times = count($active_times);
 
     $time_ids = array_column($active_times, 'T_ID');
@@ -1805,11 +1830,7 @@ if (isset($Event) and $Event <> 0) {
         $wpdb->query("UPDATE $Schedules SET time_id = {$info1['time_id']}, Crt_ID = {$info1['Crt_ID']} WHERE group_id = $gp2");
     };
 
-    $time_labels = [
-        $time_ids[0] => '5:30pm',
-        $time_ids[1] => '6:40pm',
-        $time_ids[2] => '7:50pm',
-    ];
+    $time_labels = spp_schedule_time_labels($active_times);
 
     // -------------------------------------------------------
     // PHASE 1 — ITERATIVE GROUP SWAPS
