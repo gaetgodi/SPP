@@ -1,8 +1,29 @@
 <?php
 /* =========================================================
    GL Schedule Production
-   Version: 2.3.1
+   Version: 2.4.0
    Date: 2026-10-23
+
+   Changes from 2.3.1 -- travel preferences (+/-5:30, 6:40, 7:50) are
+   matched to the active slot with that CLOCK TIME (Times.T_desc), not
+   to the 1st/2nd/3rd active slot. $pref_slots = spp_time_pref_slots()
+   (inc/spp-time-prefs.php) maps each time to its active T_ID or null.
+   Every place that read a preference now goes through it: the
+   "-X" conflict check, the + / - demand count for the base slot
+   distribution, Pass 1.5 (+ preference group swaps), the violation
+   score, the single-player fix pass, Phase 5 (+ preference player
+   swaps, incl. the carpool "all want the same slot" test) and the
+   final Travel Time Conflict Report (now spp_travel_conflict_report(),
+   shared with Schedule Check). A preference whose slot is off is
+   skipped without warnings: "-7:50" with 7:50 off is satisfied,
+   "+7:50" can't be met and is ignored -- the report lists those players
+   as information ("7:50 not offered this week"), not as a manual swap.
+   With 5:30 off, "+5:30" is ignored instead of being sent to 6:40.
+   With 5:30/6:40/7:50 all active every decision is the same as before
+   (tests/spp-time-prefs-test.php compares against the 2.3.1 code), and
+   with 7:50 off it is the same for everyone without a 7:50 preference.
+   The carpool distance logic (slot positions, "adjacent" slots) is
+   unchanged.
 
    Changes from 2.3.0 -- the swap-progress time labels ($time_labels) are
    built from the ACTIVE rows of Times (spp_schedule_time_labels(), pure:
@@ -808,6 +829,8 @@ if (isset($Event) and $Event <> 0) {
 
     $time_ids = array_column($active_times, 'T_ID');
     sort($time_ids);
+    // Travel preferences name a clock time: '5:30'/'6:40'/'7:50' => that active slot's T_ID, or null when it is off (2.4.0).
+    $pref_slots = spp_time_pref_slots($active_times);
 
     $preferred_users = $wpdb->get_col("SELECT user_id FROM $pref_active");
     $valid_preferred_users = array_intersect($entries, $preferred_users);
@@ -911,15 +934,11 @@ if (isset($Event) and $Event <> 0) {
         return count($ranks) > 0 ? array_sum($ranks) / count($ranks) : 50;
     };
 
-    $has_travel_conflict = function($uid, $time_id) use ($wpdb, $Master, $time_ids, $normalize_travel) {
+    $has_travel_conflict = function($uid, $time_id) use ($wpdb, $Master, $pref_slots, $normalize_travel) {
         $raw = $wpdb->get_var($wpdb->prepare("SELECT travel FROM $Master WHERE user_id = %d", $uid));
         $travel = $normalize_travel($raw);
         if (empty($travel)) return false;
-        $t_pos = array_search($time_id, $time_ids);
-        if ($t_pos === 0 && preg_match('/^-5:30/i', $travel)) return true;
-        if ($t_pos === 2 && preg_match('/^-7:50/i', $travel)) return true;
-        if ($t_pos === 1 && preg_match('/^-6:40/i', $travel)) return true;
-        return false;
+        return spp_time_pref_conflict($travel, $time_id, $pref_slots);
     };
 
     $get_carpool_name = function($uid) use ($wpdb, $Master, $extract_carpool, $carpool_key) {
@@ -1097,21 +1116,13 @@ if (isset($Event) and $Event <> 0) {
     // BASE TIME SLOT DISTRIBUTION — DEMAND-DRIVEN SEQUENTIAL
     // -------------------------------------------------------
 
-    // Count + and - preferences per time slot
-    $plus_demand = array_fill(0, $num_times, 0);
-    $minus_demand = array_fill(0, $num_times, 0);
-
+    // Count + and - preferences per time slot (a preference for a slot that is off is not counted)
+    $demand_travels = array();
     foreach ($selected_registrants as $uid) {
         $raw = $wpdb->get_var($wpdb->prepare("SELECT travel FROM $Master WHERE user_id = %d", $uid));
-        $travel = $normalize_travel($raw);
-        if (empty($travel)) continue;
-        if (preg_match('/^\+5:30/i', $travel)) $plus_demand[0]++;
-        elseif (preg_match('/^\+6:40/i', $travel)) $plus_demand[1]++;
-        elseif (preg_match('/^\+7:50/i', $travel)) $plus_demand[2]++;
-        if (preg_match('/^-5:30/i', $travel)) $minus_demand[0]++;
-        elseif (preg_match('/^-6:40/i', $travel)) $minus_demand[1]++;
-        elseif (preg_match('/^-7:50/i', $travel)) $minus_demand[2]++;
+        $demand_travels[] = $normalize_travel($raw);
     }
+    list($plus_demand, $minus_demand) = spp_time_pref_demand($demand_travels, $pref_slots, $time_ids);
 
     // Minimum groups per slot: enough to hold + players (groups of 4-5)
     $counts = array_fill(0, $num_times, 0);
@@ -1286,12 +1297,14 @@ if (isset($Event) and $Event <> 0) {
 
     // Pass 1.5 handles all + preferences: +5:30, +6:40, +7:50
     $pref_patterns = array(
-        array('pattern' => '/^\+5:30/i', 'neg_pattern' => '/^-5:30/i', 'pos' => 0, 'label' => '+5:30', 'time_label' => '5:30pm'),
-        array('pattern' => '/^\+6:40/i', 'neg_pattern' => '/^-6:40/i', 'pos' => 1, 'label' => '+6:40', 'time_label' => '6:40pm'),
-        array('pattern' => '/^\+7:50/i', 'neg_pattern' => '/^-7:50/i', 'pos' => 2, 'label' => '+7:50', 'time_label' => '7:50pm'),
+        array('pattern' => '/^\+5:30/i', 'neg_pattern' => '/^-5:30/i', 'time' => '5:30', 'label' => '+5:30', 'time_label' => '5:30pm'),
+        array('pattern' => '/^\+6:40/i', 'neg_pattern' => '/^-6:40/i', 'time' => '6:40', 'label' => '+6:40', 'time_label' => '6:40pm'),
+        array('pattern' => '/^\+7:50/i', 'neg_pattern' => '/^-7:50/i', 'time' => '7:50', 'label' => '+7:50', 'time_label' => '7:50pm'),
     );
 
     foreach ($pref_patterns as $pref) {
+        $pref_tid = $pref_slots[$pref['time']];
+        if ($pref_tid === null) continue; // that slot is off this week: +X can't be met (listed in the final report)
         foreach ($players_per_group as $gid => $players) {
             $has_pref = false;
             foreach ($players as $uid) {
@@ -1300,14 +1313,14 @@ if (isset($Event) and $Event <> 0) {
                 if (preg_match($pref['pattern'], $travel)) { $has_pref = true; break; }
             }
             if (!$has_pref) continue;
-            if ($group_time_map[$gid] === $time_ids[$pref['pos']]) continue;
+            if ($group_time_map[$gid] === $pref_tid) continue;
 
             $incoming_time = $group_time_map[$gid];
 
             $swapped = false;
             foreach ($group_time_map as $other_gid => $other_tid) {
                 if ($other_gid === $gid) continue;
-                if ($other_tid !== $time_ids[$pref['pos']]) continue;
+                if ($other_tid !== $pref_tid) continue;
 
                 $has_conflict = false;
                 foreach ($players_per_group[$other_gid] as $uid) {
@@ -1338,7 +1351,7 @@ if (isset($Event) and $Event <> 0) {
                 }
                 if ($carpool_broken) continue;
 
-                $group_time_map[$gid]       = $time_ids[$pref['pos']];
+                $group_time_map[$gid]       = $pref_tid;
                 $group_time_map[$other_gid] = $incoming_time;
                 echo "✓ [{$pref['label']}] Group $gid moved to {$pref['time_label']} (swapped with Group $other_gid).<br>";
                 $swapped = true;
@@ -1753,18 +1766,11 @@ if (isset($Event) and $Event <> 0) {
     // POST-PROCESSING — ITERATIVE IMPROVEMENT
     // -------------------------------------------------------
 
-    $score_violation = function($uid, $time_id) use ($normalize_travel, $wpdb, $Master, $time_ids) {
+    $score_violation = function($uid, $time_id) use ($normalize_travel, $wpdb, $Master, $pref_slots) {
         $raw = $wpdb->get_var($wpdb->prepare("SELECT travel FROM $Master WHERE user_id = %d", $uid));
         $travel = $normalize_travel($raw);
         if (empty($travel)) return 0;
-        $t_pos = array_search($time_id, $time_ids);
-        if ($t_pos === 0 && preg_match('/^-5:30/i', $travel)) return 100;
-        if ($t_pos === 2 && preg_match('/^-7:50/i', $travel)) return 100;
-        if ($t_pos === 1 && preg_match('/^-6:40/i', $travel)) return 100;
-        if ($t_pos !== 0 && preg_match('/^\+5:30/i', $travel)) return 50;
-        if ($t_pos !== 1 && preg_match('/^\+6:40/i', $travel)) return 50;
-        if ($t_pos !== 2 && preg_match('/^\+7:50/i', $travel)) return 50;
-        return 0;
+        return spp_time_pref_violation($travel, $time_id, $pref_slots);
     };
 
     $group_violation_score = function($group_id) use ($wpdb, $Schedules, $score_violation) {
@@ -2072,18 +2078,7 @@ if (isset($Event) and $Event <> 0) {
         if ($vscore === 0) continue;
 
         $travel1    = $normalize_travel($tr1);
-        $target_tid = null;
-        if (preg_match('/^-5:30/i', $travel1)) {
-            foreach ($time_ids as $tid) {
-                if ($tid !== $time_ids[0]) { $target_tid = $tid; break; }
-            }
-        } elseif (preg_match('/^-7:50/i', $travel1)) {
-            foreach (array_reverse($time_ids) as $tid) {
-                if ($tid !== $time_ids[2]) { $target_tid = $tid; break; }
-            }
-        } elseif (preg_match('/^\+5:30/i', $travel1)) {
-            $target_tid = $time_ids[0];
-        }
+        $target_tid = spp_time_pref_fix_target($travel1, $pref_slots, $time_ids);
         if (!$target_tid) continue;
 
         $cp_name1 = $carpool_key($extract_carpool($travel1));
@@ -2467,13 +2462,12 @@ if (isset($Event) and $Event <> 0) {
             $pp_rank   = (int)$pp['Rank'];
             $pp_travel = $normalize_travel($pp['travel']);
 
-            $target_pos = null;
-            if (preg_match('/^\+5:30/i', $pp_travel)) $target_pos = 0;
-            elseif (preg_match('/^\+6:40/i', $pp_travel)) $target_pos = 1;
-            elseif (preg_match('/^\+7:50/i', $pp_travel)) $target_pos = 2;
-            if ($target_pos === null) continue;
+            $pp_pref = spp_time_pref($pp_travel);
+            if (!$pp_pref || $pp_pref['sign'] !== '+') continue;
+            $p5_target_time = $pp_pref['time'];
 
-            $target_tid_p5 = $time_ids[$target_pos];
+            $target_tid_p5 = $pref_slots[$p5_target_time];
+            if ($target_tid_p5 === null) continue; // that slot is off this week: preference ignored
             if ($pp_tid == $target_tid_p5) continue;
 
             $pp_cp = $carpool_key($extract_carpool($pp_travel));
@@ -2493,11 +2487,9 @@ if (isset($Event) and $Event <> 0) {
                 $all_want_same = true;
                 foreach ($cp_movers as $cm) {
                     $cm_travel = $normalize_travel($cm['travel']);
-                    $cm_target = null;
-                    if (preg_match('/^\+5:30/i', $cm_travel)) $cm_target = 0;
-                    elseif (preg_match('/^\+6:40/i', $cm_travel)) $cm_target = 1;
-                    elseif (preg_match('/^\+7:50/i', $cm_travel)) $cm_target = 2;
-                    if ($cm_target !== $target_pos) { $all_want_same = false; break; }
+                    $cm_pref   = spp_time_pref($cm_travel);
+                    $cm_target = ($cm_pref && $cm_pref['sign'] === '+') ? $cm_pref['time'] : null;
+                    if ($cm_target !== $p5_target_time) { $all_want_same = false; break; }
                 }
                 if (!$all_want_same) continue;
 
@@ -2770,77 +2762,7 @@ if (isset($Event) and $Event <> 0) {
     // -------------------------------------------------------
     // FINAL VIOLATION REPORT
     // -------------------------------------------------------
-   echo "<br><strong>Travel Time Conflict Report:</strong><br>";
-
-    $violations_530 = $wpdb->get_results("
-        SELECT group_id, first_name, last_name FROM $Schedules
-        WHERE time_id = 1 AND group_id != 99
-        AND travel REGEXP '^-[ ]?5:30'
-        ORDER BY group_id
-    ", ARRAY_A);
-    $remaining_530 = count(array_unique(array_column($violations_530, 'group_id')));
-
-    $violations_750 = $wpdb->get_results("
-        SELECT group_id, first_name, last_name FROM $Schedules
-        WHERE time_id = 3 AND group_id != 99
-        AND travel REGEXP '^-[ ]?7:50'
-        ORDER BY group_id
-    ", ARRAY_A);
-    $remaining_750 = count(array_unique(array_column($violations_750, 'group_id')));
-
-    $violations_plus530 = $wpdb->get_results("
-        SELECT group_id, first_name, last_name FROM $Schedules
-        WHERE time_id != 1 AND group_id != 99
-        AND (travel LIKE '+5:30%' OR travel REGEXP '^[+]?5:30[^0-9]')
-        ORDER BY group_id
-    ", ARRAY_A);
-    $remaining_plus530 = count(array_unique(array_column($violations_plus530, 'group_id')));
-
-    if ($remaining_530 === 0) echo "✓ No -5:30 conflicts remaining.<br>";
-    else {
-        echo "⚠ $remaining_530 group(s) still have -5:30 players at 5:30pm — manual swap needed:<br>";
-        foreach ($violations_530 as $v) echo "&nbsp;&nbsp;&nbsp;Group {$v['group_id']}: {$v['first_name']} {$v['last_name']}<br>";
-    }
-
-    if ($remaining_750 === 0) echo "✓ No -7:50 conflicts remaining.<br>";
-    else {
-        echo "⚠ $remaining_750 group(s) still have -7:50 players at 7:50pm — manual swap needed:<br>";
-        foreach ($violations_750 as $v) echo "&nbsp;&nbsp;&nbsp;Group {$v['group_id']}: {$v['first_name']} {$v['last_name']}<br>";
-    }
-
-    $violations_plus640 = $wpdb->get_results("
-        SELECT group_id, first_name, last_name FROM $Schedules
-        WHERE time_id != 2 AND group_id != 99
-        AND travel LIKE '+6:40%'
-        ORDER BY group_id
-    ", ARRAY_A);
-    $remaining_plus640 = count(array_unique(array_column($violations_plus640, 'group_id')));
-
-    $violations_plus750 = $wpdb->get_results("
-        SELECT group_id, first_name, last_name FROM $Schedules
-        WHERE time_id != 3 AND group_id != 99
-        AND travel LIKE '+7:50%'
-        ORDER BY group_id
-    ", ARRAY_A);
-    $remaining_plus750 = count(array_unique(array_column($violations_plus750, 'group_id')));
-
-    if ($remaining_plus530 === 0) echo "✓ All +5:30 players are at 5:30pm.<br>";
-    else {
-        echo "⚠ $remaining_plus530 group(s) still have +5:30 players not at 5:30pm — manual swap needed:<br>";
-        foreach ($violations_plus530 as $v) echo "&nbsp;&nbsp;&nbsp;Group {$v['group_id']}: {$v['first_name']} {$v['last_name']}<br>";
-    }
-
-    if ($remaining_plus640 === 0) echo "✓ All +6:40 players are at 6:40pm.<br>";
-    else {
-        echo "⚠ $remaining_plus640 group(s) still have +6:40 players not at 6:40pm — manual swap needed:<br>";
-        foreach ($violations_plus640 as $v) echo "&nbsp;&nbsp;&nbsp;Group {$v['group_id']}: {$v['first_name']} {$v['last_name']}<br>";
-    }
-
-    if ($remaining_plus750 === 0) echo "✓ All +7:50 players are at 7:50pm.<br>";
-    else {
-        echo "⚠ $remaining_plus750 group(s) still have +7:50 players not at 7:50pm — manual swap needed:<br>";
-        foreach ($violations_plus750 as $v) echo "&nbsp;&nbsp;&nbsp;Group {$v['group_id']}: {$v['first_name']} {$v['last_name']}<br>";
-    }
+    spp_travel_conflict_report($Schedules, $pref_slots);
     // CARPOOL REPORT
     $cp_score = $carpool_score();
     if ($cp_score === 0) {

@@ -54,8 +54,13 @@ roughly in pipeline order:
    `gl-schedule-production.php` is the best source of truth for current algorithm behavior; read it
    before changing scheduling logic. Time slots come from `Times WHERE Active = 1`; two-slot weeks
    (7:50 off) are normal since 2026-10-19 and slots may come back. The progress-text labels follow
-   the active slots (`spp_schedule_time_labels()`, 2.3.1, test `tests/spp-schedule-time-labels-test.php`),
-   but travel preferences (+/-5:30, 6:40, 7:50) still map to slot *positions* 0/1/2, not T_IDs.
+   the active slots (`spp_schedule_time_labels()`, 2.3.1, test `tests/spp-schedule-time-labels-test.php`).
+   Travel preferences (+/-5:30, 6:40, 7:50) are matched to the active slot with that clock time
+   (`inc/spp-time-prefs.php`, Create Schedule 2.4.0, Schedule Check 1.1.0, Adjust Schedule 1.3.0;
+   test `tests/spp-time-prefs-test.php`). A preference for a slot that is off: "-X" is satisfied,
+   "+X" is ignored and shown as information in the Travel Time Conflict Report
+   (`spp_travel_conflict_report()`, shared by Create Schedule and Schedule Check). Never index
+   `$time_ids[n]` to mean a clock time.
 3. **Publishing** (`gl-publish-schedule.php`, `[gl_publish_schedule]`) and **player-facing view**
    (`gl-player-schedule-view.php`, `[spp_player_schedule_view]`).
 4. **Mid-event adjustments** (`spp-schedule-adjust.php`, `[spp_schedule_adjust]`) — dropout,
@@ -79,7 +84,8 @@ roughly in pipeline order:
    advises Discard when that event was already played (date past or results posted) and Send otherwise,
    and links to Adjust Schedule. Test: `tests/spp-schedule-guard-pending-message-test.php`.
 5. **Schedule check** (`spp-schedule-check.php`, `[spp_schedule_check]`) — validation/diagnostic pass
-   over a produced schedule, also invoked internally by the adjust tool after every mutation.
+   over a produced schedule, also invoked internally by the adjust tool after every mutation. Read-only.
+   Before 1.1.0 (2026-10-23) it stopped with "Expected 3 active time slots" whenever a slot was off.
 6. **Score entry & correction** (`spp-score-entry.php`, `spp-score-correction.php`) —
    players/convenors enter scores for their group; correction tool recalculates group rankings,
    `RankCalc`, and ordinal ranks after the fact.
@@ -300,7 +306,9 @@ stubbed `wp_mail`):
   `spp-create-results-force-rerun-test.php`, `spp-nc-group-status-test.php`,
   `spp-publish-partial-results-test.php`, `spp-schedule-admin-walkin-guard-test.php`,
   `spp-schedule-guard-pending-message-test.php`, `spp-kq-end-reopen-test.php`,
-  `spp-kq-score-fix-test.php`, `spp-kq-confirm-played-test.php`, and
+  `spp-kq-score-fix-test.php`, `spp-kq-confirm-played-test.php`, `spp-time-prefs-test.php` (old
+  position-based code cut from commit b68f566 with `git show` and compared with the clock-time code
+  for 3 slots / 7:50 off / 5:30 off; one `zzstp_test_` table, Times answered in memory), and
   `spp-schedule-adjust-movegroup-test.php` -- self-contained since 2026-10-18: a fixed synthetic
   layout of real player ids from the permanent `Schedules_Scores_169` under fake event 990169,
   published/current event answered in memory, reads of `Schedules` redirected in memory to the

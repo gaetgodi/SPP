@@ -1,8 +1,23 @@
 <?php
 /* =========================================================
    SPP Schedule Adjust
-   Version: 1.2.0
-   Date: 2026-10-18
+   Version: 1.3.0
+   Date: 2026-10-23
+
+   Changes from 1.2.0:
+   - Travel preferences are matched to the slot with that CLOCK TIME
+     (spp_sa2_pref_slots() -> spp_time_pref_slots(), inc/spp-time-prefs.php),
+     not to the 1st/2nd/3rd active slot. Affects the travel warnings of
+     Group Swap, Swap by player, Player Swap and Move Group
+     (spp_sa2_check_travel_for_new_time() now takes the slot map), and
+     Swap by player's search (spp_sa2_satisfying_time_ids() replaces
+     spp_sa2_satisfying_positions()). A preference whose slot is off this
+     week is never a conflict: "-7:50" with 7:50 off is satisfied,
+     "+7:50" is ignored, and Swap by player says plainly that 7:50 isn't
+     offered this week instead of searching for a slot that doesn't
+     exist. With 7:50 off the old code also raised "Undefined array key
+     2" there. With 5:30/6:40/7:50 all active the warnings and the
+     search are the same as before ("-6:40" is still not checked here).
 
    Changes from 1.1.0:
    - The pending-notification queue also keeps, per group, which
@@ -977,21 +992,21 @@ function spp_sa2_playerswap_flow( $stage ) {
     }
 }
 
-function spp_sa2_swap_valid( $p1, $p2, $time_ids, $carpool_rank_tolerance ) {
+function spp_sa2_swap_valid( $p1, $p2, $pref_slots, $carpool_rank_tolerance ) {
     // Would P1 fit into P2's group (P2 having left), and does P1's own
     // travel preference match P2's slot?
     $check_a = spp_sa2_group_accepts_player(
         (int) $p2['group_id'], (int) $p1['user_id'], (int) $p1['Rank'], $p1['travel'], $carpool_rank_tolerance, (int) $p2['user_id']
     );
     if ( ! $check_a['ok'] ) return false;
-    if ( ! empty( spp_sa2_check_travel_for_new_time( array( $p1 ), (int) $p2['time_id'], $time_ids ) ) ) return false;
+    if ( ! empty( spp_sa2_check_travel_for_new_time( array( $p1 ), (int) $p2['time_id'], $pref_slots ) ) ) return false;
 
     // Symmetric: would P2 fit into P1's group, travel match P1's slot?
     $check_b = spp_sa2_group_accepts_player(
         (int) $p1['group_id'], (int) $p2['user_id'], (int) $p2['Rank'], $p2['travel'], $carpool_rank_tolerance, (int) $p1['user_id']
     );
     if ( ! $check_b['ok'] ) return false;
-    if ( ! empty( spp_sa2_check_travel_for_new_time( array( $p2 ), (int) $p1['time_id'], $time_ids ) ) ) return false;
+    if ( ! empty( spp_sa2_check_travel_for_new_time( array( $p2 ), (int) $p1['time_id'], $pref_slots ) ) ) return false;
 
     return true;
 }
@@ -1018,7 +1033,7 @@ function spp_sa2_playerswap_propose( $carpool_rank_tolerance ) {
         return;
     }
 
-    $time_ids = spp_sa2_get_time_positions();
+    $pref_slots = spp_sa2_pref_slots();
 
     echo '<h3>Player Swap -- Options</h3>';
     echo '<div class="box">' . esc_html( $p1['first_name'] . ' ' . $p1['last_name'] ) . ' currently in group ' . (int) $p1['group_id'] . '.</div>';
@@ -1038,7 +1053,7 @@ function spp_sa2_playerswap_propose( $carpool_rank_tolerance ) {
     $candidates = array();
     foreach ( $others as $p2 ) {
         if ( (int) $p2['group_id'] === (int) $p1['group_id'] ) continue; // already in same group, not a meaningful swap
-        if ( spp_sa2_swap_valid( $p1, $p2, $time_ids, $carpool_rank_tolerance ) ) {
+        if ( spp_sa2_swap_valid( $p1, $p2, $pref_slots, $carpool_rank_tolerance ) ) {
             $candidates[] = array(
                 'uid'      => (int) $p2['user_id'],
                 'name'     => $p2['first_name'] . ' ' . $p2['last_name'],
@@ -1500,37 +1515,39 @@ function spp_sa2_get_time_positions() {
     $active_times = $wpdb->get_results( "SELECT T_ID FROM Times WHERE Active = 1 ORDER BY T_ID" );
     $time_ids = array_column( $active_times, 'T_ID' );
     sort( $time_ids );
-    return $time_ids; // index 0 = 5:30 slot, 1 = 6:40, 2 = 7:50
+    return $time_ids; // the active slots, in time order
+}
+
+// Clock time ('5:30'/'6:40'/'7:50') => that active slot's T_ID, or null when it is off (1.3.0).
+function spp_sa2_pref_slots() {
+    global $wpdb;
+    return spp_time_pref_slots( $wpdb->get_results( "SELECT T_ID, T_desc FROM Times WHERE Active = 1 ORDER BY T_ID" ) );
 }
 
 /**
  * For a group's roster, check every player's +/- travel preference
  * against a prospective new time_id. Returns array of violation strings
- * (empty array = all clear).
+ * (empty array = all clear). $pref_slots is spp_sa2_pref_slots(): a
+ * preference is matched to the slot with that clock time, and one whose
+ * slot is off this week is never a conflict.
  */
-function spp_sa2_check_travel_for_new_time( $roster, $new_time_id, $time_ids ) {
+function spp_sa2_check_travel_for_new_time( $roster, $new_time_id, $pref_slots ) {
     $violations = array();
-    $new_pos = array_search( $new_time_id, $time_ids );
 
     foreach ( $roster as $p ) {
         $travel = spp_sa2_normalize_travel( $p['travel'] );
         if ( empty( $travel ) ) continue;
         $name = $p['first_name'] . ' ' . $p['last_name'];
+        $pref = spp_time_pref( $travel );
+        if ( ! $pref || $pref_slots[ $pref['time'] ] === null ) continue;
+        $here = ( $new_time_id == $pref_slots[ $pref['time'] ] );
 
-        if ( $new_pos === 0 && preg_match( '/^-5:30/i', $travel ) ) {
-            $violations[] = "$name wants to avoid 5:30pm, but new slot is 5:30pm.";
+        // As before, "-6:40" is not checked here.
+        if ( $pref['sign'] === '-' && $here && $pref['time'] !== '6:40' ) {
+            $violations[] = "$name wants to avoid {$pref['time']}pm, but new slot is {$pref['time']}pm.";
         }
-        if ( $new_pos === 2 && preg_match( '/^-7:50/i', $travel ) ) {
-            $violations[] = "$name wants to avoid 7:50pm, but new slot is 7:50pm.";
-        }
-        if ( preg_match( '/^\+5:30/i', $travel ) && $new_pos !== 0 ) {
-            $violations[] = "$name wants 5:30pm, but new slot is not 5:30pm.";
-        }
-        if ( preg_match( '/^\+6:40/i', $travel ) && $new_pos !== 1 ) {
-            $violations[] = "$name wants 6:40pm, but new slot is not 6:40pm.";
-        }
-        if ( preg_match( '/^\+7:50/i', $travel ) && $new_pos !== 2 ) {
-            $violations[] = "$name wants 7:50pm, but new slot is not 7:50pm.";
+        if ( $pref['sign'] === '+' && ! $here ) {
+            $violations[] = "$name wants {$pref['time']}pm, but new slot is not {$pref['time']}pm.";
         }
     }
     return $violations;
@@ -1571,9 +1588,9 @@ function spp_sa2_groupswap_propose() {
         "SELECT s.user_id, s.first_name, s.last_name, m.travel FROM Schedules s JOIN Master m ON s.user_id = m.user_id WHERE s.group_id = %d", $gp2
     ), ARRAY_A );
 
-    $time_ids = spp_sa2_get_time_positions();
-    $viol1 = spp_sa2_check_travel_for_new_time( $roster1, (int) $sched2['time_id'], $time_ids );
-    $viol2 = spp_sa2_check_travel_for_new_time( $roster2, (int) $sched1['time_id'], $time_ids );
+    $pref_slots = spp_sa2_pref_slots();
+    $viol1 = spp_sa2_check_travel_for_new_time( $roster1, (int) $sched2['time_id'], $pref_slots );
+    $viol2 = spp_sa2_check_travel_for_new_time( $roster2, (int) $sched1['time_id'], $pref_slots );
     $all_violations = array_merge( $viol1, $viol2 );
 
     echo '<div class="box">Group ' . $gp1 . ' &harr; Group ' . $gp2 . ' (court/time swap).</div>';
@@ -1598,20 +1615,19 @@ function spp_sa2_groupswap_propose() {
 }
 
 /**
- * Given a travel preference string, return the list of time_id positions
- * (0=5:30, 1=6:40, 2=7:50) that would actually satisfy it. Empty array
- * means "no preference" -- nothing to search for.
+ * Given a travel preference string, return the active time_ids that would
+ * actually satisfy it (1.3.0: by clock time, was slot positions). null
+ * means "no preference" -- nothing to search for ("-6:40" counts as none,
+ * as before). An empty array means a "+X" preference for a slot that is
+ * off this week. "-X" is satisfied by every other active slot (all of
+ * them when X is off).
  */
-function spp_sa2_satisfying_positions( $travel ) {
-    $travel = spp_sa2_normalize_travel( $travel );
-    if ( empty( $travel ) ) return array();
-
-    if ( preg_match( '/^\+5:30/i', $travel ) ) return array( 0 );
-    if ( preg_match( '/^\+6:40/i', $travel ) ) return array( 1 );
-    if ( preg_match( '/^\+7:50/i', $travel ) ) return array( 2 );
-    if ( preg_match( '/^-5:30/i', $travel ) )  return array( 1, 2 ); // avoid 5:30 -> 6:40 or 7:50 both fine
-    if ( preg_match( '/^-7:50/i', $travel ) )  return array( 0, 1 ); // avoid 7:50 -> 5:30 or 6:40 both fine
-    return array();
+function spp_sa2_satisfying_time_ids( $travel, $pref_slots, $time_ids ) {
+    $pref = spp_time_pref( spp_sa2_normalize_travel( $travel ) );
+    if ( ! $pref || ( $pref['sign'] === '-' && $pref['time'] === '6:40' ) ) return null;
+    $slot = $pref_slots[ $pref['time'] ];
+    if ( $pref['sign'] === '+' ) return $slot === null ? array() : array( $slot );
+    return array_values( array_filter( $time_ids, fn( $tid ) => $slot === null || $tid != $slot ) );
 }
 
 function spp_sa2_groupswap_propose_by_player() {
@@ -1636,25 +1652,30 @@ function spp_sa2_groupswap_propose_by_player() {
         return;
     }
 
-    $time_ids = spp_sa2_get_time_positions();
-    $current_pos = array_search( (int) $player['time_id'], $time_ids );
-    $satisfying_positions = spp_sa2_satisfying_positions( $player['travel'] );
+    $time_ids   = spp_sa2_get_time_positions();
+    $pref_slots = spp_sa2_pref_slots();
+    $satisfying_time_ids = spp_sa2_satisfying_time_ids( $player['travel'], $pref_slots, $time_ids );
 
     echo '<h3>Group Swap -- Candidates for ' . esc_html( $player['first_name'] . ' ' . $player['last_name'] ) . '</h3>';
 
-    if ( empty( $satisfying_positions ) ) {
+    if ( $satisfying_time_ids === null ) {
         echo '<div class="box box-warn">This player has no +/- time preference on record, so there\'s no specific slot to search for. Use "By groups directly" instead.</div>';
         echo '<a href="' . esc_url( $_SERVER['REQUEST_URI'] ) . '" class="btn btn-neutral" style="text-decoration:none;">Back</a>';
         return;
     }
 
-    if ( in_array( $current_pos, $satisfying_positions, true ) ) {
-        echo '<div class="box box-ok">This player is already in a time slot that satisfies their preference -- no swap needed.</div>';
+    if ( empty( $satisfying_time_ids ) ) {
+        $pref = spp_time_pref( spp_sa2_normalize_travel( $player['travel'] ) );
+        echo '<div class="box box-warn">This player asked for ' . esc_html( $pref['time'] ) . 'pm, but ' . esc_html( $pref['time'] ) . ' is not offered this week, so no swap can meet it. Use "By groups directly" if you still want to move them.</div>';
         echo '<a href="' . esc_url( $_SERVER['REQUEST_URI'] ) . '" class="btn btn-neutral" style="text-decoration:none;">Back</a>';
         return;
     }
 
-    $satisfying_time_ids = array_map( fn( $pos ) => $time_ids[ $pos ], $satisfying_positions );
+    if ( in_array( (int) $player['time_id'], array_map( 'intval', $satisfying_time_ids ), true ) ) {
+        echo '<div class="box box-ok">This player is already in a time slot that satisfies their preference -- no swap needed.</div>';
+        echo '<a href="' . esc_url( $_SERVER['REQUEST_URI'] ) . '" class="btn btn-neutral" style="text-decoration:none;">Back</a>';
+        return;
+    }
 
     $candidate_groups = $wpdb->get_results(
         "SELECT s.group_id, g.GP_name, t.T_desc, s.time_id
@@ -1711,8 +1732,8 @@ function spp_sa2_groupswap_propose_by_player() {
         // My group's roster (including this player) moving to the candidate's
         // slot, and the candidate's roster moving to my group's current slot --
         // exactly the same bidirectional check the manual swap already uses.
-        $viol_mine = spp_sa2_check_travel_for_new_time( $my_roster, (int) $cand['time_id'], $time_ids );
-        $viol_cand = spp_sa2_check_travel_for_new_time( $cand_roster, (int) $player['time_id'], $time_ids );
+        $viol_mine = spp_sa2_check_travel_for_new_time( $my_roster, (int) $cand['time_id'], $pref_slots );
+        $viol_cand = spp_sa2_check_travel_for_new_time( $cand_roster, (int) $player['time_id'], $pref_slots );
 
         $scored[] = array(
             'group_id'   => (int) $cand['group_id'],
@@ -1977,7 +1998,7 @@ function spp_sa2_movegroup_propose() {
     }
     echo '</table>Nobody else moves. Only these players are notified.</div>';
 
-    $violations = spp_sa2_check_travel_for_new_time( $state['roster'], $state['new_time'], spp_sa2_get_time_positions() );
+    $violations = spp_sa2_check_travel_for_new_time( $state['roster'], $state['new_time'], spp_sa2_pref_slots() );
     if ( ! empty( $violations ) ) {
         echo '<div class="box box-warn"><strong>Travel preference conflicts introduced by this move:</strong><ul>';
         foreach ( $violations as $v ) echo '<li>' . esc_html( $v ) . '</li>';

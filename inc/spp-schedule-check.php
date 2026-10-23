@@ -1,6 +1,24 @@
 <?php
 /**
  * SPP Schedule Validation Report
+ * Version: 1.1.0
+ * Date:    2026-10-23
+ *
+ * Changes from 1.0.0 (unversioned until now):
+ *   - Works with any number of active time slots. It stopped with
+ *     "Expected 3 active time slots, found 2." whenever a slot was off
+ *     (every week since 7:50 was turned off on 2026-10-19), so Adjust
+ *     Schedule's automatic check after each change showed only that
+ *     line. Now only "no active slot at all" stops it.
+ *   - Slot labels come from the active Times rows
+ *     (spp_schedule_time_labels(), Create Schedule 2.3.1), not three
+ *     hard-coded entries.
+ *   - Travel preferences are matched to the slot with that clock time
+ *     (spp_time_pref_slots(), inc/spp-time-prefs.php); the Travel Time
+ *     Conflict Report is the shared spp_travel_conflict_report(), so it
+ *     no longer assumes time_id 1/2/3 = 5:30/6:40/7:50 and lists a "+X"
+ *     preference for a slot that is off as information. With all three
+ *     slots active the report reads as before. Still read-only.
  * ---------------------------------------------------------
  * Standalone re-validation of the current Schedules table state.
  * Lifted from inc/gl-schedule-production.php (Carpool Adjacency
@@ -11,7 +29,7 @@
  * Shortcode: [spp_schedule_check]
  *
  * Reference facts:
- *   time_id 1 = 5:30pm, 2 = 6:40pm, 3 = 7:50pm
+ *   time slots: the active rows of Times (T_desc gives the clock time)
  *   group_id 99 = excluded / bench
  */
 
@@ -68,20 +86,17 @@ function spp_run_schedule_check() {
     // -------------------------------------------------------
     // TIME SLOTS
     // -------------------------------------------------------
-    $active_times = $wpdb->get_results( "SELECT T_ID FROM Times WHERE Active = 1 ORDER BY T_ID" );
+    $active_times = $wpdb->get_results( "SELECT T_ID, T_desc FROM Times WHERE Active = 1 ORDER BY T_ID" );
     $time_ids     = array_column( $active_times, 'T_ID' );
     sort( $time_ids );
 
-    if ( count( $time_ids ) < 3 ) {
-        echo '<p class="gl-error">Expected 3 active time slots, found ' . count( $time_ids ) . '.</p>';
+    if ( count( $time_ids ) < 1 ) {
+        echo '<p class="gl-error">No active time slots in Times.</p>';
         return;
     }
 
-    $time_labels = [
-        $time_ids[0] => '5:30pm',
-        $time_ids[1] => '6:40pm',
-        $time_ids[2] => '7:50pm',
-    ];
+    $time_labels = spp_schedule_time_labels( $active_times );
+    $pref_slots  = spp_time_pref_slots( $active_times );
 
     // -------------------------------------------------------
     // HELPER FUNCTIONS (lifted verbatim from schedule production)
@@ -245,77 +260,7 @@ function spp_run_schedule_check() {
     // -------------------------------------------------------
     // TRAVEL TIME CONFLICT REPORT
     // -------------------------------------------------------
-   echo "<br><strong>Travel Time Conflict Report:</strong><br>";
-
-    $violations_530 = $wpdb->get_results("
-        SELECT group_id, first_name, last_name FROM $Schedules
-        WHERE time_id = 1 AND group_id != 99
-        AND travel REGEXP '^-[ ]?5:30'
-        ORDER BY group_id
-    ", ARRAY_A);
-    $remaining_530 = count(array_unique(array_column($violations_530, 'group_id')));
-
-    $violations_750 = $wpdb->get_results("
-        SELECT group_id, first_name, last_name FROM $Schedules
-        WHERE time_id = 3 AND group_id != 99
-        AND travel REGEXP '^-[ ]?7:50'
-        ORDER BY group_id
-    ", ARRAY_A);
-    $remaining_750 = count(array_unique(array_column($violations_750, 'group_id')));
-
-    $violations_plus530 = $wpdb->get_results("
-        SELECT group_id, first_name, last_name FROM $Schedules
-        WHERE time_id != 1 AND group_id != 99
-        AND (travel LIKE '+5:30%' OR travel REGEXP '^[+]?5:30[^0-9]')
-        ORDER BY group_id
-    ", ARRAY_A);
-    $remaining_plus530 = count(array_unique(array_column($violations_plus530, 'group_id')));
-
-    if ($remaining_530 === 0) echo "✓ No -5:30 conflicts remaining.<br>";
-    else {
-        echo "⚠ $remaining_530 group(s) still have -5:30 players at 5:30pm — manual swap needed:<br>";
-        foreach ($violations_530 as $v) echo "&nbsp;&nbsp;&nbsp;Group {$v['group_id']}: {$v['first_name']} {$v['last_name']}<br>";
-    }
-
-    if ($remaining_750 === 0) echo "✓ No -7:50 conflicts remaining.<br>";
-    else {
-        echo "⚠ $remaining_750 group(s) still have -7:50 players at 7:50pm — manual swap needed:<br>";
-        foreach ($violations_750 as $v) echo "&nbsp;&nbsp;&nbsp;Group {$v['group_id']}: {$v['first_name']} {$v['last_name']}<br>";
-    }
-
-    $violations_plus640 = $wpdb->get_results("
-        SELECT group_id, first_name, last_name FROM $Schedules
-        WHERE time_id != 2 AND group_id != 99
-        AND travel LIKE '+6:40%'
-        ORDER BY group_id
-    ", ARRAY_A);
-    $remaining_plus640 = count(array_unique(array_column($violations_plus640, 'group_id')));
-
-    $violations_plus750 = $wpdb->get_results("
-        SELECT group_id, first_name, last_name FROM $Schedules
-        WHERE time_id != 3 AND group_id != 99
-        AND travel LIKE '+7:50%'
-        ORDER BY group_id
-    ", ARRAY_A);
-    $remaining_plus750 = count(array_unique(array_column($violations_plus750, 'group_id')));
-
-    if ($remaining_plus530 === 0) echo "✓ All +5:30 players are at 5:30pm.<br>";
-    else {
-        echo "⚠ $remaining_plus530 group(s) still have +5:30 players not at 5:30pm — manual swap needed:<br>";
-        foreach ($violations_plus530 as $v) echo "&nbsp;&nbsp;&nbsp;Group {$v['group_id']}: {$v['first_name']} {$v['last_name']}<br>";
-    }
-
-    if ($remaining_plus640 === 0) echo "✓ All +6:40 players are at 6:40pm.<br>";
-    else {
-        echo "⚠ $remaining_plus640 group(s) still have +6:40 players not at 6:40pm — manual swap needed:<br>";
-        foreach ($violations_plus640 as $v) echo "&nbsp;&nbsp;&nbsp;Group {$v['group_id']}: {$v['first_name']} {$v['last_name']}<br>";
-    }
-
-    if ($remaining_plus750 === 0) echo "✓ All +7:50 players are at 7:50pm.<br>";
-    else {
-        echo "⚠ $remaining_plus750 group(s) still have +7:50 players not at 7:50pm — manual swap needed:<br>";
-        foreach ($violations_plus750 as $v) echo "&nbsp;&nbsp;&nbsp;Group {$v['group_id']}: {$v['first_name']} {$v['last_name']}<br>";
-    }
+    spp_travel_conflict_report( $Schedules, $pref_slots );
 
     // CARPOOL REPORT (priority-aware score check)
     $cp_score = $carpool_score();

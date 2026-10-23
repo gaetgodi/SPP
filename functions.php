@@ -76,6 +76,7 @@ require_once get_stylesheet_directory() . '/inc/spp-short-form-for-ladder.php'; 
 require_once get_stylesheet_directory() . '/inc/spp-gl-ladder-events-dropdown.php'; // no direct tracked-file caller -- only reached via CM275's [cmruncode] shim
 require_once get_stylesheet_directory() . '/inc/spp-scores-events-dropdown.php'; // no direct tracked-file caller -- only reached via CM273's [cmruncode] shim; independent of the ladder-events chain above
 require_once get_stylesheet_directory() . '/inc/spp-schedule-before-after-comparison.php'; // no direct tracked-file caller -- only reached via CM264's [cmruncode] shim
+require_once get_stylesheet_directory() . '/inc/spp-time-prefs.php'; // clock-time travel preferences -- used by gl-schedule-production, spp-schedule-check and spp-schedule-adjust below
 require_once get_stylesheet_directory() . '/inc/gl-schedule-production.php';
 require_once get_stylesheet_directory() . '/inc/gl-publish-schedule.php';
 require_once get_stylesheet_directory() . '/inc/spp-schedule-admin.php';
