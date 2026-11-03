@@ -168,12 +168,22 @@ All tokens defined in spp-drawers.css :root
 
 /* =====================================================
    BOARD MEMBERS TABLE
+   Markup: <div class="spp-board-wrap"><table class="spp-board-table">
+   Position labels are <th scope="row"> (rowspan for Members-at-Large);
+   names are <td>. Label column shrinks to its longest label.
    ===================================================== */
+.spp-board-wrap {
+    max-width: 600px;
+    margin: 1rem auto;
+    overflow-x: auto;
+    border-radius: 10px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.12);
+}
+
 .spp-board-table {
     width: 100%;
-    max-width: 600px;
     border-collapse: collapse;
-    margin: 1rem auto;
+    background: var(--spp-bg-white);
 }
 
 .spp-board-table thead th {
@@ -185,25 +195,40 @@ All tokens defined in spp-drawers.css :root
     letter-spacing: 0.03em;
 }
 
+.spp-board-table tbody th,
 .spp-board-table tbody td {
     padding: 10px 16px;
-    border-bottom: 1px solid var(--spp-border-color);
-    color: var(--spp-dark);
+    text-align: left;
     vertical-align: top;
+    border-bottom: 1px solid var(--spp-border-color);
 }
 
-.spp-board-table tbody tr:nth-child(odd) td {
+.spp-board-table tbody th {
+    width: 1%;
+    white-space: nowrap;
+    font-weight: 600;
+    color: var(--spp-primary);
     background: var(--spp-item-bg);
 }
 
-.spp-board-table tbody tr:nth-child(even) td {
+.spp-board-table tbody td {
+    color: var(--spp-dark);
     background: var(--spp-bg-white);
+    white-space: nowrap;
 }
 
-.spp-board-table tbody td:first-child {
-    font-weight: 600;
-    color: var(--spp-primary);
-    width: 40%;
+.spp-board-table tbody tr:last-child th,
+.spp-board-table tbody tr:last-child td {
+    border-bottom: 0;
+}
+
+@media (max-width: 480px) {
+    .spp-board-table thead th,
+    .spp-board-table tbody th,
+    .spp-board-table tbody td {
+        padding: 10px 12px;
+        font-size: .95rem;
+    }
 }
 
 .et_pb_post .entry-title,
@@ -397,5 +422,4 @@ body .um-members-wrapper .um-members.um-members-list .um-member-card-actions {
 body .um-members-wrapper .um-members.um-members-list .um-member-cog {
     padding: 5px 12px !important;
     margin: 0 !important;
-}
 }
